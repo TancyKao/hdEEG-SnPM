@@ -2,6 +2,61 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Orchestration model (read first)
+
+This repository is maintained by a small squad of specialised subagents defined in
+`.claude/agents/`. **The top-level session orchestrates; it does not do the work itself.**
+Delegate every substantive task — reading beyond a quick orientation, changing statistics or
+GUI code, writing tests or docs, reviewing — to the owning subagent via the Agent tool, then
+integrate and report. Do not personally edit the stat engines, the GUI, or the docs when an
+agent owns that surface.
+
+Route by ownership:
+
+- **`biostatistician`** — the statistical-methods authority and FIRST leg of method
+  development. Decides and justifies *how* to test an effect: the permutation scheme matched
+  to the effect, the design/contrast, exchangeability, TFCE-vs-cluster correction, mixed-model
+  assumptions. Invoke when the method or its validity is the open question ("is this
+  permutation scheme correct?", "how do we test this interaction?", "does this contrast break
+  exchangeability?"). Delivers a reviewed **Method Spec** that `stats-engine-engineer` builds;
+  prototypes only under `_scratch/`, writes no production MATLAB.
+- **`stats-engine-engineer`** — the numerical core: `core_snpm_analysis/glm/lmm.m`, every
+  `dependencies/` stat and plot engine, the montage/neighbour layer, result generation
+  (Excel/HTML/topoplots), and the `scripts/` headless runners. Anything touching statistical
+  correctness or the numerical output of an analysis. Receives Method Specs and implements +
+  numerically validates them against MATLAB builtins; does not originate the method.
+- **`gui-engineer`** — `SnPMAnalysisGui.m`, the App Designer front-end: analysis-driven
+  inputs, role pickers, the Files/Spectral-folder toggle, header auto-detection, readiness
+  validation, headless-construct safety, and the ergonomics of driving an analysis for
+  non-statistician researchers. Implements how the analysis is *specified*, not the math.
+- **`docs-test-engineer`** — the `test_all.m` harness and `test_*.m` suites (statistic-vs-
+  builtin, planted-cluster recovery + negative control, output-file assertions), the synthetic
+  generators, and `docs/` (especially `ANALYSIS_CATALOG.md`). Invoke after any analysis/GUI/
+  engine change to extend tests and sync the catalog.
+- **`quality-reviewer`** — the independent quality gate. Reviews every substantive change for
+  inferential validity first, then the project's hard constraints, and returns PASS/BLOCK. Not
+  the same as an engineer's own self-check; this is a separate, adversarial pass.
+
+## Quality gate (definition of done)
+
+No substantive change is "done" until `quality-reviewer` has reviewed it and returned PASS.
+The flow: owning engineer implements → `quality-reviewer` reviews → if BLOCK, the orchestrator
+routes each finding back to the owning agent → re-review → PASS. The reviewer is independent
+and does not fix its own findings.
+
+For method-driven work there is a front stage: `biostatistician` produces a Method Spec →
+`stats-engine-engineer` reviews it for soundness and feasibility → the orchestrator gives
+go/no-go, looping the user for live statistical-validity calls → only then does implementation
+begin, after which the normal code quality gate applies. A Method Spec is reviewed *before* it
+is built on, never handed straight to implementation.
+
+Orchestrator responsibilities stay at the top level: understanding the request, choosing and
+sequencing agents (running them in parallel when independent), resolving cross-cutting
+decisions, running changes through the gate, and giving the user the final integrated answer.
+Only trivial single-surface edits (a typo, a one-line doc fix) may skip the gate. When a task
+spans surfaces (a new analysis needs the method decided, the engine built, a GUI input, tests,
+and a catalog update), fan out to each owning agent rather than doing any part yourself.
+
 ## What this is
 
 MATLAB tool for **Statistical non-Parametric Mapping (SnPM)** of high-density EEG (hd-EEG) topographies. It runs permutation-based, threshold-free cluster enhancement (TFCE) and cluster-based statistics across scalp channels, with channel-adjacency (neighbor) structure. Supports group comparisons, correlations (with optional covariate/partial-correlation control), and circular-statistics variants. Produces topoplots, an Excel table, a `.mat` results struct, and one combined HTML report (TFCE + cluster in a single toggle; stat-aware: t-map for t-tests, F-map + post-hoc for ANOVA).

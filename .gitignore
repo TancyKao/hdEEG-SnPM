@@ -89,3 +89,7 @@ Desktop.ini
 *.swo
 *~
 .~lock.*
+
+# Local Claude Code state (per-machine, not shared)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

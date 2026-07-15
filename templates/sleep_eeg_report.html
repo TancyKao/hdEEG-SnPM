@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SnPM Report</title>
+<style>
+/* =====================================================================
+   CLINICAL REPORT — STYLE
+   Calm, journal-like scientific aesthetic. All inline, no dependencies.
+   ===================================================================== */
+:root{
+  --ink:#1b2733;          /* primary text  */
+  --ink-2:#445261;        /* secondary     */
+  --muted:#7c8a98;        /* tertiary      */
+  --line:#e3e9ef;         /* hairlines     */
+  --line-2:#eef2f6;
+  --bg:#f5f7f9;           /* page          */
+  --panel:#ffffff;        /* cards         */
+  --accent:#1f6f8b;       /* clinical teal */
+  --accent-soft:#e8f1f4;
+  --sig:#1f8a5b;          /* significant   */
+  --sig-soft:#e7f4ec;
+  --warm:#c2543a;         /* A > B         */
+  --cool:#2f6db0;         /* B > A         */
+  --amber:#b8862a;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --serif:Charter,"Iowan Old Style",Georgia,"Times New Roman",serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family:var(--sans);font-size:15px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:40px 32px 96px}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+a{color:var(--accent)}
+hr.rule{border:0;border-top:1px solid var(--line);margin:0}
+
+/* ---------- HEADER ---------- */
+.masthead{display:flex;justify-content:space-between;align-items:flex-start;gap:32px;flex-wrap:wrap}
+.masthead h1{
+  font-family:var(--serif);font-weight:600;font-size:30px;line-height:1.18;
+  letter-spacing:-.01em;margin:8px 0 10px;max-width:760px;color:var(--ink)
+}
+.methods{color:var(--ink-2);font-size:13.5px;max-width:760px;margin:0}
+.methods b{color:var(--ink);font-weight:600}
+.masthead .actions{display:flex;gap:8px;flex-shrink:0}
+.btn{
+  font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);
+  background:var(--panel);border:1px solid var(--line);border-radius:7px;
+  padding:8px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+  transition:border-color .15s,color .15s
+}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn svg{width:14px;height:14px}
+
+/* ---------- LEGEND ---------- */
+.legend{
+  display:flex;flex-wrap:wrap;gap:10px 26px;align-items:center;
+  margin:22px 0 4px;padding:14px 18px;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;font-size:12.5px;color:var(--ink-2)
+}
+.legend .grp{display:flex;align-items:center;gap:9px}
+.legend .grp .k{font-weight:600;color:var(--ink)}
+.chip{display:inline-flex;align-items:center;gap:6px}
+.swatch{width:13px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.08);flex:none}
+.tmapbar{width:120px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.1);
+  background:linear-gradient(90deg,#2f6db0,#cfe0ef 46%,#f2efe6 50%,#edc6b6 54%,#c2543a)}
+.legend .sep{width:1px;height:26px;background:var(--line)}
+
+/* ---------- SECTION SCAFFOLD ---------- */
+.section{margin-top:46px}
+.section > .head{display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
+.section > .head h2{font-size:18px;font-weight:650;letter-spacing:-.01em;margin:0}
+.section > .head .sub{font-size:12.5px;color:var(--muted)}
+
+/* ---------- REGIONAL OVERVIEW (periodograms) ---------- */
+.perio-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+@media(max-width:820px){.perio-grid{grid-template-columns:1fr}}
+
+/* ---------- OVERVIEW HEATMAP ---------- */
+.heat-tools{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.seg{display:inline-flex;background:var(--line-2);border-radius:8px;padding:3px;gap:2px}
+.seg button{
+  font:inherit;font-size:12px;font-weight:600;color:var(--ink-2);background:transparent;
+  border:0;border-radius:6px;padding:6px 12px;cursor:pointer;transition:.15s
+}
+.seg button.on{background:var(--panel);color:var(--accent);box-shadow:0 1px 2px rgba(20,40,60,.08)}
+.heat-legend{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);margin-left:auto}
+.heat-legend .bar{width:130px;height:10px;border-radius:3px;border:1px solid var(--line)}
+
+.heatwrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px}
+table.heat{border-collapse:separate;border-spacing:3px;width:100%;min-width:640px}
+table.heat th{font-size:11px;font-weight:600;color:var(--ink-2);padding:8px 6px;text-align:center;white-space:nowrap}
+table.heat th.corner{text-align:left;color:var(--muted);font-weight:600;font-size:10.5px;letter-spacing:.04em}
+table.heat th.row{text-align:right;padding-right:12px;color:var(--ink);font-size:13px;font-weight:600}
+table.heat th .gk{font-family:var(--serif);font-style:italic;color:var(--ink);font-size:14px;margin-right:5px}
+table.heat th .rg{display:block;font-weight:500;color:var(--muted);font-size:9.5px;margin-top:1px}
+table.heat td{padding:0}
+.cell{
+  height:46px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:14px;font-weight:600;cursor:pointer;
+  position:relative;transition:transform .1s,box-shadow .1s;font-variant-numeric:tabular-nums
+}
+.cell:hover{transform:translateY(-1px);box-shadow:0 3px 9px rgba(20,40,60,.14);z-index:2}
+.cell.zero{color:var(--muted)}
+
+/* ---------- TABS ---------- */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:0;flex-wrap:wrap}
+.tabs button{
+  font:inherit;font-size:14px;font-weight:600;color:var(--muted);background:none;border:0;
+  padding:11px 18px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
+  display:flex;align-items:center;gap:8px;transition:color .15s
+}
+.tabs button:hover{color:var(--ink-2)}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.tabs button .ct{font-family:var(--mono);font-size:11px;font-weight:600;color:#fff;background:var(--muted);
+  border-radius:20px;padding:1px 7px;min-width:20px;text-align:center}
+.tabs button.on .ct{background:var(--accent)}
+.tabs button .ct.none{background:var(--line);color:var(--muted)}
+
+.panel{display:none;padding-top:30px}
+.panel.on{display:block;animation:fade .25s ease}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ---------- STAGE FIGURES ---------- */
+.figrow{display:grid;grid-template-columns:1.45fr 1fr;gap:20px;align-items:start;margin-bottom:34px}
+.fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.fig > .cap{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  padding:12px 16px;border-bottom:1px solid var(--line-2)}
+.fig > .cap .t{font-size:13px;font-weight:650}
+.fig > .cap .f{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+
+/* image slot w/ placeholder behind */
+.slot{position:relative;margin:0;background:#f1f5f7}
+.slot img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;display:block}
+.slot img.err{display:none}
+.slot .ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:8px;color:#9fb0bd;text-align:center;padding:14px}
+.slot .ph svg{width:30px;height:30px;opacity:.6}
+.slot .ph .fn{font-family:var(--mono);font-size:10px;color:#a7b6c2;word-break:break-all;max-width:90%}
+
+/* ---------- SUMMARY TABLE ---------- */
+.tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:34px}
+.tablewrap .thead-note{padding:11px 16px;border-bottom:1px solid var(--line-2);font-size:12px;color:var(--muted);display:flex;justify-content:space-between;align-items:center}
+table.sum{border-collapse:collapse;width:100%;font-size:13.5px}
+table.sum th,table.sum td{padding:10px 14px;text-align:right;border-bottom:1px solid var(--line-2)}
+table.sum th:first-child,table.sum td:first-child{text-align:left}
+table.sum thead th{
+  font-size:11px;letter-spacing:.03em;color:var(--ink-2);font-weight:650;
+  user-select:none;white-space:nowrap;background:#fafcfd;position:sticky;top:0
+}
+table.sum tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink-2)}
+table.sum tbody td.band{font-family:var(--sans);color:var(--ink);font-weight:600;white-space:nowrap}
+table.sum tbody td.band .gk{font-family:var(--serif);font-style:italic;color:var(--accent);margin-right:6px}
+table.sum tbody tr:last-child td{border-bottom:0}
+table.sum tbody tr.sig{background:var(--sig-soft)}
+table.sum tbody tr.sig td.band{box-shadow:inset 3px 0 0 var(--sig)}
+table.sum .pos{color:var(--ink);font-weight:600}
+table.sum .p-sig{color:var(--sig);font-weight:700}
+table.sum .p-tr{color:var(--amber);font-weight:600}
+
+/* ---------- PER-BAND DETAIL ---------- */
+.pbd{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:34px}
+.pbd-head{padding:15px 18px;border-bottom:1px solid var(--line-2);font-size:15px;font-weight:650}
+.pbd-row{display:grid;grid-template-columns:96px repeat(3,1fr) 172px;gap:20px;align-items:center;
+  padding:18px;border-bottom:1px dashed var(--line)}
+.pbd-row:last-child{border-bottom:0}
+.pbd-name{font-size:15px;font-weight:650}
+.pbd-name small{display:block;color:var(--muted);font-family:var(--mono);font-size:11px;font-weight:500;margin-top:3px}
+.pbd-cell{text-align:center}
+.pbd-cell .slot{aspect-ratio:5/4;margin:0;border-radius:6px}
+.pbd-cap{font-size:11px;color:var(--muted);margin-top:8px}
+.bdg{font-family:var(--mono);font-size:11.5px;font-weight:600;text-align:center;
+  border-radius:20px;padding:7px 12px;white-space:nowrap}
+.bdg.sig{background:var(--sig-soft);color:var(--sig)}
+.bdg.tr{background:#f6ecd2;color:var(--amber)}
+.bdg.ns{background:var(--line-2);color:var(--muted)}
+.ph-toggle{display:block;margin:8px auto 0;font-family:var(--mono);font-size:10.5px;font-weight:600;
+  cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--accent);border-radius:6px;padding:3px 8px}
+.pbd-ph{display:flex;flex-wrap:wrap;gap:18px;padding:10px 18px 20px 18px;border-bottom:1px solid var(--line-2);background:var(--panel-2,#fafbfc)}
+.pbd-ph-head{flex-basis:100%;font-size:12.5px;font-weight:650;color:var(--ink,#1b2733)}
+.ph-card{width:150px;text-align:center;margin:0}
+.ph-card .slot{aspect-ratio:5/4;margin:0;border-radius:6px}
+.ph-card figcaption{font-size:11px;margin-top:6px;display:flex;flex-direction:column;align-items:center;gap:5px}
+
+/* ---------- CHANNEL-LABEL REVEAL (summary table) ---------- */
+td.cnt{cursor:pointer}
+td.cnt:hover{color:var(--accent);text-decoration:underline dotted;text-underline-offset:3px}
+td.cnt.active{color:var(--accent);font-weight:700}
+tr.chan-row{display:none}
+tr.chan-row.open{display:table-row}
+.chan-row > td{padding:0 !important;text-align:left}
+.chan-detail{padding:12px 16px;background:#fafcfd}
+.chan-detail.empty{color:var(--muted);font-size:12.5px}
+.cd-lab{font-size:12px;color:var(--ink-2);margin-bottom:8px}
+.cd-lab b{color:var(--ink)}
+.cd-note{margin-left:9px;color:var(--amber);font-size:11px;font-family:var(--sans)}
+.chips-ch{display:flex;flex-wrap:wrap;gap:5px}
+.chip-ch{font-family:var(--mono);font-size:11px;color:var(--ink-2);background:var(--panel);
+  border:1px solid var(--line);border-radius:5px;padding:2px 7px}
+
+/* ---------- FOOTER ---------- */
+.foot{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);
+  font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+/* ---------- RESPONSIVE ---------- */
+@media(max-width:820px){
+  .wrap{padding:28px 18px 72px}
+  .masthead h1{font-size:24px}
+  .figrow{grid-template-columns:1fr}
+  .pbd-row{grid-template-columns:1fr;gap:14px;text-align:center}
+  .pbd-name{text-align:left}
+}
+
+/* ---------- PRINT ---------- */
+@media print{
+  :root{--bg:#fff}
+  body{font-size:11px}
+  .wrap{max-width:none;padding:0}
+  .actions,.heat-tools .seg,.tabs{display:none !important}
+  .panel{display:block !important;animation:none;break-before:page;padding-top:0}
+  .panel:first-of-type{break-before:auto}
+  .panel::before{content:attr(data-stage-name);display:block;font-family:var(--serif);
+    font-size:18px;font-weight:600;margin:0 0 14px;color:#000}
+  .fig,.band-card,.tablewrap,.heatwrap,.legend{break-inside:avoid;box-shadow:none}
+  .band-card{break-inside:avoid}
+  a[href]::after{content:""}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ HEADER ============ -->
+  <header class="masthead">
+    <div>
+      <h1 id="studyTitle"></h1>
+      <p class="methods" id="methodsLine"></p>
+    </div>
+    <div class="actions">
+      <div class="seg" id="powerSeg" style="align-self:flex-start">
+        <button data-pw="absolute" class="on">Absolute</button>
+        <button data-pw="normalised">Normalised</button>
+      </div>
+      <button class="btn" onclick="window.print()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>
+        Print / PDF
+      </button>
+    </div>
+  </header>
+
+  <!-- ============ LEGEND ============ -->
+  <div class="legend">
+    <div class="grp"><span class="k">Correction</span>
+      <span class="chip"><span class="swatch" style="background:var(--sig)"></span>TFCE</span>
+      <span class="chip"><span class="swatch" style="background:var(--accent)"></span>Cluster-based</span>
+    </div>
+    <span class="sep"></span>
+    <div class="grp" id="legendStat"><span class="k">T-map (A vs B)</span>
+      <span class="chip"><span class="tmapbar"></span></span>
+      <span style="color:var(--cool)">B&gt;A</span><span style="color:var(--muted)">·</span><span style="color:var(--warm)">warm = A&gt;B</span>
+    </div>
+    <span class="sep"></span>
+    <div class="grp"><span class="k">Significant</span>
+      <span class="chip"><span class="swatch" style="background:var(--sig-soft);border-color:var(--sig)"></span>≥1 corrected channel</span>
+    </div>
+  </div>
+
+  <!-- ============ GLOBAL OVERVIEW (periodogram; hidden when has_periodogram:false) ============ -->
+  <section class="section" id="perioSection">
+    <div class="head">
+      <h2>Global Overview</h2>
+      <span class="sub" id="perioSub">Global periodogram per sleep stage — condition A vs B across the absolute spectrum, with per-frequency p-value panel</span>
+    </div>
+    <div class="perio-grid" id="perioGrid"></div>
+  </section>
+
+  <!-- ============ OVERVIEW HEATMAP ============ -->
+  <section class="section">
+    <div class="head">
+      <h2>Regional Overview</h2>
+      <span class="sub" id="heatSub">Significant channels per stage × band — click any cell to inspect that stage</span>
+    </div>
+    <div class="heat-tools">
+      <span class="eyebrow">Metric</span>
+      <div class="seg" id="metricSeg">
+        <button data-m="clu" class="on">Cluster</button>
+        <button data-m="tfce">TFCE</button>
+        <button data-m="u">Uncorrected</button>
+      </div>
+      <div class="heat-legend">
+        <span>0</span>
+        <span class="bar" id="heatBar"></span>
+        <span id="heatMax">—</span>
+        <span style="margin-left:2px">channels</span>
+      </div>
+    </div>
+    <div class="heatwrap"><table class="heat" id="heatTable"></table></div>
+  </section>
+
+  <!-- ============ PER-STAGE ============ -->
+  <section class="section">
+    <div class="head"><h2 id="perStageH2">By sleep stage</h2><span class="sub" id="perStageSub">Band grid · per-band detail · summary table</span></div>
+    <div class="tabs" id="tabs"></div>
+    <div id="panels"></div>
+  </section>
+
+  <footer class="foot">
+    <span>Template — replace the <b>REPORT</b> data object &amp; drop image files alongside this HTML.</span>
+    <span id="genLine"></span>
+  </footer>
+</div>
+
+<script>
+/* =====================================================================
+   ▼▼▼  REPORT DATA  —  EDIT EVERYTHING IN THIS BLOCK  ▼▼▼
+   Swap real numbers / labels here; the whole report re-renders from it.
+   Per cell: [ n_uncorrected , n_TFCE , n_cluster , min_cluster_p ]
+   ===================================================================== */
+const REPORT = {
+  title:   "Spectral power in sleep: Condition A vs Condition B",
+  methods: "Within-subject contrast of EEG power across sleep stages and 7 frequency bands. " +
+           "Permutation testing (5000 permutations, two-tailed), corrected with " +
+           "<b>TFCE</b> and <b>cluster-based</b> methods at <b>α = .05</b>.",
+  n_subj:  26,                 // subjects (shown in tables)
+  conditions: { A:"Condition A", B:"Condition B" },
+
+  // Power normalisation variants. key drives image filenames (absolute / normalised).
+  powers: [
+    { key:"absolute",   name:"Absolute"   },
+    { key:"normalised", name:"Normalised" }
+  ],
+
+  // Sleep stages (row order). key drives image filenames (n1/n2/n3/rem).
+  stages: [
+    { key:"n1",  name:"N1"  },
+    { key:"n2",  name:"N2"  },
+    { key:"n3",  name:"N3"  },
+    { key:"rem", name:"REM" }
+  ],
+
+  // Frequency bands (column order). key drives image filenames.
+  bands: [
+    { key:"low-delta", name:"Low-delta", gk:"\u03B4", range:"0.5\u20131 Hz" },
+    { key:"delta",     name:"Delta",     gk:"\u03B4", range:"1\u20134 Hz"   },
+    { key:"theta",     name:"Theta",     gk:"\u03B8", range:"4\u20138 Hz"   },
+    { key:"alpha",     name:"Alpha",     gk:"\u03B1", range:"8\u201312 Hz"  },
+    { key:"sigma",     name:"Sigma",     gk:"\u03C3", range:"12\u201316 Hz" },
+    { key:"beta",      name:"Beta",      gk:"\u03B2", range:"16\u201330 Hz" },
+    { key:"gamma",     name:"Gamma",     gk:"\u03B3", range:"30\u201345 Hz" }
+  ],
+
+  // values[power][stage][band] = [ n_uncorr, n_TFCE, n_cluster, min_cluster_p ]
+  values: {
+   absolute: {
+    n1: {
+      "low-delta":[142, 0,  0,  0.068], "delta":[150,16,  0, 0.125],
+      "theta":[ 22, 0,  0, 0.178],      "alpha":[ 48, 0,  0, 0.100],
+      "sigma":[162,75,162, 0.006],      "beta":[ 44, 7, 20, 0.008],
+      "gamma":[ 68,23, 26, 0.037]
+    },
+    n2: {
+      "low-delta":[124, 0,  0, 0.378],  "delta":[152, 0,  0, 0.306],
+      "theta":[ 26, 0,  0, 0.389],      "alpha":[ 48, 2,  0, 0.071],
+      "sigma":[ 32, 0,  0, 0.076],      "beta":[ 26,11, 11, 0.010],
+      "gamma":[130, 7,130, 0.046]
+    },
+    n3: {
+      "low-delta":[ 37,19, 24, 0.014],  "delta":[  0, 0,  0, 1.000],
+      "theta":[  0, 0,  0, 1.000],      "alpha":[ 47, 0,  0, 0.102],
+      "sigma":[ 87,37, 85, 0.012],      "beta":[164,65,  0, 0.066],
+      "gamma":[147, 1,  0, 0.052]
+    },
+    rem: {
+      "low-delta":[ 33, 0,  0, 0.188],  "delta":[ 10, 0,  0, 0.240],
+      "theta":[  2, 0,  0, 0.140],      "alpha":[ 33, 7, 16, 0.033],
+      "sigma":[153,101,153,0.004],      "beta":[126,22,  0, 0.066],
+      "gamma":[112, 3,  0, 0.136]
+    }
+   },
+   /* placeholder/dummy numbers — swap in real normalised results */
+   normalised: {
+    n1: {
+      "low-delta":[ 80, 0,  0, 0.210], "delta":[ 96, 8,  0, 0.140],
+      "theta":[ 40, 0,  0, 0.260],     "alpha":[ 62,12, 30, 0.022],
+      "sigma":[110,44,110, 0.009],     "beta":[ 30, 4,  0, 0.090],
+      "gamma":[ 52,10,  0, 0.120]
+    },
+    n2: {
+      "low-delta":[ 70, 0,  0, 0.330], "delta":[ 88, 0,  0, 0.290],
+      "theta":[ 34, 0,  0, 0.310],     "alpha":[ 56, 6,  0, 0.060],
+      "sigma":[ 48, 6, 18, 0.031],     "beta":[ 20, 5,  5, 0.040],
+      "gamma":[ 90, 3, 60, 0.048]
+    },
+    n3: {
+      "low-delta":[ 44,12, 22, 0.018], "delta":[  6, 0,  0, 0.610],
+      "theta":[  4, 0,  0, 0.540],     "alpha":[ 38, 0,  0, 0.130],
+      "sigma":[ 70,28, 66, 0.015],     "beta":[120,40,  0, 0.072],
+      "gamma":[100, 0,  0, 0.088]
+    },
+    rem: {
+      "low-delta":[ 24, 0,  0, 0.260], "delta":[  8, 0,  0, 0.300],
+      "theta":[  6, 0,  0, 0.190],     "alpha":[ 40,10, 22, 0.024],
+      "sigma":[120,72,120, 0.006],     "beta":[ 88,14,  0, 0.080],
+      "gamma":[ 70, 2,  0, 0.160]
+    }
+   }
+  },
+
+  /* OPTIONAL — significant channel-label lists (filled in later, e.g. by Claude in VS Code).
+     channels[power][stage][band] = { u:[...], tfce:[...], cluster:[...] }  — names like "E1".
+     Anything missing falls back to sample labels E1..En so click-to-reveal still works. */
+  channels: {
+    absolute:   { /* rem: { sigma: { u:["E1","E2"], tfce:["E1"], cluster:["E1"] } } */ },
+    normalised: { }
+  }
+};
+/* =====================================================================
+   ▲▲▲  END OF DATA  —  rendering code below; no need to edit  ▲▲▲
+   ===================================================================== */
+
+/* ---- generic axis + analysis resolution (new optional REPORT fields; absent => today's behaviour) ---- */
+const AX = REPORT.axes || {
+  toggle: { name:"Power", levels:REPORT.powers },
+  tabs:   { name:"Stage", levels:REPORT.stages },
+  rows:   { name:"Band",  levels:REPORT.bands  }
+};
+const SHOW_TOGGLE   = !!(AX.toggle && AX.toggle.levels && AX.toggle.levels.length);
+const TOGGLE_LEVELS = SHOW_TOGGLE ? AX.toggle.levels : [{ key:Object.keys(REPORT.values)[0], name:"" }];
+const TABS = AX.tabs.levels, ROWS = AX.rows.levels;
+const COND = REPORT.conditions || { A:"A", B:"B" };
+const ANALYSIS = REPORT.analysis || {
+  stat:"t",
+  effect_label:`${COND.A} vs ${COND.B}`,
+  legend:`${COND.A} > ${COND.B}`
+};
+const MEAN_PANELS = REPORT.mean_panels || [
+  { label:`${COND.A} mean`, token:"condA_mean" },
+  { label:`${COND.B} mean`, token:"condB_mean" }
+];
+const STAT_TOKEN = REPORT.stat_token || (ANALYSIS.stat==="F" ? "stat" : "Tmap");
+const HAS_PERIO  = REPORT.has_periodogram !== false;
+
+/* ---- image filename patterns. `tg`=toggle key; tokens default to today's condA_mean/condB_mean/Tmap ---- */
+const IMG = {
+  periodogram: (s,tg)        => `global_periodogram_${s}_${tg}.png`,
+  grid:        (s,tg)        => `GRID_${s}_${tg}.png`,
+  mean:        (s,b,tg,tok)  => `${s}_${tg}_${b}_${tok}.png`,
+  stat:        (s,b,tg)      => `${s}_${tg}_${b}_${STAT_TOKEN}.png`
+};
+let power = TOGGLE_LEVELS[0].key;   // current toggle key (kept name `power` for minimal churn)
+function powerName(){ const l=TOGGLE_LEVELS.find(p=>p.key===power); return l ? l.name : ""; }
+const METRIC_IDX = { u:0, tfce:1, clu:2 };
+const $ = (s,r=document)=>r.querySelector(s);
+const el=(t,c,h)=>{const n=document.createElement(t);if(c)n.className=c;if(h!=null)n.innerHTML=h;return n;};
+
+/* a band cell: pull the row out of the current power type */
+function rec(stage,band){
+  const v = REPORT.values[power]?.[stage]?.[band] || [0,0,0,1];
+  return { u:v[0], tfce:v[1], clu:v[2], p:v[3], n:REPORT.n_subj };
+}
+const isSig = d => d.tfce>0 || d.clu>0;
+
+/* image slot with grey placeholder fallback */
+function slot(src, ratio){
+  return `<figure class="slot" style="aspect-ratio:${ratio}">
+    <img src="${src}" alt="${src}" loading="lazy" onload="var p=this.parentNode.querySelector('.ph'); if(p) p.style.display='none'" onerror="this.classList.add('err')">
+    <figcaption class="ph">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>
+      <span class="fn">${src}</span>
+    </figcaption>
+  </figure>`;
+}
+
+/* ============ HEADER ============ */
+function renderHeader(){
+  $("#studyTitle").textContent = REPORT.title;
+  if(REPORT.title) document.title = REPORT.title;
+  let line = REPORT.methods + ` &nbsp;<b>N = ${REPORT.n_subj}</b>.`;
+  if (ANALYSIS.legend) line += ` ${ANALYSIS.stat==="F" ? "Map" : "Warm map"} = ${ANALYSIS.legend}.`;
+  if (ANALYSIS.model_info) line += ` &nbsp;<span style="color:var(--muted)">Model: ${ANALYSIS.model_info}</span>`;
+  $("#methodsLine").innerHTML = line;
+  $("#genLine").textContent = "Generated " + new Date().toISOString().slice(0,10);
+  const h2=$("#perStageH2"); if(h2) h2.textContent = `By ${AX.tabs.name.toLowerCase()}`;
+  const sub=$("#perStageSub"); if(sub) sub.textContent = `${AX.rows.name} grid · per-${AX.rows.name.toLowerCase()} detail · summary table`;
+  const hs=$("#heatSub"); if(hs) hs.textContent = `Significant channels per ${AX.tabs.name.toLowerCase()} × ${AX.rows.name.toLowerCase()} — click any cell to inspect that ${AX.tabs.name.toLowerCase()}`;
+  renderToggleSeg();
+  renderLegendStat();
+  if (!HAS_PERIO) { const ps=$("#perioSection"); if (ps) ps.style.display="none"; }
+}
+
+/* rebuild the segmented toggle from the toggle axis; hide it when there is no toggle */
+function renderToggleSeg(){
+  const seg=$("#powerSeg"); if(!seg) return;
+  if(!SHOW_TOGGLE){ seg.style.display="none"; return; }
+  seg.innerHTML="";
+  TOGGLE_LEVELS.forEach((lv,i)=>{
+    const b=el("button", i===0?"on":null, lv.name);
+    b.dataset.pw=lv.key; seg.appendChild(b);
+  });
+}
+
+/* legend stat swatch: diverging signed t (default) or sequential non-negative F */
+function renderLegendStat(){
+  const g=$("#legendStat"); if(!g) return;
+  if(ANALYSIS.stat==="F"){
+    g.innerHTML = `<span class="k">${ANALYSIS.effect_label||"F statistic"}</span>`
+      + `<span class="chip"><span class="tmapbar" style="background:linear-gradient(90deg,#f3f6f8,#0e4d63)"></span></span>`
+      + `<span style="color:var(--muted)">low</span><span style="color:var(--muted)">·</span><span style="color:var(--warm)">high F</span>`;
+  } else {
+    g.innerHTML = `<span class="k">T-map (${ANALYSIS.effect_label||(COND.A+" vs "+COND.B)})</span>`
+      + `<span class="chip"><span class="tmapbar"></span></span>`
+      + `<span style="color:var(--cool)">${COND.B}&gt;${COND.A}</span><span style="color:var(--muted)">·</span><span style="color:var(--warm)">${ANALYSIS.legend||("warm = "+COND.A+" > "+COND.B)}</span>`;
+  }
+}
+
+/* ============ REGIONAL OVERVIEW ============ */
+function renderPerio(){
+  if(!HAS_PERIO) return;
+  const tn = AX.tabs.name.toLowerCase();
+  $("#perioSub").textContent = `Global periodogram per ${tn}${SHOW_TOGGLE?` — ${powerName().toLowerCase()} spectrum`:""}, with per-frequency p-value panel`;
+  const g=$("#perioGrid"); g.innerHTML="";
+  TABS.forEach(s=>{
+    const fig=el("div","fig");
+    fig.innerHTML=`
+      <div class="cap"><span class="t">Global periodogram — ${s.name}</span><span class="f">${IMG.periodogram(s.key,power)}</span></div>
+      ${slot(IMG.periodogram(s.key,power),"2900/2814")}`;
+    g.appendChild(fig);
+  });
+}
+
+/* ============ OVERVIEW HEATMAP ============ */
+let heatMetric = "clu";
+function heatColor(v,max){
+  if(!v) return {bg:"#f3f6f8", fg:"#9fb0bd", zero:true};
+  const t = Math.pow(Math.min(1, v/max), 0.72);
+  // light teal -> deep teal
+  const a=[223,238,242], b=[14,77,99];
+  const mix=i=>Math.round(a[i]+(b[i]-a[i])*t);
+  return {bg:`rgb(${mix(0)},${mix(1)},${mix(2)})`, fg: t>0.52?"#fff":"#16323d", zero:false};
+}
+function renderHeat(){
+  const idx = METRIC_IDX[heatMetric];
+  let max=1;
+  TABS.forEach(s=>ROWS.forEach(b=>{max=Math.max(max, REPORT.values[power][s.key][b.key][idx]);}));
+
+  const t=$("#heatTable"); t.innerHTML="";
+  // header row
+  const thead=el("thead"); const hr=el("tr");
+  hr.appendChild(el("th","corner",`${AX.tabs.name} \\ ${AX.rows.name}`));
+  ROWS.forEach(b=> hr.appendChild(el("th",null,`${b.gk?`<span class="gk">${b.gk}</span>`:""}${b.name}${b.range?`<span class="rg">${b.range}</span>`:(b.sub?`<span class="rg">${b.sub}</span>`:"")}`)));
+  thead.appendChild(hr); t.appendChild(thead);
+
+  const tb=el("tbody");
+  TABS.forEach(s=>{
+    const tr=el("tr");
+    tr.appendChild(el("th","row",s.name));
+    ROWS.forEach(b=>{
+      const v=REPORT.values[power][s.key][b.key][idx];
+      const c=heatColor(v,max);
+      const td=el("td");
+      const d=rec(s.key,b.key);
+      const cell=el("div","cell"+(c.zero?" zero":""),String(v));
+      cell.style.background=c.bg; cell.style.color=c.fg;
+      cell.title=`${s.name} · ${b.name}  —  ${v} significant channel(s) [${heatMetric}]\nuncorr ${d.u} · TFCE ${d.tfce} · cluster ${d.clu} · min p ${fmtP(d.p)}`;
+      cell.onclick=()=>{ selectStage(s.key); document.getElementById("tabs").scrollIntoView?0:0; window.scrollTo({top:document.getElementById("tabs").getBoundingClientRect().top+window.scrollY-12,behavior:"smooth"}); };
+      td.appendChild(cell); tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+
+  const c0=heatColor(0,max), c1=heatColor(max*0.45,max), c2=heatColor(max,max);
+  $("#heatBar").style.background=`linear-gradient(90deg,${c0.bg},${c1.bg},${c2.bg})`;
+  $("#heatMax").textContent=max;
+}
+$("#metricSeg").addEventListener("click",e=>{
+  const btn=e.target.closest("button"); if(!btn)return;
+  heatMetric=btn.dataset.m;
+  [...$("#metricSeg").children].forEach(b=>b.classList.toggle("on",b===btn));
+  renderHeat();
+  refreshTables();
+});
+
+/* ============ TABS + PANELS ============ */
+function sigCount(stageKey){
+  return ROWS.reduce((n,b)=> n + (isSig(rec(stageKey,b.key))?1:0), 0);
+}
+function renderTabs(){
+  const tabs=$("#tabs"); tabs.innerHTML="";
+  TABS.forEach((s,i)=>{
+    const n=sigCount(s.key);
+    const btn=el("button",i===0?"on":null,
+      `${s.name}<span class="ct${n?'':' none'}">${n}</span>`);
+    btn.dataset.stage=s.key;
+    btn.onclick=()=>selectStage(s.key);
+    tabs.appendChild(btn);
+  });
+  const panels=$("#panels"); panels.innerHTML="";
+  TABS.forEach((s,i)=> panels.appendChild(buildPanel(s,i===0)));
+}
+function selectStage(key){
+  [...$("#tabs").children].forEach(b=>b.classList.toggle("on",b.dataset.stage===key));
+  [...$("#panels").children].forEach(p=>p.classList.toggle("on",p.dataset.stage===key));
+}
+
+function buildPanel(stage,active){
+  const p=el("div","panel"+(active?" on":""));
+  p.dataset.stage=stage.key;
+  p.dataset.stageName=`${stage.name} — ${AX.tabs.name}`;
+
+  /* figures: row grid (periodogram now lives in Global Overview) */
+  const fr=el("div","fig");
+  fr.style.marginBottom="34px";
+  fr.innerHTML=`
+      <div class="cap"><span class="t">${AX.rows.name} grid — ${stage.name}</span><span class="f">${IMG.grid(stage.key,power)}</span></div>
+      ${slot(IMG.grid(stage.key,power),"16/9")}`;
+  p.appendChild(fr);
+
+  /* per-band detail (topoplots + badge) */
+  p.appendChild(buildBandDetail(stage));
+  /* summary table */
+  p.appendChild(buildTable(stage));
+  return p;
+}
+
+/* ---- summary table — columns follow the selected metric ---- */
+function visibleCols(){
+  const cols=[{key:"band",label:AX.rows.name},{key:"n",label:"n subj"},{key:"u",label:"Uncorr."}];
+  if(heatMetric==="clu")       cols.push({key:"clu", label:"Cluster"});
+  else if(heatMetric==="tfce") cols.push({key:"tfce",label:"TFCE"});
+  else { cols.push({key:"tfce",label:"TFCE"}); cols.push({key:"clu",label:"Cluster"}); }
+  cols.push({key:"p",label:"min cluster p"});
+  return cols;
+}
+/* row counts as significant on the metric currently shown */
+function rowSig(d){
+  if(heatMetric==="clu")  return d.clu>0;
+  if(heatMetric==="tfce") return d.tfce>0;
+  return d.tfce>0 || d.clu>0;
+}
+/* ---- post-hoc maps for a row (optional). posthoc[tog][tab][row] = [{label,token,u,tfce,clu,p}] ---- */
+function posthocFor(stage,band){
+  const ph = REPORT.posthoc && REPORT.posthoc[power] && REPORT.posthoc[power][stage] && REPORT.posthoc[power][stage][band];
+  return Array.isArray(ph) ? ph : [];
+}
+
+/* ---- per-row detail: k mean panels + main stat map + significance badge (+ optional post-hoc) ---- */
+function buildBandDetail(stage){
+  const sec=el("div","pbd");
+  sec.innerHTML=`<div class="pbd-head">Per-${AX.rows.name.toLowerCase()} detail</div>`;
+  const ncells = MEAN_PANELS.length + 1;                 // mean panels + main stat map
+  const gtc = `96px repeat(${ncells},1fr)`;              // name + cells (significance badge removed)
+  const statCap = ANALYSIS.stat==="F" ? (ANALYSIS.effect_label||"F-map")
+                                      : `T-map (${ANALYSIS.effect_label||(COND.A+" vs "+COND.B)})`;
+  ROWS.forEach(b=>{
+    const d=rec(stage.key,b.key);
+    const cls = d.clu>0 ? "sig" : (d.tfce>0 ? "tr" : "ns");
+    const ph = posthocFor(stage.key,b.key);
+    const row=el("div","pbd-row");
+    row.style.gridTemplateColumns = gtc;
+    let html = `<div class="pbd-name">${b.name}${(b.range||b.sub)?`<small>${b.range||b.sub}</small>`:""}${ph.length?`<button class="ph-toggle" type="button">Hide post-hoc</button>`:""}</div>`;
+    MEAN_PANELS.forEach(mp=>{
+      html += `<div class="pbd-cell">${slot(IMG.mean(stage.key,b.key,power,mp.token),"5/4")}<div class="pbd-cap">${mp.label}</div></div>`;
+    });
+    html += `<div class="pbd-cell">${slot(IMG.stat(stage.key,b.key,power),"5/4")}<div class="pbd-cap">${statCap}</div></div>`;
+    row.innerHTML = html;
+    sec.appendChild(row);
+
+    if(ph.length){
+      const phrow=el("div","pbd-ph");   // shown by default so post-hoc maps are visible
+      phrow.innerHTML = `<div class="pbd-ph-head">Post-hoc pairwise contrasts</div>` + ph.map(e=>{
+        const ec = e.clu>0?"sig":(e.tfce>0?"tr":"ns");
+        return `<figure class="ph-card">${slot(IMG.mean(stage.key,b.key,power,e.token),"5/4")}
+          <figcaption><b>${e.label}</b></figcaption></figure>`;
+      }).join("");
+      sec.appendChild(phrow);
+      const btn = row.querySelector(".ph-toggle");
+      btn.addEventListener("click",()=>{
+        const hidden = phrow.style.display==="none";
+        phrow.style.display = hidden ? "flex" : "none";
+        btn.textContent = hidden ? "Hide post-hoc" : `Post-hoc (${ph.length})`;
+      });
+    }
+  });
+  return sec;
+}
+
+/* ---- channel labels for a band/metric (falls back to sample E1..En) ---- */
+function chanLabels(stage,band,metric){
+  const key = metric==="u" ? "u" : metric==="tfce" ? "tfce" : "cluster";
+  const c = REPORT.channels && REPORT.channels[power] && REPORT.channels[power][stage] && REPORT.channels[power][stage][band];
+  if(c && Array.isArray(c[key])) return {labels:c[key], placeholder:false};
+  const d=rec(stage,band);
+  const n = metric==="u" ? d.u : metric==="tfce" ? d.tfce : d.clu;
+  return {labels:Array.from({length:n},(_,i)=>"E"+(i+1)), placeholder:true};
+}
+const METRIC_NAME={u:"Uncorrected",tfce:"TFCE-corrected",clu:"Cluster-corrected"};
+function chanDetailHtml(stage,band,metric){
+  const {labels,placeholder}=chanLabels(stage,band,metric);
+  if(!labels.length) return `<div class="chan-detail empty">No ${METRIC_NAME[metric]} significant channels.</div>`;
+  const chips=labels.map(l=>`<span class="chip-ch">${l}</span>`).join("");
+  return `<div class="chan-detail">
+    <div class="cd-lab">${METRIC_NAME[metric]} significant channels <b>(${labels.length})</b>${placeholder?'<span class="cd-note">sample labels — replace via REPORT.channels</span>':""}</div>
+    <div class="chips-ch">${chips}</div></div>`;
+}
+
+/* ---- summary table — columns follow metric; click a count to list channels ---- */
+function buildTable(stage){
+  const cols=visibleCols();
+  const wrap=el("div","tablewrap"); wrap.dataset.stage=stage.key;
+  wrap.innerHTML=`<div class="thead-note"><span>Significant channels per band — <b>significant rows highlighted</b></span><span style="font-family:var(--mono);font-size:11px">click a count to list channels</span></div>`;
+  const tbl=el("table","sum");
+  const thead=el("thead"); const tr=el("tr");
+  cols.forEach(c=> tr.appendChild(el("th",null,c.label)));
+  thead.appendChild(tr); tbl.appendChild(thead);
+  const tb=el("tbody");
+  ROWS.forEach(b=>{
+    const d=rec(stage.key,b.key);
+    const row=el("tr", rowSig(d)?"sig":null);
+    row.dataset.stage=stage.key; row.dataset.band=b.key;
+    const pCls = d.p<0.05?"p-sig":(d.p<0.1?"p-tr":"");
+    let html=`<td class="band">${b.gk?`<span class="gk">${b.gk}</span>`:""}${b.name}${(b.range||b.sub)?` <span style="color:var(--muted);font-weight:500;font-family:var(--mono);font-size:11px">${b.range||b.sub}</span>`:""}</td>`;
+    cols.slice(1).forEach(c=>{
+      if(c.key==="n")         html+=`<td>${d.n}</td>`;
+      else if(c.key==="u")    html+=`<td class="cnt" data-m="u">${d.u}</td>`;
+      else if(c.key==="tfce") html+=`<td class="cnt ${d.tfce>0?'pos':''}" data-m="tfce">${d.tfce}</td>`;
+      else if(c.key==="clu")  html+=`<td class="cnt ${d.clu>0?'pos':''}" data-m="clu">${d.clu}</td>`;
+      else if(c.key==="p")    html+=`<td class="${pCls}">${fmtP(d.p)}</td>`;
+    });
+    row.innerHTML=html; tb.appendChild(row);
+    const det=el("tr","chan-row");
+    det.innerHTML=`<td colspan="${cols.length}"></td>`;
+    tb.appendChild(det);
+  });
+  tbl.appendChild(tb); wrap.appendChild(tbl);
+
+  // click a count cell -> toggle channel-label list in the row below
+  tbl.addEventListener("click",e=>{
+    const td=e.target.closest("td.cnt"); if(!td)return;
+    const row=td.parentElement, det=row.nextElementSibling, metric=td.dataset.m;
+    const already = det.classList.contains("open") && det.dataset.m===metric;
+    [...row.querySelectorAll("td.cnt")].forEach(c=>c.classList.remove("active"));
+    if(already){ det.classList.remove("open"); det.dataset.m=""; return; }
+    det.dataset.m=metric; td.classList.add("active");
+    det.firstElementChild.innerHTML = chanDetailHtml(row.dataset.stage, row.dataset.band, metric);
+    det.classList.add("open");
+  });
+  return wrap;
+}
+/* rebuild every stage's table when the metric changes (active tab preserved) */
+function refreshTables(){
+  [...document.querySelectorAll("#panels .tablewrap")].forEach(old=>{
+    const stage=TABS.find(s=>s.key===old.dataset.stage);
+    old.replaceWith(buildTable(stage));
+  });
+}
+
+/* ---- helpers ---- */
+function fmtP(p){
+  if(p>=1) return "1.00";
+  if(p<0.001) return "<.001";
+  return p.toFixed(3).replace(/^0/,"");
+}
+
+/* ============ POWER TOGGLE ============ */
+function renderAll(){
+  renderPerio();
+  renderHeat();
+  renderTabs();
+}
+$("#powerSeg").addEventListener("click",e=>{
+  const btn=e.target.closest("button"); if(!btn||btn.dataset.pw===power)return;
+  power=btn.dataset.pw;
+  [...$("#powerSeg").children].forEach(b=>b.classList.toggle("on",b===btn));
+  renderAll();
+});
+
+/* ---- boot ---- */
+renderHeader();
+renderAll();
+</script>
+</body>
+</html>

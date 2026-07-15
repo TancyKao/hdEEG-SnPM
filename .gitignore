@@ -1,0 +1,91 @@
+# =============================================================================
+# Vendored third-party
+# =============================================================================
+# EEGLAB ships alongside the toolbox (added to path via genpath) but is not our
+# code and is ~116 MB. Install/obtain it separately; do not track it here.
+eeglab2022.1/
+
+# =============================================================================
+# Regenerable analysis outputs
+# =============================================================================
+# Re-running the toolbox regenerates all of these (topoplots, Excel tables,
+# .mat result structs, HTML reports). ~600 MB. Real outputs live on Dropbox.
+test_data/
+temp_check_csv/
+
+# =============================================================================
+# Reference method PDFs
+# =============================================================================
+# Method papers / derivations — binary, large, and available on Dropbox.
+# Keep them out of git history. Remove this line if you want them tracked.
+Ref/
+
+# =============================================================================
+# Raw EEG recordings (any location) — belong on Dropbox / Gadi, never in git
+# =============================================================================
+*.set
+*.fdt
+*.edf
+*.bdf
+*.cnt
+*.eeg
+*.vhdr
+*.vmrk
+*.fif
+*.gz
+
+# NOTE: dependencies/*.mat, *.sfp, *.csv are montage / channel-location ASSETS
+# required as pipeline inputs and are intentionally TRACKED. Do not add a global
+# *.mat ignore — it would drop the neighbour matrices and chanloc files.
+
+# =============================================================================
+# Manual backups / MATLAB temp / autosave
+# =============================================================================
+*.bak
+*.asv
+*.m~
+*.autosave
+*.orig
+*.rej
+*.tmp
+slprj/
+octave-workspace
+
+# =============================================================================
+# Logs and run artifacts
+# =============================================================================
+*.log
+*.out
+*.err
+
+# =============================================================================
+# Local environment / secrets
+# =============================================================================
+.env
+.env.local
+*.local.m
+local_config.m
+secrets.json
+*.pem
+*.key
+id_rsa*
+
+# =============================================================================
+# OS / editor
+# =============================================================================
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.Spotlight-V100
+.Trashes
+.fseventsd
+.AppleDouble
+.LSOverride
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.~lock.*

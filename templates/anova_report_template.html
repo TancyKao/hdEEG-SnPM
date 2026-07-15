@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SnPM Report</title>
+<style>
+:root{
+  --ink:#1b2733; --ink-2:#445261; --muted:#7c8a98;
+  --line:#e3e9ef; --line-2:#eef2f6; --page:#f5f7f9; --panel:#fff;
+  --accent:#1f6f8b; --accent-soft:#e8f1f4;
+  --sig:#1f8a5b; --sig-soft:#e7f4ec;
+  --warm:#c2543a; --cool:#2f6db0; --amber:#b8862a;
+  --serif:"Charter","Georgia",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:"SFMono-Regular",ui-monospace,"Menlo","Consolas",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 22px 60px}
+h1,h2,h3{font-family:var(--serif);font-weight:600;color:var(--ink);margin:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.section{margin-top:26px}
+.section>.head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}
+.section>.head h2{font-size:18px}
+.section>.head .sub{color:var(--muted);font-size:12.5px}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+
+/* masthead */
+.masthead{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;
+  padding-bottom:18px;border-bottom:1px solid var(--line)}
+.masthead h1{font-size:26px;margin:6px 0 8px}
+.masthead .methods{color:var(--ink-2);font-size:13px;max-width:760px;margin:0}
+.masthead .actions{display:flex;flex-direction:column;gap:10px;align-items:flex-end;flex-shrink:0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.seg button{border:0;background:transparent;font:inherit;font-size:12.5px;color:var(--ink-2);
+  padding:6px 13px;cursor:pointer}
+.seg button.on{background:var(--accent);color:#fff}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;font:inherit;font-size:12.5px;
+  color:var(--ink-2);padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn svg{width:15px;height:15px}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:14px 18px;padding:13px 16px;margin-top:16px}
+.legend .grp{display:flex;align-items:center;gap:8px}
+.legend .k{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.legend .chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2)}
+.swatch{width:13px;height:13px;border-radius:3px;display:inline-block;border:1px solid var(--line)}
+.fbar{width:74px;height:11px;border-radius:3px;background:linear-gradient(90deg,#eef4f6,var(--accent))}
+.legend .sep{width:1px;height:22px;background:var(--line)}
+
+/* reading cards */
+.read{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.read .rc{padding:14px 15px}
+.read .rc h3{font-size:13.5px;margin-bottom:7px}
+.read .rc p{margin:0;color:var(--ink-2);font-size:12.5px}
+.read .pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.pill{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);color:var(--accent);
+  border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600}
+.pill .n{font-family:var(--mono);color:var(--ink-2);font-weight:600}
+.read .calc{font-family:var(--mono);font-size:12px;color:var(--ink);margin-top:6px}
+.read .mini{display:flex;gap:5px;margin-top:8px;align-items:center}
+.read .mini i{width:13px;height:13px;border-radius:3px;display:inline-block}
+
+/* periodogram */
+.perio-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.fig .cap{display:flex;justify-content:space-between;align-items:baseline;padding:11px 14px;border-bottom:1px solid var(--line-2)}
+.fig .cap .t{font-weight:600;font-size:13px}
+.fig .cap .f{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.slot{position:relative;margin:0;background:var(--line-2);overflow:hidden}
+.slot img{width:100%;height:100%;object-fit:contain;display:block}
+.slot img.err{visibility:hidden}
+.slot .ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:7px;color:#aab6c1}
+.slot .ph svg{width:26px;height:26px}
+.slot .ph .fn{font-family:var(--mono);font-size:10px;color:#9aa7b2}
+
+/* heatmap */
+.heat-tools{display:flex;align-items:center;gap:14px;margin-bottom:12px;flex-wrap:wrap}
+.heat-legend{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11.5px;font-family:var(--mono)}
+.heat-legend .bar{width:120px;height:11px;border-radius:3px}
+.heatwrap{overflow-x:auto}
+table.heat{border-collapse:separate;border-spacing:4px;width:100%}
+table.heat th{font-weight:600;font-size:12px;color:var(--ink-2);padding:4px 6px}
+table.heat th.corner{text-align:left;color:var(--muted);font-weight:600}
+table.heat th .gk{font-family:var(--serif);font-style:italic;margin-right:5px;color:var(--ink)}
+table.heat th .rg{display:block;font-family:var(--mono);font-size:10px;color:var(--muted);font-weight:500}
+table.heat th.row{text-align:right;white-space:nowrap}
+.cell{min-width:54px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:6px;
+  font-family:var(--mono);font-size:13px;cursor:pointer;font-variant-numeric:tabular-nums}
+.cell.zero{cursor:default}
+
+/* tabs + panels */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:0}
+.tabs button{border:0;background:transparent;font:inherit;font-size:13.5px;color:var(--muted);
+  padding:9px 15px;cursor:pointer;border-bottom:2px solid transparent;display:flex;align-items:center;gap:7px}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.ct{font-family:var(--mono);font-size:11px;background:var(--sig-soft);color:var(--sig);border-radius:10px;padding:1px 7px}
+.ct.none{background:var(--line-2);color:var(--muted)}
+.panel{display:none;padding-top:20px}
+.panel.on{display:block}
+
+.pbd{margin-top:22px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.pbd-head{padding:13px 16px;border-bottom:1px solid var(--line-2);font-weight:650;font-size:14px}
+.pbd-row{display:grid;gap:18px;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line-2)}
+.pbd-name{font-size:14px;font-weight:650}
+.pbd-name small{display:block;color:var(--muted);font-family:var(--mono);font-size:10.5px;font-weight:500;margin-top:3px}
+.pbd-cell{text-align:center}
+.pbd-cell .slot{aspect-ratio:5/4;border-radius:6px}
+.pbd-cap{font-size:11px;color:var(--muted);margin-top:7px}
+.ph-toggle{justify-self:start;font-family:var(--mono);font-size:10.5px;font-weight:600;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel);color:var(--accent);border-radius:6px;padding:4px 9px}
+.pbd-ph{display:flex;flex-wrap:wrap;gap:18px;padding:12px 18px 20px;border-bottom:1px solid var(--line-2);
+  background:#fafbfc}
+.pbd-ph-head{flex-basis:100%;font-size:12.5px;font-weight:650;color:var(--ink)}
+.ph-card{width:160px;text-align:center;margin:0}
+.ph-card .slot{aspect-ratio:5/4;border-radius:6px}
+.ph-card figcaption{margin-top:7px;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11.5px}
+.bdg{font-family:var(--mono);font-size:11px;font-weight:600;border-radius:20px;padding:4px 9px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.bdg.sig{background:var(--sig-soft);color:var(--sig)}
+.bdg.tr{background:#f6ecd2;color:var(--amber)}
+.bdg.ns{background:var(--line-2);color:var(--muted)}
+
+/* summary table */
+.tablewrap{margin-top:22px}
+.thead-note{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.thead-note span:first-child{font-weight:650;font-size:13.5px}
+.thead-note span:last-child{font-family:var(--mono);font-size:11px;color:var(--muted)}
+table.sum{width:100%;border-collapse:collapse;font-size:13px}
+table.sum th,table.sum td{text-align:right;padding:9px 12px;border-bottom:1px solid var(--line-2)}
+table.sum th{font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600}
+table.sum td.band,table.sum th:first-child{text-align:left}
+table.sum td:not(.band){font-family:var(--mono);font-variant-numeric:tabular-nums}
+table.sum tr.sig td{background:var(--sig-soft)}
+td.cnt{cursor:pointer}
+td.cnt.pos{color:var(--sig);font-weight:700}
+td.cnt.active{outline:2px solid var(--accent);outline-offset:-2px;border-radius:4px}
+td.band .gk{font-family:var(--serif);font-style:italic;margin-right:5px}
+.p-sig{color:var(--sig);font-weight:700}.p-tr{color:var(--amber)}
+.chan-row td{padding:0;border-bottom:1px solid var(--line-2)}
+.chan-detail{display:none}
+.chan-row.open .chan-detail{display:block;padding:12px 14px;background:#fafbfc}
+.cd-grp{margin-bottom:9px}
+.cd-grp:last-child{margin-bottom:0}
+.cd-lab{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--ink-2)}
+.cd-lab .cp{font-family:var(--mono);background:var(--accent-soft);color:var(--accent);border-radius:20px;
+  padding:1px 8px;font-weight:600}
+.cd-lab .none{color:var(--muted);font-style:italic}
+.cd-note{font-style:italic;color:var(--muted);font-size:11px}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip-ch{font-family:var(--mono);font-size:11px;background:var(--panel);border:1px solid var(--line);
+  border-radius:5px;padding:2px 6px;color:var(--ink-2)}
+
+.foot{margin-top:34px;padding-top:16px;border-top:1px solid var(--line);display:flex;
+  justify-content:space-between;color:var(--muted);font-size:11.5px}
+
+@media print{
+  body{background:#fff}
+  .actions,.heat-tools .seg,.ph-toggle{display:none!important}
+  .panel{display:block!important;page-break-before:always}
+  .pbd-ph{display:flex!important}
+  .chan-row.open .chan-detail{display:block!important}
+  .card,.pbd,.pbd-row,.ph-card,.fig{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">SnPM · Group spectral analysis</div>
+      <h1 id="studyTitle"></h1>
+      <p class="methods" id="methodsLine"></p>
+    </div>
+    <div class="actions">
+      <div class="seg" id="powerSeg"></div>
+      <button class="btn" onclick="window.print()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>
+        Print / PDF
+      </button>
+    </div>
+  </header>
+
+  <div class="legend card">
+    <div class="grp"><span class="k">Correction</span>
+      <span class="chip"><span class="swatch" style="background:var(--sig)"></span>TFCE</span>
+      <span class="chip"><span class="swatch" style="background:var(--accent)"></span>Cluster-based</span>
+    </div>
+    <span class="sep"></span>
+    <div class="grp"><span class="k">F statistic</span>
+      <span class="chip"><span class="fbar"></span></span>
+      <span style="color:var(--muted)">0</span><span style="color:var(--muted)">→</span><span style="color:var(--accent)">high F</span>
+    </div>
+    <span class="sep"></span>
+    <div class="grp"><span class="k">Significant</span>
+      <span class="chip"><span class="swatch" style="background:var(--sig-soft);border-color:var(--sig)"></span>≥1 corrected channel</span>
+    </div>
+  </div>
+
+  <section class="section">
+    <div class="head"><h2>Reading the statistics</h2><span class="sub">how this report is organised</span></div>
+    <div class="read" id="readCards"></div>
+  </section>
+
+  <section class="section" id="perioSection">
+    <div class="head"><h2>Global Overview</h2><span class="sub" id="perioSub"></span></div>
+    <div class="perio-grid" id="perioGrid"></div>
+  </section>
+
+  <section class="section">
+    <div class="head"><h2>Regional Overview</h2><span class="sub" id="heatSub"></span></div>
+    <div class="heat-tools">
+      <span class="eyebrow">Metric</span>
+      <div class="seg" id="metricSeg">
+        <button data-m="clu" class="on">Cluster</button>
+        <button data-m="tfce">TFCE</button>
+        <button data-m="u">Uncorrected</button>
+      </div>
+      <div class="heat-legend"><span>0</span><span class="bar" id="heatBar"></span><span id="heatMax">—</span><span>ch</span></div>
+    </div>
+    <div class="heatwrap card" style="padding:12px"><table class="heat" id="heatTable"></table></div>
+  </section>
+
+  <section class="section">
+    <div class="head"><h2 id="byStageH2"></h2><span class="sub" id="byStageSub"></span></div>
+    <div class="tabs" id="tabs"></div>
+    <div id="panels"></div>
+  </section>
+
+  <footer class="foot">
+    <span>Self-contained report — replace the <b>REPORT</b> object &amp; drop image PNGs alongside this HTML.</span>
+    <span id="genLine"></span>
+  </footer>
+</div>
+
+<script>
+/* =====================================================================
+   ▼▼▼  REPORT DATA — EDIT EVERYTHING IN THIS BLOCK  ▼▼▼
+   ===================================================================== */
+const REPORT = {
+  title: "Spectral power: 3-group ANOVA (omnibus F)",
+  methods: "One-way ANOVA of EEG power across groups, per stage and band. " +
+           "Permutation testing (1000 permutations, Freedman-Lane), corrected with " +
+           "<b>TFCE</b> and <b>cluster-based</b> methods at <b>α = .05</b>.",
+  n_subj: 36,
+  groups: [
+    { key:"G1", name:"G1", n:12, desc:"" },
+    { key:"G2", name:"G2", n:12, desc:"" },
+    { key:"G3", name:"G3", n:12, desc:"" }
+  ],
+  analysis: { stat:"F", effect_label:"Group (3 levels)", legend:"F statistic", model_info:"power ~ group" },
+  mean_panels: [
+    { label:"G1 mean", token:"g_G1_mean" },
+    { label:"G2 mean", token:"g_G2_mean" },
+    { label:"G3 mean", token:"g_G3_mean" }
+  ],
+  stat_token: "stat",
+  has_periodogram: true,
+  conditions: { A:"G1", B:"G3" },
+  powers: [ {key:"absolute",name:"Absolute"}, {key:"normalised",name:"Normalised"} ],
+  stages: [ {key:"n2",name:"N2"}, {key:"n3",name:"N3"} ],
+  bands:  [ {key:"delta",name:"Delta",gk:"δ",range:"1-4 Hz"},
+            {key:"sigma",name:"Sigma",gk:"σ",range:"12-16 Hz"},
+            {key:"beta", name:"Beta", gk:"β",range:"16-30 Hz"} ],
+  values: {
+    absolute:   { n2:{ delta:[8,0,0,0.79], sigma:[23,17,17,0.005], beta:[11,0,0,0.13] },
+                  n3:{ delta:[7,0,0,0.10], sigma:[10,0,0,0.47], beta:[8,1,0,0.35] } },
+    normalised: { n2:{ delta:[5,0,0,0.41], sigma:[22,17,17,0.005], beta:[10,0,1,0.05] },
+                  n3:{ delta:[10,0,0,0.89], sigma:[6,0,0,0.62], beta:[14,0,1,0.05] } }
+  },
+  channels: { absolute:{}, normalised:{} },
+  posthoc: {
+    absolute: { n2:{ sigma:[
+        {label:"G1 vs G2", token:"ph_G1VsG2", tfce:0,  clu:0,  p:0.185, ch:{u:[],tfce:[],cluster:[]}},
+        {label:"G1 vs G3", token:"ph_G1VsG3", tfce:17, clu:17, p:0.005, ch:{u:[],tfce:[],cluster:[]}},
+        {label:"G2 vs G3", token:"ph_G2VsG3", tfce:17, clu:17, p:0.005, ch:{u:[],tfce:[],cluster:[]}}
+    ] } }
+  }
+};
+/* =====================================================================
+   ▲▲▲  END OF DATA — rendering code below; no need to edit  ▲▲▲
+   ===================================================================== */
+const R = REPORT;
+const $=(s,r=document)=>r.querySelector(s);
+const el=(t,c,h)=>{const n=document.createElement(t);if(c)n.className=c;if(h!=null)n.innerHTML=h;return n;};
+const GROUPS=R.groups, K=GROUPS.length;
+const POWERS=R.powers, STAGES=R.stages, BANDS=R.bands;
+const MEAN=R.mean_panels||GROUPS.map(g=>({label:g.name+" mean",token:"g_"+g.key+"_mean"}));
+const STAT=R.stat_token||"stat";
+let power=POWERS[0].key;
+const pname=()=>{const p=POWERS.find(x=>x.key===power);return p?p.name:"";};
+let metric="clu";
+const MIDX={u:0,tfce:1,clu:2}, MNAME={u:"Uncorrected",tfce:"TFCE-corrected",clu:"Cluster-corrected"};
+const CHKEY={u:"u",tfce:"tfce",clu:"cluster"};
+
+const IMG={
+  perio:(s)=>`global_periodogram_${s}_${power}.png`,
+  grid:(s)=>`GRID_${s}_${power}.png`,
+  mean:(s,b,tok)=>`${s}_${power}_${b}_${tok}.png`,
+  stat:(s,b)=>`${s}_${power}_${b}_${STAT}.png`
+};
+function rec(s,b){const v=(R.values[power]&&R.values[power][s]&&R.values[power][s][b])||[0,0,0,1];
+  return {u:v[0],tfce:v[1],clu:v[2],p:v[3]};}
+function phlist(s,b){const a=R.posthoc&&R.posthoc[power]&&R.posthoc[power][s]&&R.posthoc[power][s][b];
+  return Array.isArray(a)?a:[];}
+function fmtP(p){if(p>=1)return"1.00";if(p<0.001)return"<.001";return p.toFixed(3).replace(/^0/,"");}
+
+function slot(src,ratio){
+  return `<figure class="slot" style="aspect-ratio:${ratio}">
+    <img src="${src}" alt="${src}" loading="lazy" onload="var p=this.parentNode.querySelector('.ph');if(p)p.style.display='none'" onerror="this.classList.add('err')">
+    <figcaption class="ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg><span class="fn">${src}</span></figcaption>
+  </figure>`;
+}
+
+/* ---------- masthead ---------- */
+function renderMasthead(){
+  $("#studyTitle").textContent=R.title;
+  let m=R.methods+` &nbsp;<b>N = ${R.n_subj}</b>.`;
+  if(R.analysis&&R.analysis.model_info) m+=` &nbsp;<span style="color:var(--muted)">Model: ${R.analysis.model_info}</span>`;
+  $("#methodsLine").innerHTML=m;
+  $("#genLine").textContent="Generated "+new Date().toISOString().slice(0,10);
+  const seg=$("#powerSeg"); seg.innerHTML="";
+  POWERS.forEach((p,i)=>{const b=el("button",i===0?"on":null,p.name);b.dataset.pw=p.key;seg.appendChild(b);});
+  $("#byStageH2").textContent="By stage";
+  $("#byStageSub").textContent="Band grid · per-band detail · post-hoc maps · summary table";
+}
+
+/* ---------- reading the statistics ---------- */
+function renderReading(){
+  const k=K, nPair=k*(k-1)/2, total=k+1+nPair;
+  const pills=GROUPS.map(g=>`<span class="pill">${g.name}<span class="n">n=${g.n}</span></span>`).join("");
+  const descs=GROUPS.filter(g=>g.desc).map(g=>`${g.name}: ${g.desc}`).join(" · ");
+  const cards=[
+    {h:"Groups", b:`<p>Between-subject comparison of ${k} groups.</p><div class="pills">${pills}</div>`+
+        (descs?`<p style="margin-top:7px">${descs}</p>`:"")},
+    {h:"Omnibus F vs pairwise", b:`<p>The omnibus <b>F</b> asks whether <i>any</i> group differs in a channel; the `+
+        `<b>${nPair}</b> pairwise contrasts localise <i>which</i> groups drive it.</p>`},
+    {h:"Maps per band", b:`<p>Each band shows <b>${total}</b> topoplots:</p>`+
+        `<div class="calc">${k} group means + 1 F-map + ${nPair} pairwise = ${total}</div>`},
+    {h:"Stat-map colour", b:`<p>Omnibus F is <b>sequential</b> (0 → high, non-negative). Pairwise contrasts are `+
+        `<b>diverging</b> (warm = 1st &gt; 2nd).</p>`+
+        `<div class="mini"><i style="background:linear-gradient(90deg,#eef4f6,var(--accent))"></i>`+
+        `<span style="color:var(--muted);font-size:11px">F</span>`+
+        `<i style="margin-left:10px;background:linear-gradient(90deg,var(--cool),#f4f4f4,var(--warm))"></i>`+
+        `<span style="color:var(--muted);font-size:11px">pairwise</span></div>`}
+  ];
+  $("#readCards").innerHTML=cards.map(c=>`<div class="rc card"><h3>${c.h}</h3>${c.b}</div>`).join("");
+}
+
+/* ---------- periodogram ---------- */
+function renderPerio(){
+  if(R.has_periodogram===false){const s=$("#perioSection");if(s)s.style.display="none";return;}
+  $("#perioSub").textContent=`Group-mean periodogram per stage — ${pname().toLowerCase()} spectrum`;
+  const g=$("#perioGrid"); g.innerHTML="";
+  STAGES.forEach(s=>{
+    const fig=el("div","fig card");
+    fig.innerHTML=`<div class="cap"><span class="t">Periodogram — ${s.name}</span><span class="f">${IMG.perio(s.key)}</span></div>${slot(IMG.perio(s.key),"3/2")}`;
+    g.appendChild(fig);
+  });
+}
+
+/* ---------- heatmap ---------- */
+function heatColor(v,max){
+  if(!v)return{bg:"#f3f6f8",fg:"#9fb0bd",zero:true};
+  const t=Math.pow(Math.min(1,v/max),0.72), a=[223,238,242], b=[31,111,139];
+  const mix=i=>Math.round(a[i]+(b[i]-a[i])*t);
+  return{bg:`rgb(${mix(0)},${mix(1)},${mix(2)})`,fg:t>0.5?"#fff":"#16323d",zero:false};
+}
+function renderHeat(){
+  $("#heatSub").textContent="Omnibus-F significant channels per stage × band — click a cell to jump to that stage";
+  const idx=MIDX[metric]; let max=1;
+  STAGES.forEach(s=>BANDS.forEach(b=>{max=Math.max(max,rec(s.key,b.key)[metric]);}));
+  const t=$("#heatTable"); t.innerHTML="";
+  const thead=el("thead"),hr=el("tr"); hr.appendChild(el("th","corner","Stage \\ Band"));
+  BANDS.forEach(b=>hr.appendChild(el("th",null,`${b.gk?`<span class="gk">${b.gk}</span>`:""}${b.name}${b.range?`<span class="rg">${b.range}</span>`:""}`)));
+  thead.appendChild(hr); t.appendChild(thead);
+  const tb=el("tbody");
+  STAGES.forEach(s=>{
+    const tr=el("tr"); tr.appendChild(el("th","row",s.name));
+    BANDS.forEach(b=>{
+      const v=rec(s.key,b.key)[metric], c=heatColor(v,max), td=el("td");
+      const cell=el("div","cell"+(c.zero?" zero":""),String(v));
+      cell.style.background=c.bg; cell.style.color=c.fg;
+      if(!c.zero) cell.onclick=()=>{selectStage(s.key);window.scrollTo({top:$("#tabs").getBoundingClientRect().top+window.scrollY-12,behavior:"smooth"});};
+      td.appendChild(cell); tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  const c0=heatColor(0,max),c1=heatColor(max*0.45,max),c2=heatColor(max,max);
+  $("#heatBar").style.background=`linear-gradient(90deg,${c0.bg},${c1.bg},${c2.bg})`;
+  $("#heatMax").textContent=max;
+}
+$("#metricSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
+  metric=b.dataset.m;[...$("#metricSeg").children].forEach(x=>x.classList.toggle("on",x===b));
+  renderHeat(); refreshTables();});
+
+/* ---------- tabs + panels ---------- */
+const isSig=d=>d.tfce>0||d.clu>0;
+function sigCount(sk){return BANDS.reduce((n,b)=>n+(isSig(rec(sk,b.key))?1:0),0);}
+function renderTabs(){
+  const tabs=$("#tabs"); tabs.innerHTML="";
+  STAGES.forEach((s,i)=>{const n=sigCount(s.key);
+    const btn=el("button",i===0?"on":null,`${s.name}<span class="ct${n?'':' none'}">${n}</span>`);
+    btn.dataset.stage=s.key; btn.onclick=()=>selectStage(s.key); tabs.appendChild(btn);});
+  const panels=$("#panels"); panels.innerHTML="";
+  STAGES.forEach((s,i)=>panels.appendChild(buildPanel(s,i===0)));
+}
+function selectStage(key){
+  [...$("#tabs").children].forEach(b=>b.classList.toggle("on",b.dataset.stage===key));
+  [...$("#panels").children].forEach(p=>p.classList.toggle("on",p.dataset.stage===key));
+}
+function buildPanel(stage,active){
+  const p=el("div","panel"+(active?" on":"")); p.dataset.stage=stage.key;
+  const fr=el("div","fig card"); fr.style.marginBottom="6px";
+  fr.innerHTML=`<div class="cap"><span class="t">Band grid — ${stage.name}</span><span class="f">${IMG.grid(stage.key)}</span></div>${slot(IMG.grid(stage.key),"16/9")}`;
+  p.appendChild(fr);
+  p.appendChild(buildDetail(stage));
+  p.appendChild(buildTable(stage));
+  return p;
+}
+
+/* per-band detail: k group means + omnibus F + default-open post-hoc */
+function buildDetail(stage){
+  const sec=el("div","pbd"); sec.innerHTML=`<div class="pbd-head">Per-band detail</div>`;
+  const ncol=MEAN.length+1;
+  const gtc=`120px repeat(${ncol},1fr) 120px`;
+  BANDS.forEach(b=>{
+    const d=rec(stage.key,b.key), ph=phlist(stage.key,b.key);
+    const row=el("div","pbd-row"); row.style.gridTemplateColumns=gtc;
+    let h=`<div class="pbd-name">${b.name}${b.range?`<small>${b.range}</small>`:""}</div>`;
+    MEAN.forEach(mp=>{h+=`<div class="pbd-cell">${slot(IMG.mean(stage.key,b.key,mp.token),"5/4")}<div class="pbd-cap">${mp.label}</div></div>`;});
+    h+=`<div class="pbd-cell">${slot(IMG.stat(stage.key,b.key),"5/4")}<div class="pbd-cap">Omnibus F</div></div>`;
+    h+=`${ph.length?`<button class="ph-toggle" type="button">Hide post-hoc</button>`:"<span></span>"}`;
+    row.innerHTML=h; sec.appendChild(row);
+    if(ph.length){
+      const pr=el("div","pbd-ph");
+      pr.innerHTML=`<div class="pbd-ph-head">Post-hoc pairwise contrasts</div>`+ph.map(e=>{
+        const ec=e.clu>0?"sig":(e.tfce>0?"tr":"ns");
+        return `<figure class="ph-card">${slot(IMG.mean(stage.key,b.key,e.token),"5/4")}<figcaption><b>${e.label}</b><span class="bdg ${ec}">TFCE ${e.tfce||0} · cluster ${e.clu||0} · p ${fmtP(e.p!=null?e.p:1)}</span></figcaption></figure>`;
+      }).join("");
+      sec.appendChild(pr);
+      const btn=row.querySelector(".ph-toggle");
+      btn.addEventListener("click",()=>{const hid=pr.style.display==="none";
+        pr.style.display=hid?"flex":"none"; btn.textContent=hid?"Hide post-hoc":"Show post-hoc";});
+    }
+  });
+  return sec;
+}
+
+/* summary table: Omnibus F counts; click a count -> post-hoc channels by contrast */
+function visibleCols(){
+  const c=[{k:"band",l:"Band"},{k:"n",l:"n subj"},{k:"u",l:"Uncorr."}];
+  if(metric==="clu")c.push({k:"clu",l:"Cluster"}); else if(metric==="tfce")c.push({k:"tfce",l:"TFCE"});
+  else {c.push({k:"tfce",l:"TFCE"});c.push({k:"clu",l:"Cluster"});}
+  c.push({k:"p",l:"min p"}); return c;
+}
+function rowSig(d){if(metric==="clu")return d.clu>0;if(metric==="tfce")return d.tfce>0;return d.tfce>0||d.clu>0;}
+function phChannels(stage,band,e,m){
+  const key=CHKEY[m];
+  if(e.ch&&Array.isArray(e.ch[key]))return{labels:e.ch[key],sample:false};
+  const n=m==="u"?e.tfce:e[m==="tfce"?"tfce":"clu"]; // best-effort count for sample
+  const cnt=m==="u"?(e.u!=null?e.u:0):(m==="tfce"?e.tfce:e.clu);
+  return{labels:Array.from({length:cnt||0},(_,i)=>"E"+(i+1)),sample:true};
+}
+function chanDetail(stage,band,m){
+  const ph=phlist(stage,band);
+  if(!ph.length)return `<div class="chan-detail"><div class="cd-lab none">No post-hoc contrasts.</div></div>`;
+  const blocks=ph.map(e=>{
+    const {labels,sample}=phChannels(stage,band,e,m);
+    const chips=labels.length?`<div class="chips">${labels.map(l=>`<span class="chip-ch">${l}</span>`).join("")}</div>`
+      :`<span class="none">none</span>`;
+    return `<div class="cd-grp"><div class="cd-lab"><b>${e.label}</b><span class="cp">${labels.length}</span>`+
+      `${sample&&labels.length?'<span class="cd-note">sample labels</span>':""}</div>${chips}</div>`;
+  }).join("");
+  return `<div class="chan-detail"><div class="cd-lab" style="margin-bottom:9px">${MNAME[m]} post-hoc significant channels</div>${blocks}</div>`;
+}
+function buildTable(stage){
+  const cols=visibleCols();
+  const wrap=el("div","tablewrap card"); wrap.style.padding="14px 16px"; wrap.dataset.stage=stage.key;
+  wrap.innerHTML=`<div class="thead-note"><span>Omnibus F counts per band</span><span>click a count to list post-hoc channels</span></div>`;
+  const tbl=el("table","sum"),thead=el("thead"),tr=el("tr");
+  cols.forEach(c=>tr.appendChild(el("th",null,c.l))); thead.appendChild(tr); tbl.appendChild(thead);
+  const tb=el("tbody");
+  BANDS.forEach(b=>{
+    const d=rec(stage.key,b.key), row=el("tr",rowSig(d)?"sig":null);
+    row.dataset.stage=stage.key; row.dataset.band=b.key;
+    const pc=d.p<0.05?"p-sig":(d.p<0.1?"p-tr":"");
+    let h=`<td class="band">${b.gk?`<span class="gk">${b.gk}</span>`:""}${b.name}</td>`;
+    cols.slice(1).forEach(c=>{
+      if(c.k==="n")h+=`<td>${R.n_subj}</td>`;
+      else if(c.k==="u")h+=`<td class="cnt" data-m="u">${d.u}</td>`;
+      else if(c.k==="tfce")h+=`<td class="cnt ${d.tfce>0?'pos':''}" data-m="tfce">${d.tfce}</td>`;
+      else if(c.k==="clu")h+=`<td class="cnt ${d.clu>0?'pos':''}" data-m="clu">${d.clu}</td>`;
+      else if(c.k==="p")h+=`<td class="${pc}">${fmtP(d.p)}</td>`;
+    });
+    row.innerHTML=h; tb.appendChild(row);
+    const det=el("tr","chan-row"); det.innerHTML=`<td colspan="${cols.length}"></td>`; tb.appendChild(det);
+  });
+  tbl.appendChild(tb); wrap.appendChild(tbl);
+  tbl.addEventListener("click",e=>{
+    const td=e.target.closest("td.cnt"); if(!td)return;
+    const row=td.parentElement, det=row.nextElementSibling, m=td.dataset.m;
+    const open=det.classList.contains("open")&&det.dataset.m===m;
+    [...row.querySelectorAll("td.cnt")].forEach(c=>c.classList.remove("active"));
+    if(open){det.classList.remove("open");det.dataset.m="";return;}
+    det.dataset.m=m; td.classList.add("active");
+    det.firstElementChild.innerHTML=chanDetail(row.dataset.stage,row.dataset.band,m);
+    det.classList.add("open");
+  });
+  return wrap;
+}
+function refreshTables(){
+  [...document.querySelectorAll("#panels .tablewrap")].forEach(old=>{
+    old.replaceWith(buildTable(STAGES.find(s=>s.key===old.dataset.stage)));
+  });
+}
+
+/* ---------- power toggle ---------- */
+function renderAll(){renderPerio();renderHeat();renderTabs();}
+$("#powerSeg").addEventListener("click",e=>{const b=e.target.closest("button");if(!b||b.dataset.pw===power)return;
+  power=b.dataset.pw;[...$("#powerSeg").children].forEach(x=>x.classList.toggle("on",x===b));renderAll();});
+
+/* ---------- boot ---------- */
+renderMasthead(); renderReading(); renderAll();
+</script>
+</body>
+</html>

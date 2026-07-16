@@ -34,55 +34,62 @@ Compumedics); set Recording system accordingly. Anything not a channel label is 
 | **Two-way mixed ANOVA** `mixed2way` | Condition effect differs between groups? | 1 file, long | `group_col` + `subject_col` + `condition_col` | F on interaction | `synthetic_gui/glm_mixed2way.csv` |
 | **Mixed model** `mixedmodel` | Trial-level effect (many obs/subject)? | 1 long file | `Subject` + DV + fixed + effect | `fitlme` t/F (Stephan 2021) | `synthetic_gui/lmm_long.csv` |
 
+## Permutation p-values and sampling
+
+- **Minimum-bias p everywhere.** All tiers (legacy t-tests/correlation, GLM, LMM) report the
+  permutation p as `(b + 1) / (N + 1)`, where `b` = permutations at least as extreme as the
+  observed statistic and `N` = permutation count. The p is never exactly 0; the smallest
+  reportable value is `~1/(N+1)` (the legacy tiers force the observed labeling into the null,
+  so their floor is `~2/(N+1)`). A result cannot clear α unless `N` is large enough — e.g.
+  `N = 100` floors p near 0.01–0.02, so use `permutations ≥ 5000–10000` for final inference.
+- **Exact vs Monte-Carlo (legacy `unpairedT` and correlation).** When the requested
+  `permutations` meets or exceeds the exchangeability-group size — `nchoosek(nSubj, nGrp)` for
+  the unpaired two-group relabeling, `nSubj!` for correlation — the engine runs an **exact**
+  test over the full set of labelings (denominator = the true group size); otherwise it samples
+  with replacement (Monte-Carlo). This also removes a former hang when more permutations than
+  distinct labelings were requested. *Small-n caveat:* an exact test has a coarse p-grid — e.g.
+  unpaired `nGrp = 3, nSubj = 6` → only 20 permutations → minimum p ≈ 0.048 — so significance
+  can be unreachable with very small samples regardless of the requested count.
+- **Repeated-measures guard.** The between-subject GLM presets (`anova1`, `ancova`,
+  `regression`, which use `free` permutation) **error** (`core_snpm_glm:repeatedMeasures`) if a
+  subject appears in more than one row, and direct you to `rmanova` or `mixedmodel`. Feed them
+  one row per subject.
+
 ## Outputs (every analysis, via `core_snpm_analysis`)
 - `<base>_<timestamp>.mat` — `results_struct` with `T` (incl. `real_T`), `p`, `Clusters`,
   `uncorrsigch`, `correctTFCEsigch` (TFCE-corrected), `SnPMsigch` (cluster-corrected), `chanlocs`.
 - `<base>_<timestamp>.xlsx` — significant-channel table (`func_genSnpmTable`).
+- **Correlation runs also emit** each channel's effective N (the pairwise-deletion matched-pair
+  count) as `results_struct.per_channel_n` and a guarded **`effectiveN`** sheet in the `.xlsx`;
+  the partial-correlation global p uses `df = n − 2 − k` (`k` = number of covariates).
 - `<base>_<timestamp>_report.html` — one self-contained report with a **TFCE/Cluster toggle**, stat-aware (t-map for the t-tests, **F-map + post-hoc** table for the omnibus ANOVA presets), the mean topographies and both significance maps. (Replaced the former separate `_TFCE_report.html` / `_Cluster_report.html`.)
 - Topoplot PNGs.
+
+**Reading the cluster output:** the GLM/LMM presets score a cluster by **mean Wald**
+(`sum(Wald)/n_channels`, height-weighted) while the legacy t-tests score by **extent** (size),
+so cluster statistics are **not comparable across the two tiers**; and a significant cluster is
+a **regional** claim, not a per-electrode one. See
+[Interpreting cluster results](../explanation/interpreting-cluster-results.md).
 
 Specialized reports: GLM faceted report `export_glm_report.m` (anova/t templates in
 `templates/`); spectral dashboard `export_report.m`; spectral sweep `SWEEP_grid_*.csv`.
 
-## Choosing an analysis: design, missing data & cost
+## Choosing an analysis
 
-**It's one model.** The t-tests, ANOVA, ANCOVA and regression are all special cases of the
-linear model `Y = Xβ + ε` — the tool runs them through a single OLS engine (`snpm_glm_stat`).
-Only the *coding* of the predictors differs, so pick the preset that matches your variable:
-- **Categorical** variable of interest (groups) → two-sample t-test / one-way ANOVA / ANCOVA.
-- **Continuous** variable of interest → linear regression.
-(A two-group t-test = regression on one 0/1 group dummy; k-group ANOVA = k−1 dummies; ANCOVA =
-group dummies + a continuous covariate. The presets do the dummy-coding and choose t vs F for you,
-so you don't need to hand-build a regression for group comparisons.)
-
-**Unequal n across conditions (e.g. medical dropout).**
-- **Between-subject** designs — two-sample t-test, one-way ANOVA, ANCOVA, regression, correlation —
-  tolerate unequal group sizes **by construction**. Dropout just means a smaller group; use freely.
-- **Within-subject** designs — paired / one-sample t-test, RM-ANOVA, two-way mixed ANOVA — need the
-  *same* subjects across conditions. A subject missing a condition is dropped (**complete-case** →
-  fewer subjects, less power). Pairing is by `sub-XX` (spectral folder) or by row order (CSV).
-
-**For substantial within-subject dropout, prefer the LMM** (`mixedmodel`): it uses all available
-observations and is valid under **Missing-At-Random (MAR)**. This matters because medical dropout is
-rarely random (sicker patients leave); RM-ANOVA's complete-case analysis is only unbiased under the
-stronger **MCAR**.
-
-**But the LMM is computationally heavy** — per-channel *iterative* `fitlme` × permutations, roughly
-**100–1000× slower** than the vectorized-OLS GLM presets (minutes-to-an-hour vs seconds). Cheaper
-routes that usually suffice:
-- **RM-ANOVA GLM** — this tool's `rmanova` models subject as a **fixed effect** (subject dummies) by
-  OLS, so it's fast and tolerates *moderate* unbalance; you give up the random-effects/partial-pooling
-  and the cleaner MAR theory of a true LMM.
-- **Aggregate, then GLM** — if the load is *trial-level*, collapse to subject×condition **means** first,
-  then run the fast `rmanova`/`mixed2way`.
-Reserve the full LMM for genuinely trial-level data, real random-effects structure, or heavy
-non-random dropout. Cost knobs: ≤1000 permutations, keep the `parfor` pool, analyse fewer channels.
-The LMM is **script-only** (`scripts/run_lmm_analysis.m`) — not yet in the GUI.
+Design trade-offs (categorical vs continuous predictors, unequal-n / dropout, and the
+LMM-vs-GLM cost decision) are discussed in the explanation
+[Choosing an analysis: design, missing data, and cost](../explanation/choosing-an-analysis.md).
+That page also carries the sleep-question → preset cheat-sheet and the method-grounding references.
 
 ## Known gaps (flagged by the tests)
 - **Circular analyses are non-functional**: the CircStat functions (`circ_wheeler_watson_test`,
   …) are **not bundled** — they must be added to `dependencies/` for `circ_*` to run.
-  `test_legacy_snpm` SKIPs the circular check and says so.
+  `test_legacy_snpm` SKIPs the circular check and says so. **Backlog (pre-fix code path):** the
+  two circular engines (`snpm_single_threshold_with_TFCE_circ.m`, `snpm_cluster_analysis_circ.m`)
+  still carry the phantom `snpm_enumerate_combinations` reference and the uniqueness-loop hang
+  that were fixed in the other tiers. They are CircStat-gated (SKIP) so cannot fire today, but
+  the exact-vs-Monte-Carlo / no-hang fix must be extended to them before circular support is
+  enabled.
 - **Event-bridge group recovery (~25%)**: `test_event_group` is a known XFAIL — its
   `planted_truth` channel indices don't match the analysed 178-subset (a fixture issue; the
   core `anova1` engine is correct per `test_glm_snpm`). Revisit with the TurtleWave importer.

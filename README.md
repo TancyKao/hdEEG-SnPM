@@ -21,7 +21,7 @@ root** (`core_snpm_analysis` does `addpath(genpath(pwd))` and expects `eeglab202
 - **Verify everything:** `matlab -batch "test_all"` → one PASS/FAIL/SKIP summary
   (checkcode + GUI construct + all test suites + per-analysis outputs + spectral smoke +
   edge cases). Individual suites: `test_glm_snpm`, `test_lmm_snpm`, `test_legacy_snpm`.
-  Per-analysis import/output reference: `docs/ANALYSIS_CATALOG.md`.
+  Per-analysis import/output reference: `docs/reference/ANALYSIS_CATALOG.md`.
 
 ## Layout
 
@@ -34,10 +34,11 @@ root** (`core_snpm_analysis` does `addpath(genpath(pwd))` and expects `eeglab202
 | `dependencies/` | stat/plot/channel engines + montage assets (`.mat`/`.sfp`/`.csv`) |
 | `templates/` | report HTML templates (anova / t / spectral / LMM) |
 | `scripts/` | headless runners + `README_scripts.md` + Python bridges |
-| `docs/` | `PLAN.md` (design + analysis tables), `RECAP.md`, `MODIFICATIONS_SUMMARY.md`, `DESIGN_PROMPT_*.md` |
+| `docs/` | Diátaxis docs (`README.md` index): `tutorials/`, `how-to/`, `reference/` (`ANALYSIS_CATALOG.md`), `explanation/`, `archive/` (frozen history: `PLAN.md`, `RECAP.md`, `MODIFICATIONS_SUMMARY.md`, `DESIGN_PROMPT_*.md`) |
 | `test_data/` | inputs + synthetic fixtures (run outputs are git-ignored / regenerable) |
 | `Ref/` | method papers |
 | `eeglab2022.1/` | vendored EEGLAB (third-party; don't modify) |
 
-See `CLAUDE.md` for the full architecture and conventions, and `docs/PLAN.md` for the
-analysis design and which test answers which research question.
+See `CLAUDE.md` for the full architecture and conventions. Start the docs at
+`docs/README.md`; the analysis design and research-question rationale are in
+`docs/archive/PLAN.md` (history) and `docs/explanation/choosing-an-analysis.md`.

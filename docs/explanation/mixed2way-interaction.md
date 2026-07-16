@@ -1,5 +1,10 @@
 # Two-way mixed ANOVA (`mixed2way`) — how the interaction is computed in hd-EEG
 
+> *Understanding-oriented.* For the factual `mixed2way` row (inputs, roles, outputs) see the
+> [Analysis catalog](../reference/ANALYSIS_CATALOG.md); to run it, see the
+> [how-to guides](../how-to/README.md).
+
+
 Scope: the `mixed2way` GLM preset in `core_snpm_glm.m`, with the design built in
 `dependencies/snpm_glm_design.m`, the statistic in `dependencies/snpm_glm_stat.m`,
 and the permutation in `dependencies/snpm_glm_permute.m`. One GLM is fit **per
@@ -87,6 +92,17 @@ error control is by **permutation of the max statistic**, using **Freedman–Lan
   than for the p.
 - If you need random slopes or trial-level nesting, use the `mixedmodel` path
   (`core_snpm_lmm.m`), not this one.
+- **The condition main effect is marginal, and trust it only when the interaction
+  is weak.** In the three-effect report, the condition main effect is computed on a
+  *reduced* model `X = [1, Ds, Dc]` — without the interaction columns — so the `Dc`
+  contrast is the pooled/marginal condition effect rather than the reference-group
+  effect. That is the correct choice for a "main effect". The catch is inferential:
+  when a real Group×Condition interaction exists, its variance sits in the
+  within-subject residual that Freedman–Lane permutes, which can distort the
+  condition-main-effect null. So the condition main effect is most trustworthy when
+  the interaction is weak; when the interaction is strong, report the **simple
+  effects** (condition within each group) instead of leaning on the marginal main
+  effect.
 
 ## A worked 2×2 example (one channel)
 

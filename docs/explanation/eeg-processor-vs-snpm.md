@@ -1,5 +1,9 @@
 # EEG_Processor group analysis vs. SnPM_2025 — diff summary
 
+> *Understanding-oriented.* Why this tool exists alongside EEG_Processor's PALM path — a
+> design-rationale discussion, not instructions. To pick and run an analysis, see the
+> [how-to guides](../how-to/README.md).
+
 Date: 2026-07-06
 
 Purpose: honest comparison of EEG_Processor's built-in group-analysis module against the

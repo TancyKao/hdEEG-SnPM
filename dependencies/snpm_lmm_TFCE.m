@@ -62,23 +62,22 @@ function [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail,
     end
     T.tMaxTFCE = sort(maxTFCE, 'descend');
 
-    % ---- FWE-corrected p per channel (same pattern as
-    %      snpm_single_threshold_with_TFCE.m:625-641) ----
+    % ---- FWE-corrected p per channel ----
+    % Minimum-bias FWE p (Nichols & Holmes 2001; Phipson & Smyth 2010):
+    %   p = (#{max-null >= obs} + 1)/(N + 1), never zero.
     critical_T_indx     = floor(alpha * possible_permutations) + 1;
     T.critical_T_TFCE   = T.tMaxTFCE(critical_T_indx);
 
     p.correctedTFCE = ones(1, nCh);
     p.correctedTFCE(isnan(T.real_TFCE)) = NaN;
     for i = 1:length(T.real_TFCE)
+        if isnan(T.real_TFCE(i)), continue; end
         switch tail
             case 'both'
-                if abs(T.real_TFCE(i)) > T.tMaxTFCE(end)
-                    p.correctedTFCE(i) = find(T.tMaxTFCE < abs(T.real_TFCE(i)), 1, 'first') / possible_permutations;
-                end
+                obs = abs(T.real_TFCE(i));
             otherwise
-                if T.real_TFCE(i) > T.tMaxTFCE(end)
-                    p.correctedTFCE(i) = find(T.tMaxTFCE < T.real_TFCE(i), 1, 'first') / possible_permutations;
-                end
+                obs = T.real_TFCE(i);
         end
+        p.correctedTFCE(i) = (sum(T.tMaxTFCE >= obs) + 1) / (possible_permutations + 1);
     end
 end

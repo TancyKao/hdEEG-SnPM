@@ -90,6 +90,16 @@ function [results_struct, results_text] = core_snpm_glm(params)
 
     D = snpm_glm_design(preset, meta, opts);
 
+    % Between-subject presets (anova1/ancova/regression -> 'free' permutation)
+    % assume ONE row per subject: whole-subject relabelling is only a valid null
+    % if subjects are exchangeable. Trial-level / repeated data (a subject in
+    % several rows) has within-subject correlation that breaks exchangeability
+    % and silently loses family-wise-error control. Guard against it here.
+    % rmanova/mixed2way (perm_type 'within', repeated measures) are exempt.
+    if strcmp(D.perm_type, 'free')
+        guard_between_subject_rows(meta, opts, preset);
+    end
+
     alpha = 0.05; E = 0.5; H = 2;
     fprintf('Effect: %s | statistic: %s | permutation: %s\n', ...
         D.effect_label, D.contrast_type, D.perm_type);
@@ -341,6 +351,39 @@ end
 
 function v = getfield_default(s, f, default)
     if isfield(s, f) && ~isempty(s.(f)), v = s.(f); else, v = default; end
+end
+
+function guard_between_subject_rows(meta, opts, preset)
+% Error if a between-subject ('free') preset is fed repeated-measures data (any
+% subject appearing in more than one row). Uses the mapped subject column when
+% present, otherwise any column whose name contains 'subject'. If no subject
+% identifier is available the check is skipped (nothing to test against).
+    subj_col = '';
+    if isfield(opts, 'subject_col') && ~isempty(opts.subject_col) ...
+            && ismember(opts.subject_col, meta.Properties.VariableNames)
+        subj_col = opts.subject_col;
+    else
+        hit = find(strcmpi(meta.Properties.VariableNames, 'Subject'), 1);
+        if isempty(hit)
+            hit = find(contains(lower(meta.Properties.VariableNames), 'subject'), 1);
+        end
+        if ~isempty(hit), subj_col = meta.Properties.VariableNames{hit}; end
+    end
+    if isempty(subj_col), return; end   % no subject id -> cannot verify
+
+    ids = meta.(subj_col);
+    [uid, ~, gi] = unique(ids, 'stable');
+    counts = accumarray(gi(:), 1);
+    dup = find(counts > 1);
+    if ~isempty(dup)
+        error('core_snpm_glm:repeatedMeasures', ...
+            ['Preset ''%s'' is a between-subject test (whole-subject permutation) and assumes ' ...
+             'exactly one row per subject, but subject ''%s'' appears in %d rows (and %d other ' ...
+             'subject(s) repeat). Repeated / trial-level measurements break exchangeability and ' ...
+             'invalidate the permutation FWE control. Use ''rmanova'' for repeated conditions or ' ...
+             '''mixedmodel'' for trial-level data.'], ...
+            preset, level_to_str(uid, dup(1)), counts(dup(1)), numel(dup) - 1);
+    end
 end
 
 function s = level_to_str(levels, i)

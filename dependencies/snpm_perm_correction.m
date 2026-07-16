@@ -55,20 +55,16 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
     maxMass    = sort(maxMass, 'descend');
 
     % ---- FWE-corrected TFCE p per channel ----
+    % Minimum-bias FWE p (Nichols & Holmes 2001; Phipson & Smyth 2010):
+    %   p = (#{max-null >= obs} + 1)/(N + 1), never zero.
     critical_T_indx   = floor(alpha * permutations) + 1;
     T.critical_T_TFCE = T.tMaxTFCE(critical_T_indx);
     p.correctedTFCE = ones(1, nCh);
     p.correctedTFCE(isnan(T.real_TFCE)) = NaN;
     for i = 1:nCh
-        if is_F
-            if T.real_TFCE(i) > T.tMaxTFCE(end)
-                p.correctedTFCE(i) = find(T.tMaxTFCE < T.real_TFCE(i), 1, 'first') / permutations;
-            end
-        else
-            if abs(T.real_TFCE(i)) > T.tMaxTFCE(end)
-                p.correctedTFCE(i) = find(T.tMaxTFCE < abs(T.real_TFCE(i)), 1, 'first') / permutations;
-            end
-        end
+        if isnan(T.real_TFCE(i)), continue; end
+        if is_F, obs = T.real_TFCE(i); else, obs = abs(T.real_TFCE(i)); end
+        p.correctedTFCE(i) = (sum(T.tMaxTFCE >= obs) + 1) / (permutations + 1);
     end
 
     % ---- cluster p-values from the max-mass null ----
@@ -80,8 +76,8 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
         for cli = 1:numel(real_clusters)
             Clusters(cli, 1).channels = real_clusters(cli).channels;
             Clusters(cli, 1).mass     = real_clusters(cli).mass;
-            rank = find(maxMass < real_clusters(cli).mass, 1, 'first');
-            if isempty(rank), Clusters(cli, 1).p = 1; else, Clusters(cli, 1).p = rank / permutations; end
+            % (#{max-null cluster mass >= observed} + 1)/(N + 1), never zero.
+            Clusters(cli, 1).p = (sum(maxMass >= real_clusters(cli).mass) + 1) / (permutations + 1);
             Clusters(cli, 1).threshold    = alpha;
             Clusters(cli, 1).permutations = permutations;
         end

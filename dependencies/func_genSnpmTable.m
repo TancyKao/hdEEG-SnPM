@@ -43,6 +43,16 @@ writetable(T_real_T, output_xls,'Sheet','statVal')
 writetable(T_p_real, output_xls,'Sheet','pVal_or_pCritVal')
 writetable(T_p_correctedTFCE,output_xls,'Sheet','pValTFCE')
 
+% Correlation only: per-channel effective N (pairwise-deletion matched pairs).
+% Guarded so GLM/LMM callers (no per_channel_n field) are unaffected.
+if isfield(S, 'per_channel_n') && ~isempty(S.per_channel_n)
+    T_effN = array2table(S.per_channel_n);
+    if width(T_effN) == length(Chanlabels)
+        T_effN.Properties.VariableNames = Chanlabels;
+    end
+    writetable(T_effN, output_xls, 'Sheet', 'effectiveN')
+end
+
 
 if ~isempty(uncorrsigch)
     writetable(array2table(uncorrsigch),output_xls,'Sheet','uncorrectsigch')

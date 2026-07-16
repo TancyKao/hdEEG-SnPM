@@ -394,11 +394,16 @@ function [results_struct, results_text] = core_snpm_analysis(params)
         end
     end
     
-    % Global statistical analysis
-    if ~contains(params.comparison, 'circ')
-        res = global_stat_test(data_x, data_y, alpha, params.comparison, params.tail);
+    % Per-channel effective N for correlation: NaN handling is pairwise
+    % (per-channel) deletion, so each channel enters with a different number of
+    % matched subject pairs. Surface it (results_struct.per_channel_n) so users
+    % can see which channels are under-powered. Computed on the pre-
+    % residualization matched data so the NaN pattern is intact.
+    per_channel_n = [];
+    if ismember(params.comparison, {'correlationP', 'correlationS'})
+        per_channel_n = sum(~isnan(data_x) & ~isnan(data_y), 1);
     end
-    
+
     % Apply partial correlation if covariates are provided for correlation analyses
     if contains(params.comparison, 'correlation') && use_covariates && ~isempty(covariates)
         fprintf('Applying partial correlation with %d covariate(s)\n', size(covariates, 2));
@@ -434,7 +439,18 @@ function [results_struct, results_text] = core_snpm_analysis(params)
         
         fprintf('Residualization complete. Running permutation analysis on residuals.\n');
     end
-    
+
+    % Global statistical analysis (channel-averaged). Computed AFTER any
+    % covariate residualization so the correlation global p reflects the partial
+    % correlation; ncov shrinks its df to n-2-ncov (descriptive p only).
+    ncov = 0;
+    if contains(params.comparison, 'correlation') && use_covariates && ~isempty(covariates)
+        ncov = size(covariates, 2);
+    end
+    if ~contains(params.comparison, 'circ')
+        res = global_stat_test(data_x, data_y, alpha, params.comparison, params.tail, ncov);
+    end
+
     % Main permutation analysis
     if ~contains(params.comparison, 'circ')
         [T,p,~,~] = snpm_single_threshold_with_TFCE(data_x,data_y,neighbors,E,H,alpha,params.comparison,params.tail,params.permutations);
@@ -573,6 +589,7 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     results_struct.correctTFCEsigch = correctTFCEsigch;
     results_struct.SnPMsigch = SnPMsigch;
     results_struct.chanlocs = chanlocs;
+    results_struct.per_channel_n = per_channel_n;   % correlation: matched pairs/channel ([] otherwise)
     results_struct.hide_condition_b = onesample_vs_zero;  % one condition vs 0 -> no B card
     results_struct.data_summary.data1_size = size(data_x);
     results_struct.data_summary.data2_size = size(data_y);

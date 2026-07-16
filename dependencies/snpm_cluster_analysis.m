@@ -56,41 +56,40 @@ compstring=[comparison tail];
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % this switch runs the permutation/combinations depending on the comparison
 switch compstring
-    
+
     case 'pairedTleft'
-        
+
         nSubj=size(data_x,1);
-        possible_permutations = 2^nSubj;
-        
+        requested_permutations = 2^nSubj;
+
         if nargin == 8
-            possible_permutations = permutation_overide;
+            requested_permutations = permutation_overide;
         end
-        
+
         % switch values so it does a left sided ttest
         temp = data_x;
         data_x = data_y;
         data_y = temp;
         clear temp;
-        
+
+        % Nichols & Holmes sign-flip labellings (exact if small, else random)
+        signflip = snpm_signflip_patterns(nSubj, requested_permutations);
+        possible_permutations = size(signflip,1);
+
         max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-        
+
         for permIndex=1:possible_permutations
             %print out the status
             if mod(permIndex, 1000) == 0
                 disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
             end
-            
+
             %% Calculate T value for this grouping (actual combos
             %creates groups from actual_combos which switches order of pairing or
             %keeps the same while maintaining pairing
-            
-            % fixes it so the last possible permutation
-            %is zeros (i.e. when permIndex = possible_permutations,
-            %dec2binvec returns a zeros to number of subjects plus one extra digit as one)
-            
-            actual_combos=dec2binvec(permIndex,nSubj);
-            actual_combos=actual_combos(1:nSubj);
-            
+
+            actual_combos=signflip(permIndex,:);
+
             data_x_temp=data_x(logical(actual_combos),:);
             data_x_temp=cat(1,data_x_temp,data_y(logical(~actual_combos),:));
             
@@ -111,26 +110,29 @@ switch compstring
         % calculate real ttest
         [~,~,~,REALSTATS] = ttest(data_x,data_y,alpha,'right');
     case 'pairedTright'
-        
+
         nSubj=size(data_x,1);
-        possible_permutations = 2^nSubj;
-        
+        requested_permutations = 2^nSubj;
+
         if nargin == 8
-            possible_permutations = permutation_overide;
+            requested_permutations = permutation_overide;
         end
-        
+
+        % Nichols & Holmes sign-flip labellings (exact if small, else random)
+        signflip = snpm_signflip_patterns(nSubj, requested_permutations);
+        possible_permutations = size(signflip,1);
+
         max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-        
+
         for permIndex=1:possible_permutations
             %print out the status
             if mod(permIndex, 1000) == 0
                 disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
             end
-            
-            
-            actual_combos=dec2binvec(permIndex,nSubj);
-            actual_combos=actual_combos(1:nSubj);
-            
+
+
+            actual_combos=signflip(permIndex,:);
+
             data_x_temp=data_x(logical(actual_combos),:);
             data_x_temp=cat(1,data_x_temp,data_y(logical(~actual_combos),:));
             
@@ -152,26 +154,29 @@ switch compstring
         %Calculate real ttest
         [~,~,~,REALSTATS] = ttest(data_x,data_y,alpha,'right');
     case 'pairedTboth'
-        
+
         nSubj=size(data_x,1);
-        possible_permutations = 2^nSubj;
-        
+        requested_permutations = 2^nSubj;
+
         if nargin == 8
-            possible_permutations = permutation_overide;
+            requested_permutations = permutation_overide;
         end
-        
+
+        % Nichols & Holmes sign-flip labellings (exact if small, else random)
+        signflip = snpm_signflip_patterns(nSubj, requested_permutations);
+        possible_permutations = size(signflip,1);
+
         max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-        
+
         for permIndex=1:possible_permutations
             %print out the status
             if mod(permIndex, 1000) == 0
                 disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
             end
-            
-            
-            actual_combos=dec2binvec(permIndex,nSubj);
-            actual_combos=actual_combos(1:nSubj);
-            
+
+
+            actual_combos=signflip(permIndex,:);
+
             data_x_temp=data_x(logical(actual_combos),:);
             data_x_temp=cat(1,data_x_temp,data_y(logical(~actual_combos),:));
             
@@ -194,26 +199,29 @@ switch compstring
         [~,~,~,REALSTATS] = ttest(data_x,data_y);    
         
     case 'onesampleTboth'
-        
+
         nSubj=size(data_x,1);
-        possible_permutations = 2^nSubj;
-        
+        requested_permutations = 2^nSubj;
+
         if nargin == 8
-            possible_permutations = permutation_overide;
+            requested_permutations = permutation_overide;
         end
-        
+
+        % Nichols & Holmes sign-flip labellings (exact if small, else random)
+        signflip = snpm_signflip_patterns(nSubj, requested_permutations);
+        possible_permutations = size(signflip,1);
+
         max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-        
+
         for permIndex=1:possible_permutations
             %print out the status
             if mod(permIndex, 1000) == 0
                 disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
             end
-            
-            
-            actual_combos=dec2binvec(permIndex,nSubj);
-            actual_combos=actual_combos(1:nSubj);
-            
+
+
+            actual_combos=signflip(permIndex,:);
+
             data_x_temp=data_x(logical(actual_combos),:);
             data_x_temp=cat(1,data_x_temp,data_y(logical(~actual_combos),:));
             
@@ -235,274 +243,167 @@ switch compstring
         % find real ttest  values
         [~,~,~,REALSTATS] = ttest(data_x,data_y); 
     case 'unpairedTleft'
-        
+
         nSubj=size(data_x,1)+size(data_y,1);
         nGrp=size(data_y,1);
-        possible_permutations = nchoosek(nSubj,nGrp);
-        
-        data =  cat(1,data_y,data_x); clear data_*;
-        
-        if nargin == 8
-            possible_permutations = permutation_overide;
-        end
-        
-        if possible_permutations > 300000 || nargin == 8 %if there are more than 9 subjects per group, run a subset (50000)
-            
-            if nargin < 8
-                possible_permutations = 50000; %so it doesn't take forever to run
-            end
-            
-            actual_combos = NaN(possible_permutations,nGrp);
-            % switch data to do left sided test
-            
-            max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-            
-            for permIndex=1:possible_permutations
-                %print out the status
-                if mod(permIndex, 1000) == 0
-                    disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
-                end
-                % arranges the subject number in different orders and then takes the first grouping and the second group
-                randompermutations = randperm(nSubj);
-                group1 = sort(randompermutations(1:nGrp));
-                
-                %test whether grouping has already been used
-                while ismember(group1,actual_combos,'rows')
-                    randompermutations = randperm(nSubj);
-                    group1 = sort(randompermutations(1:nGrp));
-                end
-                
-                actual_combos(permIndex,:)=group1;
-                group2=randompermutations(nGrp+1:end);
-                
-                %Calculate T value for this grouping (ttest2 is unpaired ttest)
-                [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
-                
-                % find clusters above threshold
-                for ti = 1:length(thresholds)
-                    temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
-                    if ~isempty(temp_clusters)
-                        max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
-                    end
-                end
-            end
-        else
-            actual_combos = snpm_enumerate_combinations(nSubj,nGrp);
-            max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-            
-            for permIndex=1:possible_permutations
-                %print out the status
-                if mod(permIndex, 1000) == 0
-                    disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
-                end
-                
-                group1 = actual_combos(permIndex,1:nGrp);
-                group2 = actual_combos(permIndex,nGrp+1:end);
-                
-                %Calculate T value for this grouping (ttest2 is unpaired ttest)
-                [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
-                
-                % find clusters above threshold
-                for ti = 1:length(thresholds)
-                    temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
-                    if ~isempty(temp_clusters)
-                        max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
-                    end
-                end
-            end
-        end
-        % find real tvalue
-        [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');      
-    case 'unpairedTright'
-        
-        nSubj=size(data_x,1)+size(data_y,1);
-        nGrp=size(data_x,1);
-        possible_permutations = nchoosek(nSubj,nGrp);
-        
-        data =  cat(1,data_x,data_y); clear data_*;
-        
-        if nargin == 8
-            possible_permutations = permutation_overide;
-        end
-        
-        if possible_permutations > 300000 || nargin == 8 %if there are more than 9 subjects per group, run a subset (50000)
-            
-            if nargin < 8
-                possible_permutations = 50000; %so it doesn't take forever to run
-            end
-            
-            actual_combos = NaN(possible_permutations,nGrp);
-            % switch data to do left sided test
-            
-            max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-            
-            for permIndex=1:possible_permutations
-                %print out the status
-                if mod(permIndex, 1000) == 0
-                    disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
-                end
-                % arranges the subject number in different orders and then takes the first grouping and the second group
-                randompermutations = randperm(nSubj);
-                group1 = sort(randompermutations(1:nGrp));
-                
-                %test whether grouping has already been used
-                while ismember(group1,actual_combos,'rows')
-                    randompermutations = randperm(nSubj);
-                    group1 = sort(randompermutations(1:nGrp));
-                end
-                
-                actual_combos(permIndex,:)=group1;
-                group2=randompermutations(nGrp+1:end);
-                
-                %Calculate T value for this grouping (ttest2 is unpaired ttest)
-                [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
-                
-                % find clusters above threshold
-                for ti = 1:length(thresholds)
-                    temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
-                    if ~isempty(temp_clusters)
-                        max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
-                    end
-                end
-            end
-        else
-            actual_combos = snpm_enumerate_combinations(nSubj,nGrp);
-            max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-            
-            for permIndex=1:possible_permutations
-                %print out the status
-                if mod(permIndex, 1000) == 0
-                    disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
-                end
-                
-                group1 = actual_combos(permIndex,1:nGrp);
-                group2 = actual_combos(permIndex,nGrp+1:end);
-                
-                %Calculate T value for this grouping (ttest2 is unpaired ttest)
-                [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
-                
-                % find clusters above threshold
-                for ti = 1:length(thresholds)
-                    temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
-                    if ~isempty(temp_clusters)
-                        max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
-                    end
-                end
-            end
-        end
-        % find real tvalue
-        [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');        
-    case 'unpairedTboth'
-        
-        nSubj=size(data_x,1)+size(data_y,1);
-        nGrp=size(data_x,1);
-        possible_permutations = nchoosek(nSubj,nGrp);
-        data =  cat(1,data_x,data_y); clear data_*;
-        
-        if nargin == 8
-            possible_permutations = permutation_overide;
-        end
-        
-        if possible_permutations > 300000 || nargin == 8 %if there are more than 9 subjects per group, run a subset (50000)
-            
-            if nargin < 8
-                possible_permutations = 50000;
-            end
-            
-            actual_combos = NaN(possible_permutations,nGrp);
-            
-            max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-            
-            for permIndex=1:possible_permutations
-                %print out the status
-                if mod(permIndex, 1000) == 0
-                    disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
-                end
-                % arranges the subject number in different orders and then takes the first grouping and the second group
-                randompermutations = randperm(nSubj);
-                group1 = sort(randompermutations(1:nGrp));
+        G = nchoosek(nSubj,nGrp);
 
-                %test whether grouping has already been used
-                while ismember(group1,actual_combos,'rows')
-                    randompermutations = randperm(nSubj);
-                    group1 = sort(randompermutations(1:nGrp));
-                end
-                
-                actual_combos(permIndex,:)=group1;
-                group2=randompermutations(nGrp+1:end);
-                
-                %Calculate T value for this grouping (ttest2 is unpaired ttest)
-                [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha);
-                
-                % find clusters above threshold
-                for ti = 1:length(thresholds)
-                    temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
-                    if ~isempty(temp_clusters)
-                        max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
-                    end
-                end
-            end
-        else
-            actual_combos = snpm_enumerate_combinations(nSubj,nGrp);
-            max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-             for permIndex=1:possible_permutations
-                %print out the status
-                if mod(permIndex, 1000) == 0
-                    disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
-                end
-                
-                % arranges the subject number in different orders and then takes the first grouping and the second group
-                group1 = actual_combos(permIndex,1:nGrp);
-                group2 = actual_combos(permIndex,nGrp+1:end);
-                
-                %Calculate T value for this grouping (ttest2 is unpaired ttest)
-                [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:));
-                
-                % calculate clusters above threshold
-                for ti = 1:length(thresholds)
-                    temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
-                    if ~isempty(temp_clusters)
-                        max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
-                    end
-                end
-            end
-        end
-        
-        % real t
-        [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:));    
-    case 'correlationPboth'
-        
-        nSubj=size(data_x,1);
-        possible_permutations = gamma(nSubj+1);
-        
-        if possible_permutations > 50000 %if there are more than 9 subjects per group, run a subset (50000)
-            %10,000 permutations is generally considered sufficient
-            possible_permutations = 50000; %so it doesn't take forever to run
-        end
-        
+        data =  cat(1,data_y,data_x); clear data_*;
+
+        % Honour an explicit override; otherwise enumerate exactly when the group
+        % is small, else fall back to a Monte-Carlo ceiling. snpm_relabel_assignments
+        % samples WITH REPLACEMENT (no uniqueness loop) so requested >= G never hangs.
         if nargin == 8
-            possible_permutations = permutation_overide;
+            requested_permutations = permutation_overide;
+        elseif G <= 300000
+            requested_permutations = G;          % exact enumeration
+        else
+            requested_permutations = 50000;      % default Monte-Carlo ceiling
         end
-        
-        actual_combos = NaN(possible_permutations,nSubj);
-        
+
+        actual_combos = snpm_relabel_assignments(nSubj,nGrp,requested_permutations);
+        possible_permutations = size(actual_combos,1);
+
         max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-        
+
+        for permIndex=1:possible_permutations
+            %print out the status
+            if mod(permIndex, 1000) == 0
+                disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
+            end
+
+            group1 = actual_combos(permIndex,1:nGrp);
+            group2 = actual_combos(permIndex,nGrp+1:end);
+
+            %Calculate T value for this grouping (ttest2 is unpaired ttest)
+            [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
+
+            % find clusters above threshold
+            for ti = 1:length(thresholds)
+                temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
+                if ~isempty(temp_clusters)
+                    max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
+                end
+            end
+        end
+        % find real tvalue
+        [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');
+    case 'unpairedTright'
+
+        nSubj=size(data_x,1)+size(data_y,1);
+        nGrp=size(data_x,1);
+        G = nchoosek(nSubj,nGrp);
+
+        data =  cat(1,data_x,data_y); clear data_*;
+
+        % See 'unpairedTleft'. snpm_relabel_assignments samples WITH REPLACEMENT
+        % so requested >= G can no longer hang.
+        if nargin == 8
+            requested_permutations = permutation_overide;
+        elseif G <= 300000
+            requested_permutations = G;          % exact enumeration
+        else
+            requested_permutations = 50000;      % default Monte-Carlo ceiling
+        end
+
+        actual_combos = snpm_relabel_assignments(nSubj,nGrp,requested_permutations);
+        possible_permutations = size(actual_combos,1);
+
+        max_cluster_sizes = zeros(possible_permutations,length(thresholds));
+
+        for permIndex=1:possible_permutations
+            %print out the status
+            if mod(permIndex, 1000) == 0
+                disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
+            end
+
+            group1 = actual_combos(permIndex,1:nGrp);
+            group2 = actual_combos(permIndex,nGrp+1:end);
+
+            %Calculate T value for this grouping (ttest2 is unpaired ttest)
+            [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
+
+            % find clusters above threshold
+            for ti = 1:length(thresholds)
+                temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
+                if ~isempty(temp_clusters)
+                    max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
+                end
+            end
+        end
+        % find real tvalue
+        [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');
+    case 'unpairedTboth'
+
+        nSubj=size(data_x,1)+size(data_y,1);
+        nGrp=size(data_x,1);
+        G = nchoosek(nSubj,nGrp);
+        data =  cat(1,data_x,data_y); clear data_*;
+
+        % See 'unpairedTleft'. snpm_relabel_assignments samples WITH REPLACEMENT
+        % so requested >= G can no longer hang.
+        if nargin == 8
+            requested_permutations = permutation_overide;
+        elseif G <= 300000
+            requested_permutations = G;          % exact enumeration
+        else
+            requested_permutations = 50000;      % default Monte-Carlo ceiling
+        end
+
+        actual_combos = snpm_relabel_assignments(nSubj,nGrp,requested_permutations);
+        possible_permutations = size(actual_combos,1);
+
+        max_cluster_sizes = zeros(possible_permutations,length(thresholds));
+
+        for permIndex=1:possible_permutations
+            %print out the status
+            if mod(permIndex, 1000) == 0
+                disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
+            end
+
+            group1 = actual_combos(permIndex,1:nGrp);
+            group2 = actual_combos(permIndex,nGrp+1:end);
+
+            %Calculate T value for this grouping (ttest2 is unpaired ttest)
+            [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha);
+
+            % find clusters above threshold
+            for ti = 1:length(thresholds)
+                temp_clusters = snpm_find_clusters_graphalgs(REALSTATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
+                if ~isempty(temp_clusters)
+                    max_cluster_sizes(permIndex,ti) = max(cellfun('length',temp_clusters));
+                end
+            end
+        end
+
+        % real t
+        [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:));
+    case 'correlationPboth'
+
+        nSubj=size(data_x,1);
+        % Honour an explicit override; otherwise use the sane default ceiling.
+        % snpm_row_permutations enumerates exactly when requested >= nSubj!
+        % (nSubj<=10) and otherwise samples WITH REPLACEMENT (no uniqueness loop),
+        % so requested >= nSubj! cannot hang.
+        if nargin == 8
+            requested_permutations = permutation_overide;
+        else
+            requested_permutations = min(factorial(nSubj), 50000);
+        end
+
+        actual_combos = snpm_row_permutations(nSubj, requested_permutations);
+        possible_permutations = size(actual_combos,1);
+
+        max_cluster_sizes = zeros(possible_permutations,length(thresholds));
+
         for permIndex=1:possible_permutations
             %print out the status
             if mod(permIndex, 1) == 0
                 disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
             end
-            
-            randompermutations = randperm(nSubj);
-            
-            % test whether grouping has already been used
-            while ismember(randompermutations,actual_combos,'rows')
-                randompermutations = randperm(nSubj);
-            end
-            
-            actual_combos(permIndex,:)=randompermutations;
-            
+
+            randompermutations = actual_combos(permIndex,:);
+
             data_x_temp=data_x(randompermutations,:);
             r_corr=NaN(1,number_of_inputs);
             for i = 1:number_of_inputs
@@ -538,38 +439,30 @@ switch compstring
         end
 
     case 'correlationSboth'
-        
+
         nSubj=size(data_x,1);
-        possible_permutations = gamma(nSubj+1);
-        
-        if possible_permutations > 50000 %if there are more than 9 subjects per group, run a subset (50000)
-            %10,000 permutations is generally considered sufficient
-            possible_permutations = 50000; %so it doesn't take forever to run
-        end
-        
+        % See 'correlationPboth'. snpm_row_permutations enumerates exactly when
+        % requested >= nSubj! (nSubj<=10) and otherwise samples WITH REPLACEMENT
+        % (no uniqueness loop), so requested >= nSubj! cannot hang.
         if nargin == 8
-            possible_permutations = permutation_overide;
+            requested_permutations = permutation_overide;
+        else
+            requested_permutations = min(factorial(nSubj), 50000);
         end
-        
-        actual_combos = NaN(possible_permutations,nSubj);
-        
+
+        actual_combos = snpm_row_permutations(nSubj, requested_permutations);
+        possible_permutations = size(actual_combos,1);
+
         max_cluster_sizes = zeros(possible_permutations,length(thresholds));
-        
+
         for permIndex=1:possible_permutations
             %print out the status
             if mod(permIndex, 1) == 0
                 disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
             end
-            
-            randompermutations = randperm(nSubj);
-            
-            % test whether grouping has already been used
-            while ismember(randompermutations,actual_combos,'rows')
-                randompermutations = randperm(nSubj);
-            end
-            
-            actual_combos(permIndex,:)=randompermutations;
-            
+
+            randompermutations = actual_combos(permIndex,:);
+
             data_x_temp=data_x(randompermutations,:);
             r_corr=NaN(1,number_of_inputs);
             for i = 1:number_of_inputs
@@ -636,28 +529,26 @@ for ti = 1:length(thresholds)
 end
 
 % determine p-value based on
+% Minimum-bias FWE p (Nichols & Holmes 2001; Phipson & Smyth 2010):
+%   p = (#{max-null cluster size >= observed cluster size} + 1)/(N + 1)
+% applied uniformly to every permutation tier so p is never zero. An empty
+% (no-channel) cluster has size 0, so every null is >= it and p = 1.
 if strcmp(tail,'both') && length(threshold) == 1
     max_cluster_sizes =  sort(max(max_cluster_sizes,[],2),1,'descend');
     for cli = 1 : length(Clusters)
         potential_clusters=Clusters(cli).channels;
-        Clusters(cli).p=find(max_cluster_sizes<length(potential_clusters),1,'first')/possible_permutations;
-        if isempty(Clusters(cli).p)
-            Clusters(cli).p = 1;
-        end
+        Clusters(cli).p = (sum(max_cluster_sizes >= length(potential_clusters)) + 1)/(possible_permutations + 1);
         Clusters(cli).permutations=possible_permutations;
     end
-    
+
 else
     max_cluster_sizes =  sort(max_cluster_sizes,1,'descend');
     for cli = 1 : length(Clusters)
         potential_clusters=Clusters(cli).channels;
         ti = Clusters(cli).threshold==thresholds;
-        Clusters(cli).p=find(max_cluster_sizes(:,ti)<length(potential_clusters),1,'first')/possible_permutations;
-        if isempty(Clusters(cli).p)
-            Clusters(cli).p = 1;
-        end
+        Clusters(cli).p = (sum(max_cluster_sizes(:,ti) >= length(potential_clusters)) + 1)/(possible_permutations + 1);
         Clusters(cli).permutations=possible_permutations;
     end
-    
+
 end
 

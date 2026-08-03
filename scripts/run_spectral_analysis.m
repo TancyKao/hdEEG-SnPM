@@ -36,6 +36,11 @@ tail       = 'both';           % both | left | right
 datatype   = '';               % '' = auto (absolute->logscale, normalized->none); or absolute|logscale|normalize
 level_A    = '';               % optional: pick/order the 2 levels for 2-folder tests
 level_B    = '';
+% Dashboard-only QC (forwarded to export_report):
+EXCLUDE_SUBJECTS     = {};                 % e.g. {'sub-XX'} - drop a bad-data subject entirely
+EXCLUDE_CHAN_SUBJECT = {};                 % e.g. {'sub-XX','E197'; 'sub-YY','E184'} - NaN-mask one
+                                           % subject x channel (pairwise deletion; all bands, both
+                                           % conditions, all stages, and the global PSD average)
 MAKE_DASHBOARD = true;         % also build ONE faceted dashboard HTML (abs+relative x all stages x
                                % Uncorrected/TFCE/Cluster) via export_report -- 2-level contrasts only
                                % (pairedT/onesampleT/unpairedT). Ignores sweep_bands/stages/type (does all).
@@ -79,10 +84,14 @@ if MAKE_DASHBOARD
         fprintf('Dashboard skipped: only 2-level contrasts (pairedT/onesampleT/unpairedT) are supported; got %s.\n', comparison);
     else
         dash = fullfile(OUT, 'dashboard'); if ~exist(dash,'dir'), mkdir(dash); end
-        copyfile(fullfile(ROOT,'templates','sleep_eeg_report.html'), fullfile(dash,'sleep_eeg_report.html'));
+        % no template copy: export_report resolves it from the toolbox, and a
+        % blank template sitting in an output dir reads as a real report
         dopts = struct('comparison',comparison, 'permutations',permutations, ...
             'powers',{{'absolute','normalised'}}, 'condA',LABELS{1}, 'condB',LABELS{2});
         dopts.folders = FOLDERS; dopts.labels = LABELS;
+        % QC must reach the dashboard too, or it silently reports unmasked data
+        dopts.exclude_subjects     = EXCLUDE_SUBJECTS;
+        dopts.exclude_chan_subject = EXCLUDE_CHAN_SUBJECT;
         export_report('', dash, dopts);
         fprintf('Dashboard -> %s\n', fullfile(dash,'sleep_eeg_report_filled.html'));
     end

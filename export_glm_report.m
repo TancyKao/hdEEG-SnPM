@@ -68,10 +68,16 @@ function export_glm_report(DATA, OUT, opts)
             statClim = ternary(isF, [], [-3 3]);
 
             % omnibus statistic + correction
-            flctx = make_fl_context(Y, D);
+            flctx = snpm_glm_fl_context(Y, D);
+            if any(~flctx.evaluable)
+                warning('export_glm_report:channelsExcluded', ...
+                    ['%s/%s/%s: %d of %d channels excluded for missing data (not evaluable ' ...
+                     'in every permutation): %s'], stg, pw, bd, sum(~flctx.evaluable), ...
+                    numel(flctx.evaluable), strjoin(labels(~flctx.evaluable), ', '));
+            end
             [stat, pm] = snpm_glm_stat(Y, D.X, D.C);
             [T, p, Cl] = snpm_perm_correction(stat, pm, @() permstat(flctx, D.X, D.C), ...
-                neighbors, E, H, alpha, nperm, D.contrast_type);
+                neighbors, E, H, alpha, nperm, D.contrast_type, flctx.evaluable);
             iU = find(p.real <= alpha); iT = find(p.correctedTFCE <= alpha);
             iC = [Cl([Cl.p] <= alpha).channels]; minp = min([Cl.p]);
             VAL.(pw).(stg).(bd) = [numel(iU) numel(iT) numel(iC) minp];
@@ -109,7 +115,7 @@ function export_glm_report(DATA, OUT, opts)
                     Cph = pad_contrast(D.posthoc(k).C, size(D.X,2));
                     [ts, tp] = snpm_glm_stat(Y, D.X, Cph);
                     [Tk, pk, Ck] = snpm_perm_correction(ts, tp, @() permstat(flctx, D.X, Cph), ...
-                        neighbors, E, H, alpha, nperm, 't');
+                        neighbors, E, H, alpha, nperm, 't', flctx.evaluable);
                     iUp = find(pk.real <= alpha); iTp = find(pk.correctedTFCE <= alpha);
                     iCp = [Ck([Ck.p] <= alpha).channels];
                     tok = ['ph_' matlab.lang.makeValidName(D.posthoc(k).label)];
@@ -227,15 +233,9 @@ end
 function out = getdef(s, f, d), if isfield(s,f) && ~isempty(s.(f)), out=s.(f); else, out=d; end, end
 function out = ternary(c, a, b), if c, out=a; else, out=b; end, end
 
-% ---- GLM Freedman-Lane helpers (copied from core_snpm_glm.m; core left untouched) ----
+% ---- GLM Freedman-Lane helpers (context builder shared with core_snpm_glm.m) ----
 function [stat, pm] = permstat(flctx, X, C)
     Yp = snpm_glm_permute(flctx); [stat, pm] = snpm_glm_stat(Yp, X, C);
-end
-function flctx = make_fl_context(Y, D)
-    Z = D.X(:, D.nuisance_idx);
-    if isempty(Z), Z = ones(size(Y,1), 1); end
-    betaZ = Z \ Y; Zfit = Z * betaZ;
-    flctx = struct('Zfit', Zfit, 'R', Y - Zfit, 'eb', D.eb, 'perm_type', D.perm_type);
 end
 function Cpad = pad_contrast(C, p)
     Cpad = zeros(size(C,1), p); Cpad(:, 1:size(C,2)) = C;

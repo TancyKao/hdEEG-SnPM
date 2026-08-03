@@ -75,6 +75,10 @@ function [results_struct, results_text] = core_snpm_lmm(params)
         size(power, 1), numel(channel_cols), numel(meta_cols));
 
     %% Data type transform (applied to channel power, mirrors core_snpm_analysis)
+    % Capture raw negativity BEFORE transforming: logscale/normalize legitimately
+    % produce negatives, so the source magnitude guard below must inspect the RAW
+    % input, not the transformed power.
+    raw_has_negative = any(power(:) < 0);
     switch params.datatype
         case 'absolute'
             % no transformation (recommended: LMM uses absolute power)
@@ -90,6 +94,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     power = chsel.data{1}; chanlocs = chsel.chanlocs;
     neighbors = chsel.neighbors; insidegoodch = chsel.insidegoodch;
     select_mode = chsel.select_mode;
+    is_source = isfield(chsel, 'is_source') && chsel.is_source;
     fprintf('%s montage: %d/%d channel columns matched to locations\n', ...
         params.channels, numel(insidegoodch), numel(channel_cols));
 
@@ -102,6 +107,29 @@ function [results_struct, results_text] = core_snpm_lmm(params)
              'For the ''%s'' montage the long-format file must have exactly %d channel columns ' ...
              '(same channel set as the existing wide-format tool).'], ...
             size(power, 2), size(neighbors, 1), params.channels, size(neighbors, 1));
+    end
+
+    % Source-space (2447 cortical voxels): enforce count + node-order invariants
+    % and reject signed current density (band power must be a non-negative
+    % magnitude) when the DV is a source voxel column. This is Stephan et al.'s
+    % source replication; the stat engine is unchanged.
+    if is_source
+        snpm_assert_source(chanlocs, neighbors, chsel.channel_mapping.channel_labels);
+        if strcmp(params.datatype, 'absolute')
+            if raw_has_negative
+                warning('snpm:source:signedMagnitude', ...
+                    ['Source voxel matrix contains negative values but non-negative ' ...
+                     'band-power magnitudes are expected. Signed current density is ' ...
+                     'invalid (arbitrary per-subject/trial sign -> cancellation). ' ...
+                     'Confirm the DV columns are voxel POWER (magnitude).']);
+            end
+        elseif raw_has_negative
+            warning('snpm:source:signedUnderTransform', ...
+                ['Source input contains negative values with datatype=%s; if this ' ...
+                 'is signed current density rather than a magnitude, the group test ' ...
+                 'is invalid (arbitrary per-subject/trial sign + cancellation).'], ...
+                params.datatype);
+        end
     end
 
     %% Build the LMM spec
@@ -123,9 +151,44 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     fprintf('Effect of interest: %s (%s); permutation scheme: %s; tail: %s\n', ...
         spec.effect, spec.effect_type, spec.perm, tail);
 
+    %% Evaluable-channel mask (null construction, decided ONCE)
+    % A channel is evaluable if and only if it is complete across every
+    % analysed row. snpm_lmm_fit deletes rows per channel, so an incomplete
+    % channel is fitted on a subset while the permutation relabels/shuffles
+    % across ALL rows — the permuted fits then see a different design (a group
+    % factor can become constant on the subset -> anova returns FStat = NaN
+    % without throwing) or a different DV distribution (when missingness is
+    % associated with the DV) than the observed fit. Restricting to complete
+    % channels makes `valid` all-true inside the fit, so the observed map and
+    % every permuted map are computed on identical rows and identical channels.
+    evaluable = all(isfinite(power), 1);
+    % Shared exclusion surface (same struct the GLM/circular tiers emit, which
+    % func_genSnpmTable and the report banners already know how to render).
+    % Only the reason string is specialised: in the long format the rule is
+    % completeness across analysed ROWS (trials), not across subjects -- a
+    % channel missing one trial of an otherwise present subject is excluded.
+    excluded_channels = snpm_excluded_channel_info(evaluable, chanlocs, ...
+        sprintf('mixedmodel (%s)', spec.effect));
+    excluded_channels.reason = ['missing data: channel not complete across all analysed ' ...
+        'rows (trials), so the fitted row set would differ from the permuted one'];
+    if ~any(evaluable)
+        error('core_snpm_lmm:noEvaluableChannels', ...
+            ['No channel is complete across all %d analysed rows, so no channel can be ' ...
+             'tested against a permutation null. Drop the incomplete subjects/trials ' ...
+             'instead of the channels.'], size(power, 1));
+    end
+    if excluded_channels.n > 0.10 * numel(evaluable)
+        warning('core_snpm_lmm:manyChannelsExcluded', ...
+            ['%d of %d channels (%.1f%%) are incomplete and were dropped. Above ~10%% of ' ...
+             'the montage, dropping the few SUBJECTS/trials that carry the missingness ' ...
+             'usually costs less information than dropping the channels — consider ' ...
+             'filtering the input table instead.'], excluded_channels.n, numel(evaluable), ...
+            100 * excluded_channels.n / numel(evaluable));
+    end
+
     %% Statistical analysis
-    [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail, params.permutations);
-    Clusters = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, params.permutations);
+    [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail, params.permutations, evaluable);
+    Clusters = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, params.permutations, evaluable);
 
     %% Significant channels (same derivation as core_snpm_analysis:488-497)
     uncorrsigch      = find(p.real <= alpha);
@@ -146,11 +209,17 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     savepath    = params.output_path;
 
     %% Plot significance topography (reused output function)
-    try
-        TopoplotSignificant_single(T.real_T, uncorrsigch, correctTFCEsigch, SnPMsigch, ...
-            chanlocs, insidegoodch, params.comparison, savepath, base_filename, select_mode);
-    catch ME
-        warning(ME.identifier, 'Could not generate significance topology plots: %s', ME.message);
+    % Source-space systems have no scalp layout -> skip the topoplot (a voxel
+    % list with coordinates is emitted after the .mat/.xlsx below).
+    if ~is_source
+        try
+            TopoplotSignificant_single(T.real_T, uncorrsigch, correctTFCEsigch, SnPMsigch, ...
+                chanlocs, insidegoodch, params.comparison, savepath, base_filename, select_mode);
+        catch ME
+            warning(ME.identifier, 'Could not generate significance topology plots: %s', ME.message);
+        end
+    else
+        fprintf('Source-space system: scalp topoplot bypassed; emitting voxel list.\n');
     end
 
     %% Results struct
@@ -162,6 +231,10 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     results_struct.correctTFCEsigch = correctTFCEsigch;
     results_struct.SnPMsigch        = SnPMsigch;
     results_struct.chanlocs         = chanlocs;
+    results_struct.is_source        = is_source;   % source-space run (topoplot bypassed)
+    % Channel-exclusion surface shared with the GLM tier: .mat field ->
+    % func_genSnpmTable 'excludedChannels' sheet -> HTML banner.
+    results_struct.excluded_channels = excluded_channels;
 
     nsubj = numel(unique(meta.(subj_col)));
     results_struct.data_summary.data1_size = size(power);
@@ -190,7 +263,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     %% Effect-map + descriptive PNGs + global test for the LMM report
     is_factor = strcmpi(spec.effect_type, 'factor');
     descch = SnPMsigch; if isempty(descch), descch = correctTFCEsigch; end
-    if isempty(descch), descch = 1:size(power, 2); end
+    if isempty(descch), descch = find(evaluable); end   % analysed set, not all columns
     results_struct.lmm.effect_map_png       = '';
     results_struct.lmm.descriptive_png      = '';
     results_struct.lmm.descriptive_channels = numel(descch);
@@ -198,17 +271,20 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     results_struct.lmm.global_pval          = NaN;
 
     % Effect map: jet + symmetric clim for signed t, hot for F.
-    try
-        tv = T.real_T; empng = [outputSname '_effectmap.png'];
-        if is_factor
-            save_single_topo(tv, chanlocs, 'Effect map (F)', empng, 'hot');
-        else
-            m = max(abs(tv(:))); if m == 0 || ~isfinite(m), m = 1; end
-            save_single_topo(tv, chanlocs, 'Effect map (t)', empng, 'jet', [-m m]);
+    % Source-space: no scalp layout -> skip (voxel list carries the per-voxel stat).
+    if ~is_source
+        try
+            tv = T.real_T; empng = [outputSname '_effectmap.png'];
+            if is_factor
+                save_single_topo(tv, chanlocs, 'Effect map (F)', empng, 'hot');
+            else
+                m = max(abs(tv(:))); if m == 0 || ~isfinite(m), m = 1; end
+                save_single_topo(tv, chanlocs, 'Effect map (t)', empng, 'jet', [-m m]);
+            end
+            [~, fn, ext] = fileparts(empng); results_struct.lmm.effect_map_png = [fn ext];
+        catch ME
+            warning(ME.identifier, 'Could not generate LMM effect map: %s', ME.message);
         end
-        [~, fn, ext] = fileparts(empng); results_struct.lmm.effect_map_png = [fn ext];
-    catch ME
-        warning(ME.identifier, 'Could not generate LMM effect map: %s', ME.message);
     end
 
     % Descriptive: scatter (continuous) or group-means (factor), over descch.
@@ -236,9 +312,10 @@ function [results_struct, results_text] = core_snpm_lmm(params)
         warning(ME.identifier, 'Could not generate LMM descriptive plot: %s', ME.message);
     end
 
-    % Global whole-head test: fit the effect on the channel-averaged signal.
+    % Global whole-head test: fit the effect on the channel-averaged signal,
+    % averaged over the ANALYSED channels only (the same set the maps use).
     try
-        [gstat, ~, gp] = snpm_lmm_fit(mean(power, 2, 'omitnan'), meta, spec);
+        [gstat, ~, gp] = snpm_lmm_fit(mean(power(:, evaluable), 2, 'omitnan'), meta, spec);
         results_struct.lmm.global_stat = gstat(1);
         results_struct.lmm.global_pval = gp(1);
     catch ME
@@ -254,6 +331,16 @@ function [results_struct, results_text] = core_snpm_lmm(params)
         disp('Excel file generated successfully!');
     catch ME
         warning(ME.identifier, 'Could not generate Excel file: %s', ME.message);
+    end
+
+    % Source-space deliverable: significant-voxel list with coordinates +
+    % cluster membership (replaces the scalp topoplot bypassed above).
+    if is_source
+        try
+            write_source_voxel_table(results_struct, chanlocs, outputSname);
+        catch ME
+            warning(ME.identifier, 'Could not write source voxel table: %s', ME.message);
+        end
     end
 
     %% Text results
@@ -272,6 +359,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
         ['Significant clusters N = : ' num2str(length(sigclusters))], ...
         ['SnPM significant channels N = : ' num2str(length(SnPMsigch))], ...
         ['SnPM significant channels = : ' num2str(SnPMsigch)], ...
+        lmm_excluded_text(excluded_channels), ...
         '', ['Results saved to: ' outputSname '.mat'], ...
         ['Excel file saved to: ' outputSname '.xlsx'] ...
         }';
@@ -301,6 +389,17 @@ function v = getfield_default(s, f, default)
         v = s.(f);
     else
         v = default;
+    end
+end
+
+function txt = lmm_excluded_text(excl)
+% One results_text line (feeds the GUI Result box + the report CSV).
+    if excl.n == 0
+        txt = sprintf('Channels excluded for missing data: none (%d/%d evaluable)', ...
+            excl.n_channels, excl.n_channels);
+    else
+        txt = sprintf('Channels excluded for missing data (%s): %d of %d — %s', ...
+            excl.context, excl.n, excl.n_channels, strjoin(excl.labels, ', '));
     end
 end
 

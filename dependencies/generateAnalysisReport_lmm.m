@@ -39,6 +39,7 @@ function generateAnalysisReport_lmm(results_struct, params, base_filename, outpu
     write_masthead(fid, lmm, nperm, is_t);
     write_model_card(fid, lmm, nperm);
     write_legend(fid, is_t);
+    write_excluded(fid, results_struct);
     write_effect_map(fid, lmm, is_t);
     write_significance(fid, results_struct, base_filename, statSym, nperm, uncorrsigch, correctTFCEsigch, SnPMsigch);
     write_descriptive(fid, lmm);
@@ -242,6 +243,32 @@ function write_legend(fid, is_t)
     end
     fprintf(fid, '    <span class="sep"></span>\n');
     fprintf(fid, '    <div class="grp"><span class="k">Significant channel</span><span class="chip"><span class="dd" style="background:#1b2733"></span>uncorrected</span><span class="chip"><span class="dd" style="background:#fff;border:1px solid var(--ink-2)"></span>corrected</span></div>\n');
+    fprintf(fid, '  </div>\n</section>\n');
+end
+
+% =========================================================================
+% EXCLUDED CHANNELS
+% A channel that leaves an analysis must say so on the face of the report.
+% Only rendered when something WAS excluded; a complete montage stays silent.
+% =========================================================================
+function write_excluded(fid, rs)
+    if ~isfield(rs, 'excluded_channels') || ~isstruct(rs.excluded_channels), return; end
+    ex = rs.excluded_channels;
+    if ~isfield(ex, 'n') || ex.n == 0, return; end
+    labs = ex.labels;
+    if ~iscell(labs), labs = cellstr(string(labs)); end
+    nch = 0;
+    if isfield(ex, 'n_channels'), nch = ex.n_channels; end
+    fprintf(fid, '<section class="section">\n  <div class="head"><h2>Excluded channels</h2><span class="sub">Not tested &mdash; missing data</span></div>\n');
+    fprintf(fid, '  <div class="legend" style="border-color:#b8862a;background:#fdf8ee">\n');
+    fprintf(fid, ['    <div class="grp"><span class="k" style="color:#b8862a">Excluded</span>' ...
+        '<span><b>%d</b> of %d channel(s) were not tested.</span></div>\n'], ex.n, nch);
+    fprintf(fid, ['    <div class="grp"><span>They are missing on some analysed rows, so the ' ...
+        'per-channel model would be fitted on a different row subset than the permutation ' ...
+        'shuffles across. They carry no statistic and no p-value in either the observed map ' ...
+        'or the null. Reported here rather than dropped silently.</span></div>\n']);
+    fprintf(fid, '    <div class="grp"><span class="k">Channels</span><span style="font-family:var(--mono);font-size:11.5px">%s</span></div>\n', ...
+        esc(strjoin(labs(:)', ', ')));
     fprintf(fid, '  </div>\n</section>\n');
 end
 

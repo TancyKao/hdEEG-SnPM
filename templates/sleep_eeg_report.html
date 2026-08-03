@@ -204,6 +204,28 @@ tr.chan-row.open{display:table-row}
 .chip-ch{font-family:var(--mono);font-size:11px;color:var(--ink-2);background:var(--panel);
   border:1px solid var(--line);border-radius:5px;padding:2px 7px}
 
+/* ---------- PER-CLUSTER DETAIL (cluster-corrected metric) ---------- */
+.clu-grp{margin-bottom:14px;padding-left:11px;border-left:3px solid var(--accent)}
+.clu-grp:last-child{margin-bottom:0}
+.clu-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:9px;margin-bottom:6px}
+.clu-num{font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;background:var(--accent);
+  border-radius:999px;min-width:19px;height:19px;line-height:19px;text-align:center;padding:0 6px}
+.clu-title{font-size:12.5px;font-weight:650;color:var(--ink)}
+.clu-meta{font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+.clu-meta b{color:var(--ink)}
+.clu-dir{font-size:11.5px;color:var(--accent);font-weight:600}
+.clu-lead{font-size:12px;color:var(--ink-2);margin-bottom:10px}
+/* matches the T-map overlay: a WHITE open ring drawn over the colour map */
+.swatch-ring{display:inline-block;width:12px;height:12px;border-radius:50%;
+  border:2px solid #fff;background:#8a949e;box-shadow:0 0 0 1px var(--line);vertical-align:-2px}
+
+/* ---------- EXAMPLE-DATA BANNER ---------- */
+.example-banner{background:#fdecea;border:2px solid #c0392b;color:#7b241c;border-radius:8px;
+  padding:12px 16px;margin:0 0 22px;font-size:13px;line-height:1.5}
+.example-banner strong{display:block;font-family:var(--mono);font-size:14px;letter-spacing:.04em;
+  text-transform:uppercase;margin-bottom:4px;color:#c0392b}
+@media print{ .example-banner{border-width:3px} }
+
 /* ---------- FOOTER ---------- */
 .foot{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);
   font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
@@ -235,6 +257,13 @@ tr.chan-row.open{display:table-row}
 </head>
 <body>
 <div class="wrap">
+
+  <!-- ============ EXAMPLE-DATA BANNER (only when REPORT.placeholder) ============ -->
+  <div class="example-banner" id="exampleBanner" hidden>
+    <strong>EXAMPLE DATA &mdash; not a real analysis.</strong>
+    Every number, topoplot and channel list on this page is invented placeholder content for
+    layout preview only. This is the blank report template; a filled report never shows this banner.
+  </div>
 
   <!-- ============ HEADER ============ -->
   <header class="masthead">
@@ -268,6 +297,10 @@ tr.chan-row.open{display:table-row}
     <span class="sep"></span>
     <div class="grp"><span class="k">Significant</span>
       <span class="chip"><span class="swatch" style="background:var(--sig-soft);border-color:var(--sig)"></span>≥1 corrected channel</span>
+    </div>
+    <span class="sep"></span>
+    <div class="grp"><span class="k">Clusters</span>
+      <span class="chip"><span class="swatch-ring"></span>white outline + number on the T-map — each cluster is a separate corrected test</span>
     </div>
   </div>
 
@@ -323,10 +356,15 @@ tr.chan-row.open{display:table-row}
    Per cell: [ n_uncorrected , n_TFCE , n_cluster , min_cluster_p ]
    ===================================================================== */
 const REPORT = {
-  title:   "Spectral power in sleep: Condition A vs Condition B",
-  methods: "Within-subject contrast of EEG power across sleep stages and 7 frequency bands. " +
-           "Permutation testing (5000 permutations, two-tailed), corrected with " +
-           "<b>TFCE</b> and <b>cluster-based</b> methods at <b>α = .05</b>.",
+  // placeholder:true drives the EXAMPLE DATA banner. export_report's
+  // build_report_js NEVER emits this key, so a filled report never shows it.
+  // Do not remove it from this template: without it, a stray copy of this file
+  // is indistinguishable from a real analysis.
+  placeholder: true,
+  title:   "EXAMPLE DATA - blank report template (not a real analysis)",
+  methods: "Layout preview with INVENTED numbers. Within-subject contrast of EEG power across " +
+           "sleep stages and 7 frequency bands. Permutation testing (5000 permutations, two-tailed), " +
+           "corrected with <b>TFCE</b> and <b>cluster-based</b> methods at <b>α = .05</b>.",
   n_subj:  26,                 // subjects (shown in tables)
   conditions: { A:"Condition A", B:"Condition B" },
 
@@ -479,8 +517,11 @@ function slot(src, ratio){
 
 /* ============ HEADER ============ */
 function renderHeader(){
+  /* only the unfilled template carries REPORT.placeholder */
+  const ban = $("#exampleBanner");
+  if(ban && REPORT.placeholder === true) ban.hidden = false;
   $("#studyTitle").textContent = REPORT.title;
-  if(REPORT.title) document.title = REPORT.title;
+  if(REPORT.title) document.title = (REPORT.placeholder===true ? "[EXAMPLE] " : "") + REPORT.title;
   let line = REPORT.methods + ` &nbsp;<b>N = ${REPORT.n_subj}</b>.`;
   if (ANALYSIS.legend) line += ` ${ANALYSIS.stat==="F" ? "Map" : "Warm map"} = ${ANALYSIS.legend}.`;
   if (ANALYSIS.model_info) line += ` &nbsp;<span style="color:var(--muted)">Model: ${ANALYSIS.model_info}</span>`;
@@ -700,8 +741,47 @@ function chanLabels(stage,band,metric){
   const n = metric==="u" ? d.u : metric==="tfce" ? d.tfce : d.clu;
   return {labels:Array.from({length:n},(_,i)=>"E"+(i+1)), placeholder:true};
 }
+/* ---- per-cluster records for a band (REPORT.clusters; absent in older runs) ---- */
+function clustersFor(stage,band){
+  const c = REPORT.clusters && REPORT.clusters[power] && REPORT.clusters[power][stage] && REPORT.clusters[power][stage][band];
+  return Array.isArray(c) ? c : null;
+}
 const METRIC_NAME={u:"Uncorrected",tfce:"TFCE-corrected",clu:"Cluster-corrected"};
+function fmtNum(x){
+  if(x==null || !isFinite(x)) return "n/a";
+  const a=Math.abs(x);
+  if(a!==0 && (a<1e-3 || a>=1e4)) return x.toExponential(2);
+  return x.toPrecision(3).replace(/\.?0+$/,"");
+}
 function chanDetailHtml(stage,band,metric){
+  /* cluster-corrected: one labelled group per cluster, each its own corrected test */
+  if(metric==="clu"){
+    const cl=clustersFor(stage,band);
+    if(cl && cl.length){
+      const groups=cl.map(c=>{
+        const chips=(c.ch||[]).map(l=>`<span class="chip-ch">${l}</span>`).join("");
+        return `<div class="clu-grp">
+          <div class="clu-head">
+            <span class="clu-num">${c.n}</span>
+            <span class="clu-title">Cluster ${c.n}</span>
+            <span class="clu-meta">p<sub>corr</sub> = <b>${fmtP(c.p)}</b> &middot; <b>${c.k}</b> channel${c.k===1?"":"s"}</span>
+            <span class="clu-dir">${c.dirtxt||""}</span>
+          </div>
+          <div class="clu-meta" style="margin-bottom:6px">mean ${COND.A}&minus;${COND.B} difference over cluster =
+            <b>${fmtNum(c.mdiff)}</b> ${c.munit||""}${(c.mdifft!=null && c.munit==="power units")
+              ? ` (tested scale, log<sub>10</sub>: <b>${fmtNum(c.mdifft)}</b>)` : ""}
+            &middot; peak t = <b>${fmtNum(c.tpeak)}</b> at <b>${c.tpeakch||"?"}</b></div>
+          <div class="chips-ch">${chips}</div></div>`;
+      }).join("");
+      const tot=cl.reduce((s,c)=>s+(c.k||0),0);
+      return `<div class="chan-detail">
+        <div class="clu-lead"><b>${cl.length}</b> significant cluster${cl.length===1?"":"s"}
+          (<b>${tot}</b> channel${tot===1?"":"s"} total) &mdash; each is a separate cluster-corrected test,
+          numbered as on the T-map.</div>
+        ${groups}</div>`;
+    }
+    /* no per-cluster record (older REPORT.js, or no cluster) -> flat list below */
+  }
   const {labels,placeholder}=chanLabels(stage,band,metric);
   if(!labels.length) return `<div class="chan-detail empty">No ${METRIC_NAME[metric]} significant channels.</div>`;
   const chips=labels.map(l=>`<span class="chip-ch">${l}</span>`).join("");

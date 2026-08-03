@@ -17,10 +17,19 @@ works the way it does. They don't give step-by-step instructions (see
   comparison against EEG_Processor's PALM path: what overlaps, and the specific reasons this
   tool exists alongside it (preset-driven UX; the mixed-ANOVA 3-effect report; per-channel LMM;
   circular designs).
-- **[Interpreting cluster results](interpreting-cluster-results.md)** — two cross-tier
-  interpretation points: why the GLM/LMM cluster statistic is height-weighted (mean Wald) while
-  the legacy path is extent-weighted (so results aren't comparable across tiers), and why a
-  significant cluster is a regional claim, not an electrode-by-electrode one.
+- **[Interpreting cluster results](interpreting-cluster-results.md)** — cross-tier interpretation
+  points: why the GLM/LMM cluster statistic is height-weighted (mean Wald) while the legacy path
+  is extent-weighted (so results aren't comparable across tiers), why a significant cluster is a
+  regional claim rather than an electrode-by-electrode one, and why a circular map carries no
+  direction of effect.
+- **[Missing data and the complete-column rule](missing-data-and-excluded-channels.md)** — why a
+  correlation analysis drops a whole channel for one missing cell, what pairwise deletion does to
+  a permutation null (measured family-wise error up to 0.288 at a nominal 0.05), why the t-tests
+  are deliberately not masked, and how to read the excluded-channel counts in your outputs.
+- **[About circular statistics for phase](circular-statistics-for-phase.md)** — why phase needs
+  its own machinery, why coupling *strength* and *prevalence* do not, what Hotelling and Watson's
+  U² each license you to claim, the honest power figures, the precision confound and why there is
+  no Rayleigh mask, and the two places this tier extends the literature rather than following it.
 
 ## More background
 

@@ -42,6 +42,14 @@ function generateAnalysisReport(results_struct, params, base_filename, outputSna
         fprintf(fid, '<body>\n<div class="wrap">\n');
         write_masthead(fid, results_struct, params, base_filename, statName, nperm);
         write_legend_multi(fid);
+        % NOT write_excluded(results_struct): in a multi-effect report the
+        % top-level exclusion set is only the interaction's. The three effects
+        % genuinely differ (the group effect is computed on subject means, so a
+        % channel missing in ONE row of a subject still yields a finite subject
+        % mean and stays testable), so a single global banner would tell the
+        % reader a channel carries no statistic while the section below it
+        % displays one. The union is stated here; each effect states its own.
+        write_excluded_multi(fid, results_struct);
         write_descriptive(fid, results_struct);
         for k = 1:numel(results_struct.effects)
             write_effect_one(fid, results_struct, results_struct.effects(k), k, nperm);
@@ -57,10 +65,12 @@ function generateAnalysisReport(results_struct, params, base_filename, outputSna
 
     write_masthead(fid, results_struct, params, base_filename, statName, nperm);
     write_legend(fid, statName);
+    write_excluded(fid, results_struct);
     write_topographies(fid, results_struct, base_filename, statName);
     write_significance(fid, results_struct, base_filename, statSym, nperm, ...
         uncorrsigch, correctTFCEsigch, SnPMsigch);
     write_posthoc(fid, results_struct, nperm);
+    write_circ_descriptive(fid, results_struct);
     write_global(fid, results_struct, statName, nperm);
     write_footer(fid);
 
@@ -85,7 +95,17 @@ function [name, sym] = stat_info(rs, params)
     switch name
         case 'F',    sym = 'F';
         case 'r',    sym = 'r';
-        case 'circ', sym = 'stat';
+        case 'circ'
+            % The circular tier does NOT emit a generic "stat": two of its three
+            % analyses report an F (Hotelling T^2 on the (cos,sin) embedding, and
+            % the circular-linear model F), and only Watson's secondary test
+            % reports U^2. Naming the column honestly matters because the reader
+            % has to know which reference distribution the p came from.
+            sym = 'F';
+            if isfield(params,'comparison') && ischar(params.comparison) && ...
+                    strcmp(params.comparison, 'circ_phase_group_u2')
+                sym = 'U^2';
+            end
         otherwise,   sym = 't';
     end
 end
@@ -251,6 +271,40 @@ function nc = n_clause(rs)
 end
 
 % =========================================================================
+% EXCLUDED CHANNELS
+% A channel that leaves an analysis must say so on the face of the report.
+% Only rendered when something WAS excluded; a complete montage stays silent.
+% =========================================================================
+function write_excluded(fid, rs)
+    if ~isfield(rs, 'excluded_channels') || ~isstruct(rs.excluded_channels), return; end
+    ex = rs.excluded_channels;
+    if ~isfield(ex, 'n') || ex.n == 0, return; end
+    labs = ex.labels;
+    if ~iscell(labs), labs = cellstr(string(labs)); end
+    nch = 0;
+    if isfield(ex, 'n_channels'), nch = ex.n_channels; end
+    fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
+    fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">Excluded channels</span>' ...
+        '<span><b>%d</b> of %d channel(s) were not tested.</span></div>\n'], ex.n, nch);
+    % Render the engine's own reason string rather than hard-coding "missing
+    % data": the correlation tier now excludes non-finite cells too (log10(0) =
+    % -Inf under datatype 'logscale'), which is not missing data and has a
+    % different remedy. The Excel sheet already carried ex.reason, so hard-coding
+    % here made the HTML and the workbook say different things.
+    reason_txt = 'missing data: channel not usable in every analysed subject';
+    if isfield(ex, 'reason') && ~isempty(ex.reason)
+        reason_txt = char(ex.reason);
+    end
+    fprintf(fid, ['  <div class="grp"><span>Reason: %s. They cannot be evaluated on the same row ' ...
+        'set in every permutation, so they carry no statistic and no p-value in either the ' ...
+        'observed map or the null. Reported here rather than dropped silently.</span></div>\n'], ...
+        esc(reason_txt));
+    fprintf(fid, '  <div class="grp"><span class="k">Channels</span><span style="font-family:var(--mono);font-size:11.5px">%s</span></div>\n', ...
+        esc(strjoin(labs(:)', ', ')));
+    fprintf(fid, '</div>\n');
+end
+
+% =========================================================================
 % LEGEND
 % =========================================================================
 function write_legend(fid, statName)
@@ -308,7 +362,7 @@ function write_topographies(fid, rs, base, statName)
     switch statName
         case 'F',    statTitle = 'F-map (omnibus)';
         case 'r',    statTitle = 'r-map';
-        case 'circ', statTitle = 'Statistic map';
+        case 'circ', statTitle = 'Mean-direction difference (deg, circular)';
         otherwise,   statTitle = 't-map (A vs B)';
     end
     % One-sample vs 0: condition B is a zero map -> show only the condition
@@ -591,6 +645,43 @@ function v = getfield_or(s, f, dflt)
 end
 
 % =========================================================================
+% CIRCULAR DESCRIPTIVE PANEL (no inference)
+% The circular tier deliberately has NO whole-head omnibus test, so rs never
+% carries global_stat/global_pval and the Global-test card below is skipped
+% entirely. This panel replaces it with per-group descriptives. Rendered only
+% when rs.circ_descriptive exists, so every other analysis is unaffected.
+% =========================================================================
+function write_circ_descriptive(fid, rs)
+    if ~isfield(rs, 'circ_descriptive') || ~isstruct(rs.circ_descriptive), return; end
+    d = rs.circ_descriptive;
+    if ~isfield(d, 'group') || isempty(d.group), return; end
+    fprintf(fid, '<section class="section">\n');
+    fprintf(fid, ['  <div class="head"><h2>Circular summary</h2>' ...
+        '<span class="sub">Descriptive only &mdash; no whole-head test</span></div>\n']);
+    fprintf(fid, '  <div class="tablewrap"><table class="sum">\n');
+    fprintf(fid, ['    <thead><tr><th>Group</th><th>n angles</th><th>Mean direction (deg)</th>' ...
+        '<th>Circular SD (deg)</th><th>R</th><th>Rayleigh z</th><th>Rayleigh p</th></tr></thead>\n']);
+    fprintf(fid, '    <tbody>\n');
+    for k = 1:numel(d.group)
+        g = d.group(k);
+        fprintf(fid, ['      <tr><td class="band">%s</td><td>%d</td><td>%.1f</td>' ...
+            '<td>%.1f</td><td>%.3f</td><td>%.2f</td><td>%s</td></tr>\n'], ...
+            esc(g.label), g.n, g.mean_deg, g.sd_deg, g.R, g.rayleigh_z, fmt_p(g.rayleigh_p, 0));
+    end
+    fprintf(fid, '    </tbody>\n  </table></div>\n');
+    if isfield(d, 'note') && ~isempty(d.note)
+        fprintf(fid, '  <p class="methods" style="margin-top:8px">%s</p>\n', esc(d.note));
+    end
+    if isfield(rs, 'circ') && isfield(rs.circ, 'rotation_deg')
+        fprintf(fid, ['  <p class="methods">Angles were rotated by <b>%+.1f deg</b> ' ...
+            '(declared convention <b>%s</b>) so that 0 is the slow-oscillation ' ...
+            'up-state peak. Cluster statistic: <b>mass</b>.</p>\n'], ...
+            rs.circ.rotation_deg, esc(rs.circ.convention));
+    end
+    fprintf(fid, '</section>\n');
+end
+
+% =========================================================================
 % GLOBAL TEST : statistic + p on the channel-averaged signal (all good chans)
 % =========================================================================
 function write_global(fid, rs, statName, nperm)
@@ -614,17 +705,41 @@ function write_global(fid, rs, statName, nperm)
         pval = '&mdash;'; pcls = '';
     end
 
-    % number of good channels averaged over
+    % HOW MANY channels the average was actually taken over. The global is the
+    % mean over the channels usable in EVERY analysed unit of both arms (see
+    % global_stat_test's common-channel rule), which is not the same as the whole
+    % montage as soon as anything is missing. Claiming "all N good channels" when
+    % the average rests on K < N is a different scientific statement, so K is
+    % printed when the engine reports it and the montage size is given as the
+    % reference.
     nch = [];
     if isfield(rs,'T') && isfield(rs.T,'real_T') && ~isempty(rs.T.real_T)
         nch = numel(rs.T.real_T);
     elseif isfield(rs,'chanlocs')
         nch = numel(rs.chanlocs);
     end
-    if ~isempty(nch)
-        note = sprintf('Statistic and permutation p-value computed on the mean across all <b>%d</b> good channels &mdash; a single whole-head test, complementary to the channel-wise maps above.', nch);
+    kch = [];
+    if isfield(rs,'global_n_channels') && ~isempty(rs.global_n_channels)
+        kch = rs.global_n_channels;
+        if isfield(rs,'global_n_channels_total') && ~isempty(rs.global_n_channels_total)
+            nch = rs.global_n_channels_total;
+        end
+    end
+    if ~isempty(kch) && ~isempty(nch)
+        if kch == nch
+            note = sprintf(['Computed on the mean across all <b>%d</b> analysed channels ' ...
+                '&mdash; a single whole-head test, complementary to the channel-wise maps above.'], nch);
+        else
+            note = sprintf(['Computed on the mean across the <b>%d of %d</b> channels that are ' ...
+                'complete in every analysed unit of both arms &mdash; not the whole head. ' ...
+                'Averaging each unit over its own available channels would let a scalp power ' ...
+                'gradient masquerade as an effect, so the incomplete channels are left out of ' ...
+                'this average; the channel-wise maps above are unaffected.'], kch, nch);
+        end
+    elseif ~isempty(nch)
+        note = sprintf('Computed on the mean across all <b>%d</b> good channels &mdash; a single whole-head test, complementary to the channel-wise maps above.', nch);
     else
-        note = 'Statistic and permutation p-value computed on the mean across all good channels &mdash; a single whole-head test, complementary to the channel-wise maps above.';
+        note = 'Computed on the mean across all good channels &mdash; a single whole-head test, complementary to the channel-wise maps above.';
     end
 
     fprintf(fid, '<section class="section">\n');
@@ -751,6 +866,105 @@ function write_legend_multi(fid)
     fprintf(fid, '</div>\n');
 end
 
+% =========================================================================
+% EXCLUDED CHANNELS, MULTI-EFFECT
+% The three effects of a two-way mixed ANOVA do NOT share an exclusion set:
+% the group main effect is computed on subject means (omitnan), so a channel
+% missing in one row of a subject still has a finite subject mean and is
+% tested, while the within-subject condition/interaction effects drop it. A
+% single unqualified banner over all three sections therefore contradicts the
+% figures below it — and in the dangerous direction, since it over-states
+% exclusion and invites the reader to dismiss a real group finding. So: the
+% top banner reports the UNION and says the set differs, and every effect
+% section states its own set (write_excluded_effect).
+% =========================================================================
+function write_excluded_multi(fid, rs)
+    [idx, labs] = union_excluded(rs);
+    if isempty(idx), return; end
+    nch = effect_nchannels(rs);
+    fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
+    fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">Excluded channels</span>' ...
+        '<span><b>%d</b> of %d channel(s) were not tested in <b>at least one</b> effect.</span></div>\n'], ...
+        numel(idx), nch);
+    fprintf(fid, ['  <div class="grp"><span>The excluded set <b>differs per effect</b> and is stated in ' ...
+        'each section below: the group main effect is computed on subject means, so it can test ' ...
+        'channels the within-subject effects cannot. A channel excluded for an effect carries no ' ...
+        'statistic and no p-value in that effect''s maps.</span></div>\n']);
+    fprintf(fid, '  <div class="grp"><span class="k">Union</span><span style="font-family:var(--mono);font-size:11.5px">%s</span></div>\n', ...
+        esc(strjoin(labs, ', ')));
+    fprintf(fid, '</div>\n');
+end
+
+% Per-effect (or per-simple-effect) exclusion notice, rendered inside the
+% section so the statement always sits next to the maps it describes. When the
+% report excludes something somewhere but NOT here, that is said explicitly —
+% otherwise the top banner would be read as applying to this section too.
+function write_excluded_effect(fid, rs, eff, what)
+    [uidx, ~] = union_excluded(rs);
+    ex = [];
+    if isfield(eff, 'excluded_channels') && isstruct(eff.excluded_channels)
+        ex = eff.excluded_channels;
+    end
+    n = 0; labs = {};
+    if ~isempty(ex) && isfield(ex, 'n'), n = ex.n; end
+    if n > 0 && isfield(ex, 'labels')
+        labs = ex.labels;
+        if ~iscell(labs), labs = cellstr(string(labs)); end
+        labs = labs(:)';
+    end
+    nch = effect_nchannels(rs);
+    if n == 0
+        if isempty(uidx), return; end   % nothing excluded anywhere: stay silent
+        fprintf(fid, ['  <p class="methods" style="margin:2px 0 14px"><b>Channels:</b> all %d ' ...
+            'channels were tested for this %s (the exclusions listed at the top of the report ' ...
+            'apply to other effects).</p>\n'], nch, what);
+        return;
+    end
+    fprintf(fid, ['  <p class="methods" style="margin:2px 0 14px;color:var(--amber)"><b>Excluded ' ...
+        'for this %s:</b> %d of %d channel(s) &mdash; %s. They carry no statistic and no p-value ' ...
+        'in the maps and tables below.</p>\n'], what, n, nch, esc(strjoin(labs, ', ')));
+end
+
+function n = effect_nchannels(rs)
+    n = 0;
+    if isfield(rs, 'chanlocs'), n = numel(rs.chanlocs); end
+    if n == 0 && isfield(rs, 'effects') && ~isempty(rs.effects)
+        e = rs.effects(1);
+        if isfield(e, 'excluded_channels') && isfield(e.excluded_channels, 'n_channels')
+            n = e.excluded_channels.n_channels;
+        end
+    end
+end
+
+% Union of every exclusion set carried by the report (effects and their simple
+% effects), as channel indices plus display labels.
+function [idx, labs] = union_excluded(rs)
+    idx = [];
+    if isfield(rs, 'effects')
+        for k = 1:numel(rs.effects)
+            idx = [idx, eff_excl_idx(rs.effects(k))]; %#ok<AGROW>
+            se = [];
+            if isfield(rs.effects(k), 'simple_effects'), se = rs.effects(k).simple_effects; end
+            for s = 1:numel(se)
+                idx = [idx, eff_excl_idx(se(s))]; %#ok<AGROW>
+            end
+        end
+    end
+    idx = unique(idx(:)');
+    labs = cell(1, numel(idx));
+    for i = 1:numel(idx)
+        labs{i} = chan_label(rs, idx(i));
+    end
+end
+
+function v = eff_excl_idx(eff)
+    v = [];
+    if isfield(eff, 'excluded_channels') && isstruct(eff.excluded_channels) && ...
+            isfield(eff.excluded_channels, 'index')
+        v = reshape(eff.excluded_channels.index, 1, []);
+    end
+end
+
 function write_descriptive(fid, rs)
     if ~isfield(rs, 'descriptive'), return; end
     d = rs.descriptive;
@@ -783,6 +997,7 @@ function write_effect_one(fid, rs, eff, k, nperm)
     fprintf(fid, '  <div class="head"><h2>%s</h2><span class="sub">%s-statistic &middot; %s permutation</span></div>\n', ...
         esc(eff_title(eff)), statSym, esc(perm_word(eff)));
 
+    write_excluded_effect(fid, rs, eff, 'effect');
     write_effect_topographies(fid, eff);
 
     effrs = mini_rs(rs, eff);
@@ -804,6 +1019,7 @@ function write_effect_one(fid, rs, eff, k, nperm)
             [~, sSym] = eff_stat_info(se);
             selab = eff_title(se);
             fprintf(fid, '  <div style="margin-top:22px"><span style="font-family:var(--serif);font-size:15px;font-weight:600">%s</span></div>\n', esc(selab));
+            write_excluded_effect(fid, rs, se, 'simple effect');
             sers = mini_rs(rs, se);
             write_significance_grouped(fid, sers, se.map_base, sgid, sSym, nperm, ...
                 se.uncorrsigch, se.correctTFCEsigch, se.SnPMsigch);
@@ -880,12 +1096,25 @@ function write_global_multi(fid, rs, nperm)
     fprintf(fid, '<section class="section">\n  <div class="head"><h2>Global test</h2><span class="sub">Whole-head mixed ANOVA on the channel-averaged signal</span></div>\n');
     fprintf(fid, '  <div class="tablewrap">\n');
     if ~isempty(nch)
-        fprintf(fid, '    <div class="thead-note"><span>Parametric test on the mean across all <b>%d</b> good channels</span><span>complementary to the maps</span></div>\n', nch);
+        fprintf(fid, '    <div class="thead-note"><span>Parametric test on the mean across the channels each effect can evaluate (montage: <b>%d</b>)</span><span>complementary to the maps</span></div>\n', nch);
     end
-    fprintf(fid, '    <table class="sum"><thead><tr><th>Effect</th><th>stat</th><th>value</th><th>df</th><th>p</th></tr></thead><tbody>\n');
+    % "channels" column: each effect is averaged over ITS OWN evaluable set
+    % (see core_snpm_glm's global_average), so the three globals in one report
+    % can legitimately rest on three different channel counts. A single header
+    % figure would be wrong for at least one of them, hence a per-row count.
+    fprintf(fid, '    <table class="sum"><thead><tr><th>Effect</th><th>stat</th><th>value</th><th>df</th><th>channels</th><th>p</th></tr></thead><tbody>\n');
     for k = 1:numel(rs.effects)
         eff = rs.effects(k);
         [~, sSym] = eff_stat_info(eff);
+        kch = '&mdash;';
+        if isfield(eff,'global_n_channels') && ~isempty(eff.global_n_channels) && ...
+                ~isnan(eff.global_n_channels)
+            if ~isempty(nch)
+                kch = sprintf('%d of %d', eff.global_n_channels, nch);
+            else
+                kch = sprintf('%d', eff.global_n_channels);
+            end
+        end
         val = '&mdash;';
         if isfield(eff,'global_stat') && ~isempty(eff.global_stat) && ~isnan(eff.global_stat)
             val = fmt_stat(eff.global_stat);
@@ -900,8 +1129,8 @@ function write_global_multi(fid, rs, nperm)
             ps = fmt_p(eff.global_pval, nperm);
             if eff.global_pval <= 0.05, pcls = 'p-sig'; end
         end
-        fprintf(fid, '      <tr class="sig"><td class="band">%s</td><td class="stat-v">%s</td><td class="stat-v">%s</td><td>%s</td><td class="%s">%s</td></tr>\n', ...
-            esc(eff_title(eff)), sSym, val, dfs, pcls, ps);
+        fprintf(fid, '      <tr class="sig"><td class="band">%s</td><td class="stat-v">%s</td><td class="stat-v">%s</td><td>%s</td><td>%s</td><td class="%s">%s</td></tr>\n', ...
+            esc(eff_title(eff)), sSym, val, dfs, kch, pcls, ps);
     end
     fprintf(fid, '    </tbody></table>\n  </div>\n</section>\n');
 end

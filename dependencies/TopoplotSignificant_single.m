@@ -29,21 +29,33 @@ function configs = get_plot_configurations(comparison, dat1, dat2)
     configs = struct();
     
     switch comparison
-        case {'pairedT', 'unpairedT', 'circ_wheeler_watson_Test', 'circ_WatsonsU2Test'}
+        case {'pairedT', 'unpairedT'}
             configs.colormap = 'jet';
             configs.clim = [-3, 3];
             configs.colorlabel = ['warm: ', dat1, ' > ', dat2];
-            
+
         case 'onesampleT'
             configs.colormap = 'jet';
             configs.clim = [-3, 3];
             configs.colorlabel = ['warm: ', dat1, ' > 0'];
-            
+
+        case 'circ_phase_group'
+            % Hotelling T^2 -> F on the (cos,sin) embedding: non-negative and
+            % omnibus, so a sequential map with an auto scale, not a diverging one.
+            configs.colormap = 'hot';
+            configs.clim = 'auto';
+            configs.colorlabel = 'Hotelling F (mean resultant differs)';
+
+        case 'circ_phase_group_u2'
+            configs.colormap = 'hot';
+            configs.clim = 'auto';
+            configs.colorlabel = 'Watson U^2 (distributions differ)';
+
         case 'circ_corrAngLinear'
             configs.colormap = 'hot';
             configs.clim = 'auto';
-            configs.colorlabel = '';
-            
+            configs.colorlabel = 'circular-linear F';
+
         case 'correlationS'
             configs.colormap = 'jet';
             configs.clim = [-1, 1];

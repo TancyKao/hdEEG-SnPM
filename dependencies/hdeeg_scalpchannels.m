@@ -57,11 +57,20 @@ labels.compu257 = {...
             'CPP5', 'CPP1', 'CPP2', 'CPP6', 'TPP10h', 'P9h', 'P5h', 'P1h', ...
             'P2h', 'P6h', 'P10h', 'PPOz', 'POO7', 'POO1', 'POO2', 'POO8', ...
             'O1h', 'O2h', 'OCb1', 'OCb2', 'REF'};
+% Source-space (cortical voxel) analysis: the "labels" are the 2447 source
+% graph nodes src0001..src2447, generated deterministically in graph-node
+% order. These are NOT scalp electrodes; the source neighbour graph
+% (NeighborMatrix_Sources_2447_Full.mat) supplies adjacency, and rendering is
+% bypassed (voxel-list output, not a scalp topoplot). See snpm_montage_registry.
+labels.source2447 = arrayfun(@(k) sprintf('src%04d', k), 1:2447, 'UniformOutput', false);
+
 switch lower(type)
     case 'egi257'
         incl = labels.egi257;
     case 'compu257'
         incl = labels.compu257;
+    case 'source2447'
+        incl = labels.source2447;
     otherwise
         incl = {};
 end

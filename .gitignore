@@ -14,6 +14,16 @@ test_data/
 temp_check_csv/
 
 # =============================================================================
+# Throwaway prototypes and agent scratch space
+# =============================================================================
+# Simulation prototypes, method-ruling checks and one-off probes. These embed
+# absolute author paths and are deliberately NOT reproducible builds — the
+# conclusions belong in the source comments and docs, not the scripts. Never
+# import from here in production code.
+_scratch/
+scratchpad/
+
+# =============================================================================
 # Reference method PDFs
 # =============================================================================
 # Method papers / derivations — binary, large, and available on Dropbox.

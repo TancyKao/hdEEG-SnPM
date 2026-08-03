@@ -25,6 +25,9 @@ function S = snpm_setup_channels(montage_key, data_cell, channel_cols)
 %     .insidegoodch    1:nCh (data is already filtered, so indices are sequential)
 %     .channel_mapping struct describing the selection (for reports/debug)
 %     .select_mode     'label' (every system is label-based)
+%     .system_key      resolved recording-system key ('egi'|'compu'|'source2447')
+%     .is_source       true for a source-space system (rendering is bypassed and
+%                      a significant-voxel list is emitted instead of a topoplot)
 %
 %   See also SNPM_MONTAGE_REGISTRY, MAKE_NEIGHBORS_SPARSE.
 
@@ -74,6 +77,8 @@ S.chanlocs     = chanlocs;
 S.neighbors    = neighbors;
 S.insidegoodch = 1:nch;
 S.select_mode  = 'label';
+S.system_key   = m.key;
+if isfield(m, 'is_source'), S.is_source = logical(m.is_source); else, S.is_source = false; end
 S.channel_mapping = struct( ...
     'original_data_columns',   vcols, ...
     'original_chanloc_indices', sel, ...

@@ -22,6 +22,13 @@ status on error — suitable for a PBS/Slurm job. All scripts call
 | `run_spectral_analysis.m`| multi-folder spectral SnPM (folder = factor level; unpairedT/pairedT/onesampleT/anova1/rmanova; band×stage sweep) | `spectral_to_snpm_params` → `core_snpm_analysis` |
 | `run_event_report.m`   | event-level (spindle/SO) report (group t-map + HTML) | `export_event_report` |
 
+There is **no `run_circular_analysis.m` template**. The circular (phase/angle) tier is driven by
+building a `params` struct directly — see
+[Run a circular (phase) analysis](../docs/how-to/run-a-circular-phase-analysis.md), which carries
+the full struct, the required `circ_units` / `circ_convention` / precision-file inputs, and the
+detector zero-convention table. `scripts/gen_examples.m` builds worked examples for all four
+circular configurations under `test_data/examples/circular_*`.
+
 ## Data prep
 
 - **Spectral** (`run_spectral_report.m`): point `DATA` at the folder of per-subject
@@ -54,10 +61,13 @@ grid loops the cells and writes `SWEEP_grid_*.csv` (`nUncorr`/`nTFCE`/`nCluster`
 
 | comparison | #folders | factor (= folder label) |
 |---|---|---|
-| `unpairedT` | 2 | two independent groups (between) |
+| `unpairedT` | 2 | two independent groups (between) — **subject counts may differ between the two folders** |
 | `pairedT` / `onesampleT` | 2 | two conditions, same subjects (within) |
 | `anova1` | ≥2 | groups (between) |
 | `rmanova` | ≥2 | conditions, same subjects (within) |
+
+Two cohort folders with unequal subject counts on the `unpairedT` route now run end to end; before
+the 2026-08 fix that combination threw a dimension error before reaching a statistic.
 
 **CSV-only** (need per-subject covariates/predictor or trial-level data, so not this
 folder source): `ancova`, `regression`, `correlationP/S`, `mixed2way`, `mixedmodel` —

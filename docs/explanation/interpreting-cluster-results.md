@@ -21,9 +21,13 @@ answer subtly different questions.
   sum carries: a broad 20-channel cluster and a focal 3-channel cluster with the *same average
   Wald* score identically. The consequence is a loss of power for spatially broad effects —
   spreading the same total signal over more channels does not raise the statistic.
-- **The legacy t-test path** (`pairedT`, `onesampleT`, `unpairedT`, and the correlation and
-  circular comparisons) uses cluster **extent** — cluster *size* only, the count of
-  contiguous supra-threshold channels. Here spatial spread is exactly what is rewarded.
+- **The legacy t-test path** (`pairedT`, `onesampleT`, `unpairedT`, and the correlation
+  comparisons) uses cluster **extent** — cluster *size* only, the count of contiguous
+  supra-threshold channels. Here spatial spread is exactly what is rewarded.
+- **The circular tier** (`circ_phase_group`, `circ_phase_group_u2`, `circ_corrAngLinear`) uses
+  cluster **mass**, like the GLM/LMM tier. Note that this differs from Helfrich et al. (2018),
+  who used FieldTrip's `maxsize`; the difference is disclosed in the results text of every
+  circular run.
 
 So the two tiers reward different things: the legacy path rewards **spatial extent**, the
 GLM/LMM path rewards **per-channel effect height**. A practical consequence: **cluster
@@ -50,8 +54,28 @@ anatomical edge — a neighbouring channel just outside the outline is not estab
 null. Write up the result as a region ("a centro-parietal cluster showed …"), not as a list
 of certified channels.
 
-This point holds for **all tiers** — legacy t-tests, GLM presets, and the LMM — because they
-all rest on the same neighbour-based permutation cluster / TFCE machinery.
+This point holds for **all tiers** — legacy t-tests, GLM presets, the LMM and the circular
+analyses — because they all rest on the same neighbour-based permutation cluster / TFCE
+machinery.
+
+## A circular significance map carries no direction of effect
+
+There is a further restriction specific to the circular tier, and it is easy to miss because the
+map *looks* like every other topoplot.
+
+The Hotelling T², Watson's U² and the circular–linear F are all **non-negative omnibus
+statistics**. A significant circular cluster says the two groups' phase distributions *differ*
+somewhere in that region — which may be a shift in mean direction, a difference in concentration,
+or a mixture of the two. It does not say which, and it does not say which way. There is no sign
+to read off the colour bar, which is why `tail` is locked to `both` for these analyses.
+
+So "the patient group's spindles couple **later** in the up-state" is not a claim a circular
+cluster supports, however tempting the topography makes it. For a directional statement, run the
+**signed** linearised measure through `unpairedT` / `ancova`, which is an ordinary signed t-map
+and does carry a direction. The same applies to circular–linear correlation: significance means
+the behavioural variable varies with phase, never that it is higher or better at any particular
+phase. See
+[About circular statistics for phase](circular-statistics-for-phase.md).
 
 ## References
 

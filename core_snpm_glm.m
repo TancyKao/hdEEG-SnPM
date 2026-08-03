@@ -61,6 +61,22 @@ function [results_struct, results_text] = core_snpm_glm(params)
     power = chsel.data{1}; chanlocs = chsel.chanlocs;
     neighbors = chsel.neighbors; insidegoodch = chsel.insidegoodch;
     select_mode = chsel.select_mode;
+    is_source = isfield(chsel, 'is_source') && chsel.is_source;
+
+    % Source-level (2447 cortical voxels) is NOT supported on the GLM presets.
+    % These designs test between-/within-subject mean effects on SIGNED current
+    % density, where arbitrary per-subject sign cancels the effect and yields an
+    % invalid null; the GLM path also emits no spatial source deliverable. Reject
+    % at the engine (load-bearing control for both the script and GUI doors)
+    % before any statistics run. Route source data through the t-test
+    % (core_snpm_analysis) or LMM (core_snpm_lmm) paths instead.
+    if is_source
+        error('snpm:source:notSupportedInGLM', ...
+            ['Source-level analysis is not supported for GLM presets ' ...
+             '(anova1/ancova/regression/rmanova/mixed2way); run source data ' ...
+             'through the t-test (core_snpm_analysis) or LMM (core_snpm_lmm) ' ...
+             'paths.']);
+    end
 
     if size(power, 2) ~= size(neighbors, 1)
         error('core_snpm_glm:channelMismatch', ...
@@ -106,10 +122,14 @@ function [results_struct, results_text] = core_snpm_glm(params)
 
     %% Real statistic + permutation correction
     [stat, pm] = snpm_glm_stat(power, D.X, D.C);
-    flctx = make_fl_context(power, D);
+    flctx = snpm_glm_fl_context(power, D);
+    % Channels that missing data makes unevaluable in some permutations are
+    % dropped from the observed map as well, so observed and permuted maps are
+    % defined on one channel set. Computed once, before the permutation loop.
+    excluded_channels = excluded_channel_info(flctx.evaluable, chanlocs, preset);
     perm_stat_fn = @() permstat(flctx, D.X, D.C);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_stat_fn, neighbors, E, H, alpha, ...
-        params.permutations, D.contrast_type);
+        params.permutations, D.contrast_type, flctx.evaluable);
 
     uncorrsigch      = find(p.real <= alpha);
     correctTFCEsigch = find(p.correctedTFCE <= alpha);
@@ -127,7 +147,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
             flph = flctx;   % same FL residualization (nuisance = original design nuisance)
             phfn = @() permstat(flph, D.X, Cph);
             [Tph, pph, Cl_ph] = snpm_perm_correction(phstat, phpm, phfn, neighbors, E, H, alpha, ...
-                params.permutations, 't');
+                params.permutations, 't', flph.evaluable);
             posthoc_results(ph).label = D.posthoc(ph).label;
             posthoc_results(ph).uncorrsigch = find(pph.real <= alpha);
             posthoc_results(ph).correctTFCEsigch = find(pph.correctedTFCE <= alpha);
@@ -263,6 +283,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
     results_struct.SnPMsigch = SnPMsigch;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = posthoc_results;
+    results_struct.excluded_channels = excluded_channels;
     results_struct.data_summary.data1_size = size(power);
     results_struct.data_summary.data2_size = [size(power,1), numel(channel_cols)];
     results_struct.data_summary.data1_mean = mean(power(:), 'omitnan');
@@ -297,6 +318,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
         ['Permutation: ' D.perm_type], ...
         ['Permutations: ' num2str(params.permutations)], ...
         ['Observations: ' num2str(size(power,1))], ...
+        excluded_text(excluded_channels), ...
         '', '--- Statistical Results ---', ...
         ['Uncorrected significant channels: ' num2str(numel(uncorrsigch))], ...
         ['TFCE corrected significant channels: ' num2str(numel(correctTFCEsigch))], ...
@@ -336,12 +358,45 @@ function [stat, pm] = permstat(flctx, X, C)
     [stat, pm] = snpm_glm_stat(Yp, X, C);
 end
 
-function flctx = make_fl_context(Y, D)
-    Z = D.X(:, D.nuisance_idx);
-    if isempty(Z), Z = ones(size(Y,1), 1); end
-    betaZ = Z \ Y;
-    Zfit  = Z * betaZ;
-    flctx = struct('Zfit', Zfit, 'R', Y - Zfit, 'eb', D.eb, 'perm_type', D.perm_type);
+function excl = excluded_channel_info(evaluable, chanlocs, context_label)
+% Channels dropped because missing data makes them unevaluable in some
+% permutations (see snpm_glm_fl_context). Reported loudly and returned so the
+% caller can put them in the .mat / Excel / HTML — a channel must never leave an
+% analysis silently.
+    evaluable = reshape(logical(evaluable), 1, []);
+    idx = find(~evaluable);
+    labels = cell(1, numel(idx));
+    for k = 1:numel(idx)
+        lab = '';
+        if idx(k) <= numel(chanlocs) && isfield(chanlocs, 'labels')
+            lab = chanlocs(idx(k)).labels;
+        end
+        if isempty(lab), lab = sprintf('#%d', idx(k)); end
+        labels{k} = lab;
+    end
+    excl = struct('n', numel(idx), 'n_channels', numel(evaluable), ...
+        'index', idx, 'labels', {labels}, 'context', context_label, ...
+        'reason', 'missing data: channel not evaluable in every permutation');
+    if isempty(idx)
+        return;
+    end
+    msg = sprintf(['%s: EXCLUDED %d of %d channels. Missing data means they cannot be ' ...
+        'evaluated in every permutation, so they are NaN in the observed map as well as ' ...
+        'in the null (a value scored against a null it could not enter would be invalid). ' ...
+        'Channels: %s'], context_label, numel(idx), numel(evaluable), strjoin(labels, ', '));
+    fprintf('%s\n', msg);
+    warning('core_snpm_glm:channelsExcluded', '%s', msg);
+end
+
+function txt = excluded_text(excl)
+% One results_text line per exclusion report (feeds the GUI Result box + CSV).
+    if excl.n == 0
+        txt = sprintf('Channels excluded for missing data: none (%d/%d evaluable)', ...
+            excl.n_channels, excl.n_channels);
+    else
+        txt = sprintf('Channels excluded for missing data (%s): %d of %d — %s', ...
+            excl.context, excl.n, excl.n_channels, strjoin(excl.labels, ', '));
+    end
 end
 
 function Cpad = pad_contrast(C, p)
@@ -459,6 +514,7 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     [eG, subj_power, subj_meta] = compute_group_effect(power, meta, opts, ...
         neighbors, alpha, E, H, nperm, do_posthoc);
     eG.key = 'group';
+    eG.excluded_channels = excluded_channel_info(eG.evaluable, chanlocs, 'mixed2way group');
     eG = gen_effect_topos(eG, subj_power, subj_meta, opts.group_col, chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_group'], [outputSname '_group']);
 
@@ -467,6 +523,7 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     Dc = snpm_glm_design('mixed2way', meta, optsC);
     eC = compute_effect(power, Dc, neighbors, alpha, E, H, nperm, do_posthoc);
     eC.key = 'condition';
+    eC.excluded_channels = excluded_channel_info(eC.evaluable, chanlocs, 'mixed2way condition');
     eC = gen_effect_topos(eC, power, meta, opts.condition_col, chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_condition'], [outputSname '_condition']);
 
@@ -476,17 +533,43 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     Dx = snpm_glm_design('mixed2way', meta, optsX);
     eX = compute_effect(power, Dx, neighbors, alpha, E, H, nperm, false);
     eX.key = 'interaction';
+    eX.excluded_channels = excluded_channel_info(eX.evaluable, chanlocs, 'mixed2way interaction');
     eX = gen_effect_topos(eX, power, meta, '', chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_interaction'], [outputSname '_interaction']);
     eX.simple_effects = compute_simple_effects(power, meta, opts, neighbors, ...
         alpha, E, H, nperm, chanlocs, insidegoodch, select_mode, outpath, base_filename, outputSname);
 
     % ---- Global whole-head mixed ANOVA (parametric, channel-averaged) ----
-    Yg      = mean(power, 2, 'omitnan');
-    Yg_subj = mean(subj_power, 2, 'omitnan');
-    [eG.global_stat, eG.global_pval, eG.global_df1, eG.global_df2] = compute_global_effect(Yg_subj, eG.D);
-    [eC.global_stat, eC.global_pval, eC.global_df1, eC.global_df2] = compute_global_effect(Yg,      eC.D);
-    [eX.global_stat, eX.global_pval, eX.global_df1, eX.global_df2] = compute_global_effect(Yg,      eX.D);
+    %
+    % THREE DIFFERENT AVERAGES, NOT ONE. Each effect is averaged over ITS OWN
+    % evaluable set, because the three effects do not have the same one: the
+    % group effect is computed on subject means (a channel survives if it is
+    % usable in every SUBJECT), the condition and interaction effects on the
+    % trial/row matrix (a channel survives if it is usable in every ROW), and
+    % the interaction design can lose a channel the condition design keeps.
+    %
+    % Averaging every unit over whatever channels it happens to have -- the old
+    % mean(power,2,'omitnan') -- makes the units measure different things,
+    % because scalp power has a strong spatial gradient and the channel set
+    % therefore sets a per-unit offset. Measured with NO true effect, 4000
+    % replicates, nominal 0.05: a paired contrast where a different region is
+    % missing in condition A than in condition B rejected 1.0000 of the time.
+    % Averaging both arms over one common set returns it to nominal. Same rule
+    % as global_stat_test (legacy tier) and core_snpm_lmm.m:318 (LMM tier).
+    %
+    % The interaction SIMPLE EFFECTS (compute_simple_effects) deliberately have
+    % no global test at all -- they emit maps only -- so there is nothing to fix
+    % there; if one is ever added it must use that simple effect's own
+    % flctx.evaluable, not this one.
+    Yg_G = global_average(subj_power, eG.evaluable, 'mixed2way group');
+    Yg_C = global_average(power,      eC.evaluable, 'mixed2way condition');
+    Yg_X = global_average(power,      eX.evaluable, 'mixed2way interaction');
+    [eG.global_stat, eG.global_pval, eG.global_df1, eG.global_df2] = compute_global_effect(Yg_G, eG.D);
+    [eC.global_stat, eC.global_pval, eC.global_df1, eC.global_df2] = compute_global_effect(Yg_C, eC.D);
+    [eX.global_stat, eX.global_pval, eX.global_df1, eX.global_df2] = compute_global_effect(Yg_X, eX.D);
+    eG.global_n_channels = sum(eG.evaluable);
+    eC.global_n_channels = sum(eC.evaluable);
+    eX.global_n_channels = sum(eX.evaluable);
 
     % ---- Descriptive figures: cell-mean grid + interaction line plot ----
     descriptive = struct('cellmean_png', {{}}, 'cellmean_labels', {{}}, ...
@@ -520,6 +603,7 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     results_struct.SnPMsigch = eX.SnPMsigch;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = eX.posthoc;
+    results_struct.excluded_channels = eX.excluded_channels;   % top level = interaction
     results_struct.data_summary.data1_size = size(power);
     results_struct.data_summary.data2_size = [size(power,1), numel(channel_cols)];
     results_struct.data_summary.data1_mean = mean(power(:), 'omitnan');
@@ -571,11 +655,12 @@ end
 % ---- one effect: real stat + FL permutation correction ------------------
 function eff = compute_effect(Y, D, neighbors, alpha, E, H, nperm, do_posthoc)
     [stat, pm, df1, df2] = snpm_glm_stat(Y, D.X, D.C);
-    flctx = make_fl_context(Y, D);
+    flctx = snpm_glm_fl_context(Y, D);
     perm_fn = @() permstat(flctx, D.X, D.C);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_fn, neighbors, E, H, alpha, ...
-        nperm, D.contrast_type);
+        nperm, D.contrast_type, flctx.evaluable);
     eff = struct();
+    eff.evaluable = flctx.evaluable;
     eff.T = T; eff.p = p; eff.Clusters = Clusters;
     eff.uncorrsigch = find(p.real <= alpha);
     eff.correctTFCEsigch = find(p.correctedTFCE <= alpha);
@@ -607,7 +692,7 @@ function posthoc_results = compute_posthoc(Y, D, flctx, neighbors, alpha, E, H, 
         [phstat, phpm] = snpm_glm_stat(Y, D.X, Cph);
         phfn = @() permstat(flctx, D.X, Cph);
         [Tph, pph, Cl_ph] = snpm_perm_correction(phstat, phpm, phfn, neighbors, E, H, alpha, ...
-            nperm, 't');
+            nperm, 't', flctx.evaluable);
         posthoc_results(ph).label = D.posthoc(ph).label;
         posthoc_results(ph).uncorrsigch = find(pph.real <= alpha);
         posthoc_results(ph).correctTFCEsigch = find(pph.correctedTFCE <= alpha);
@@ -746,6 +831,8 @@ function simples = compute_simple_effects(power, meta, opts, neighbors, alpha, E
         end
         se = compute_effect(power(rows, :), Dg, neighbors, alpha, E, H, nperm, true);
         se.key = sprintf('condition@%s', level_to_str(glev, g));
+        se.excluded_channels = excluded_channel_info(se.evaluable, chanlocs, ...
+            sprintf('mixed2way simple effect (%s)', level_to_str(glev, g)));
         se.effect_label = sprintf('Condition within %s', level_to_str(glev, g));
         safe = matlab.lang.makeValidName(level_to_str(glev, g));
         se = gen_effect_topos(se, power(rows, :), meta(rows, :), opts.condition_col, ...
@@ -759,6 +846,24 @@ end
 % ---- global (whole-head, channel-averaged) parametric effect ------------
 function [stat, pval, df1, df2] = compute_global_effect(Yg, D)
     [stat, pval, df1, df2] = snpm_glm_stat(Yg, D.X, D.C);
+end
+
+% ---- channel average over ONE effect's evaluable set --------------------
+function Yg = global_average(Y, evaluable, label)
+% Mean over the channels this effect can actually evaluate, so every analysed
+% unit is averaged over the SAME channels (see the note at the call site).
+% 'omitnan' is kept only as a belt-and-braces: inside the evaluable set every
+% analysed row is finite by construction, so it never fires.
+    evaluable = reshape(logical(evaluable), 1, []);
+    if ~any(evaluable)
+        warning('core_snpm_glm:noCommonChannel', ...
+            ['%s global test: no channel is evaluable, so the whole-head statistic is ' ...
+             'undefined (NaN). The channel-wise map for this effect is empty for the ' ...
+             'same reason -- inspect the per-channel missingness.'], label);
+        Yg = NaN(size(Y, 1), 1);
+        return
+    end
+    Yg = mean(Y(:, evaluable), 2, 'omitnan');
 end
 
 % ---- canonical effect struct (fixed field set/order for concatenation) --
@@ -785,10 +890,18 @@ function e = normalize_effect(eff)
     e.effect_map_only  = getfield_default(eff, 'effect_map_only', false);
     e.posthoc          = getfield_default(eff, 'posthoc', empty_posthoc());
     e.simple_effects   = getfield_default(eff, 'simple_effects', struct([]));
+    e.excluded_channels = getfield_default(eff, 'excluded_channels', ...
+        struct('n', 0, 'n_channels', 0, 'index', [], 'labels', {{}}, ...
+               'context', '', 'reason', ''));
     e.global_stat      = getfield_default(eff, 'global_stat', NaN);
     e.global_pval      = getfield_default(eff, 'global_pval', NaN);
     e.global_df1       = getfield_default(eff, 'global_df1', NaN);
     e.global_df2       = getfield_default(eff, 'global_df2', NaN);
+    % How many channels the global average was taken over. NOT cosmetic: the
+    % global is only a whole-head claim when this is the whole montage, and each
+    % effect has its own evaluable set, so the three globals in one mixed2way
+    % report can legitimately rest on three different channel counts.
+    e.global_n_channels = getfield_default(eff, 'global_n_channels', NaN);
 end
 
 function txt = mixed2way_text(effects, data_file, preset, nperm, nobs, outputSname)
@@ -803,8 +916,17 @@ function txt = mixed2way_text(effects, data_file, preset, nperm, nobs, outputSna
         txt{end+1} = sprintf('%s (%s, %s): %d TFCE-sig, %d cluster-sig channels', ...
             e.key, e.contrast_type, e.perm_type, numel(e.correctTFCEsigch), numel(e.SnPMsigch)); %#ok<AGROW>
         if ~isnan(e.global_stat)
-            txt{end+1} = sprintf('    global %s = %.3f, p = %.4g', ...
-                e.contrast_type, e.global_stat, e.global_pval); %#ok<AGROW>
+            if isnan(e.global_n_channels)
+                kstr = '';
+            else
+                kstr = sprintf(' (mean over %d channels complete in every analysed unit)', ...
+                    e.global_n_channels);
+            end
+            txt{end+1} = sprintf('    global %s = %.3f, p = %.4g%s', ...
+                e.contrast_type, e.global_stat, e.global_pval, kstr); %#ok<AGROW>
+        end
+        if e.excluded_channels.n > 0
+            txt{end+1} = ['    ' excluded_text(e.excluded_channels)]; %#ok<AGROW>
         end
     end
     txt{end+1} = ['Results saved to: ' outputSname '.mat'];

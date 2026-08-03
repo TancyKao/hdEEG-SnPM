@@ -8,19 +8,36 @@
 
 % ======================= CONFIG (edit me) =======================
 ROOT     = '/path/to/hdEEG-SnPM';
-DATA     = '/path/to/your-study/derivatives/eeg/spectral_power';   % folder of per-subject spectral .mat files
-OUT      = fullfile(ROOT,'03_results','statistical_outputs','hdEEG_overnightPSA'); % must contain sleep_eeg_report.html (master in templates/sleep_eeg_report.html)
+DATA     = fullfile(ROOT,'test_data','hdeeg_analysis_all_sub');   % folder of per-subject spectral .mat files
+OUT      = fullfile(ROOT,'test_data','hdeeg_paired_report_2026-07');
 
 opts = struct();
-opts.permutations     = 1000;
+opts.permutations     = 5000;
 opts.condA            = 'Condition A';
 opts.condB            = 'Condition B';
 opts.fmin             = 0.1;     opts.fmax = 40;
 opts.add_nrem         = true;                 % add NREM = mean(N2,N3)
-opts.exclude_subjects = {'sub-XX'};           % drop bad-data subjects (e.g. 20 Hz artifact)
+opts.seed             = 20260722;             % one seed for the whole sweep
+opts.exclude_subjects = {};                   % none: sub-XX is NOT an outlier in this dataset (n=27)
+% bad channels: NaN-masked for that subject only (pairwise deletion) across all
+% bands, both conditions, all stages, and the global-PSD channel average
+opts.exclude_chan_subject = {'sub-XX','E197'; 'sub-YY','E184'};
 % opts.periodogram_only = true;               % fast path: only regenerate periodograms
 % ================================================================
 
-addpath(genpath(ROOT));
+cd(ROOT); addpath(genpath(ROOT));
+if ~exist(OUT,'dir'), mkdir(OUT); end
+% No template copy: export_report reads templates/sleep_eeg_report.html from the
+% toolbox. OUT must contain results only.
+
+EXPECT_N = 27;   % matched subjects for this dataset; guards a silent subject loss
+
 export_report(DATA, OUT, opts);
+
+% n is only reported inside REPORT.js -- assert it rather than trusting the log.
+js = fileread(fullfile(OUT,'REPORT.js'));
+n  = str2double(regexp(js,'n_subj:\s*(\d+)','tokens','once'));
+assert(n==EXPECT_N, 'REPORT.n_subj is %d, expected %d - subjects were lost.', n, EXPECT_N);
+nc = str2double(regexp(js,'"low-delta":(\d+)','tokens','once'));
+fprintf('Asserted REPORT.n_subj = %d (first per-cell n = %d)\n', n, nc);
 fprintf('Done: spectral report -> %s\n', fullfile(OUT,'sleep_eeg_report_filled.html'));

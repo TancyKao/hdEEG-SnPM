@@ -10,6 +10,15 @@ appropriate, see [explanation](../explanation/); for exact inputs/outputs, see t
 
 - **[Run an analysis in the GUI](run-an-analysis-in-the-gui.md)** — drive `SnPMAnalysisGui`
   for CSV files or a spectral folder, map column roles, and read the outputs.
+- **[Run a circular (phase) analysis](run-a-circular-phase-analysis.md)** — compare preferred
+  phase between two independent groups, or correlate it with a measure: the file layout including
+  the required event-count files, the radians requirement, the detector zero-convention table
+  (including the 180°-wrong TurtleWave pre-v4 export), the angular-resolution rule, and how to
+  read the outputs.
+- **[Run a source-level (2447-voxel) analysis](run-a-source-level-analysis.md)** — headless
+  permutation t on reconstructed cortical band power: the `src0001..src2447` export contract,
+  the magnitude / node-order guards, the significant-voxel deliverable, and the placeholder-
+  coordinate precondition.
 
 ## Task guides that live next to the code
 

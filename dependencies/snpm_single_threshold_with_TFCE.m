@@ -392,49 +392,55 @@ switch compstring
         TFCEdata=zeros(possible_permutations,number_of_inputs);
         tVals=zeros(possible_permutations,number_of_inputs);
 
+        % COMPLETE-COLUMN RULE (see snpm_corr_columns). A channel with any
+        % missing cell is NaN in the observed map AND in every permuted map, so
+        % the analysed row set cannot depend on the permutation. The old code
+        % recomputed a per-channel `idxfinite` INSIDE this loop, which made the
+        % number of complete pairs a function of the permutation and mis-scaled
+        % the null (raw r has spread ~1/sqrt(n-1)).
+        %
+        % isfinite, not ~isnan: log10(0) = -Inf under datatype 'logscale' passes
+        % ~isnan but still makes snpm_corr_columns return NaN, so an ~isnan mask
+        % here would disagree with the statistic AND with the mask
+        % core_snpm_analysis reports to the user. Same test in the Spearman arm
+        % below, in snpm_cluster_analysis, and in core_snpm_analysis.
+        evaluable_col = all(isfinite(data_x) & isfinite(data_y), 1);
+
         for permIndex = 1:possible_permutations
             %print out the status
-            if mod(permIndex, 1) == 0
+            if mod(permIndex, 100) == 0
                 disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
             end
             randompermutations = actual_combos(permIndex,:);
 
-            data_x_temp=data_x(randompermutations,:);
-            r_corr=NaN(1,number_of_inputs);
-            for i = 1:number_of_inputs
-               idxfinite=~isnan(data_x_temp(:,i)) & ~isnan(data_y(:,i));
-%                 [r_tmp,~]=corrcoef(data_x_temp(idxfinite,i),data_y(idxfinite,i));
-%                 r_corr(i)=r_tmp(1,2);
-               if sum(idxfinite)~=0
-                  r_tmp=corr(data_x_temp(idxfinite,i),data_y(idxfinite,i));
-                  r_corr(i)=r_tmp;
+            % One vectorised call for the whole map; NaN columns stay NaN.
+            r_corr = snpm_corr_columns(data_x(randompermutations,:), data_y);
+            r_corr(~evaluable_col) = NaN;   % defensive: unreachable, the rule above already gives NaN
 
-               else
-                  r_corr(i)=NaN;
-               end                
- 
-            end
             tVals(permIndex,:)=r_corr;
             TFCEdata(permIndex,:) = ClusterEnhancement(r_corr,sparse_channel_adjacency_matrix,E,H);
         end
         clear  p STATS group1 group2
-        
-        % calculate real correlation values
-         T.real_T=NaN(1,number_of_inputs);
+
+        % OBSERVED MAP VIA THE IDENTICAL CODE PATH AS THE PERMUTED MAPS.
+        % Same snpm_corr_columns call as inside the loop, so the identity
+        % relabelling (always row 1 of actual_combos) reproduces it bitwise and
+        % the max-statistic ties are exact. Do not "simplify" this into a
+        % per-channel corr() loop: a one-ulp difference between the observed
+        % statistic and its own image under the identity relabelling can flip a
+        % >= comparison against the max null, changing b by one and moving p by
+        % 1/(N+1) -- 0.005 at 200 permutations, enough to cross 0.05. The
+        % uncorrected parametric p still comes from corr() per channel, which is
+        % a separate quantity and not scored against any permutation null.
+         T.real_T = snpm_corr_columns(data_x, data_y);
+         T.real_T(~evaluable_col) = NaN;
          p.real=NaN(1,number_of_inputs);
          for i = 1:number_of_inputs
-             idxfinite=~isnan(data_x(:,i)) & ~isnan(data_y(:,i));
-             %[r_tmp,p_tmp]=corrcoef(data_x(idxfinite,i),data_y(idxfinite,i));
-             if sum(idxfinite)~=0
-                 [r_tmp,p_tmp]=corr(data_x(idxfinite,i),data_y(idxfinite,i));           
-                 T.real_T(i)=r_tmp;
-                 p.real(i)=p_tmp;
-             else
-                 T.real_T(i)=NaN;
-                 p.real(i)=NaN;  
-             end
+             if ~evaluable_col(i), continue; end
+             [~,p_tmp]=corr(data_x(:,i),data_y(:,i));
+             p.real(i)=p_tmp;
          end
-         
+
         T.tMax = sort(max(abs(tVals),[],2),'descend');
         T.chk_T = mean(abs(tVals));
         [T.tMaxTFCE ,~] = sort(max(abs(TFCEdata),[],2),'descend');
@@ -458,53 +464,58 @@ switch compstring
             TFCEdata=zeros(possible_permutations,number_of_inputs);
             tVals=zeros(possible_permutations,number_of_inputs);
 
+            % COMPLETE-COLUMN RULE (see the Pearson case and snpm_corr_columns).
+            % isfinite, not ~isnan -- see the Pearson case. Read off the RAW
+            % matrices, not the ranks: tiedrank maps -Inf to a finite rank, so a
+            % mask taken after ranking would silently readmit a channel the
+            % transform had destroyed.
+            evaluable_col = all(isfinite(data_x) & isfinite(data_y), 1);
+
+            % Spearman = Pearson on ranks. Row permutation commutes with
+            % ranking, so the rank transform is hoisted OUT of the permutation
+            % loop -- exact, not an approximation, and it removes a tiedrank per
+            % permutation.
+            rank_x = tiedrank(data_x);
+            rank_y = tiedrank(data_y);
+
             for permIndex = 1:possible_permutations
                 %print out the status
-                if mod(permIndex, 1) == 0
+                if mod(permIndex, 100) == 0
                     disp([num2str(permIndex),' out of ',num2str(possible_permutations),' combinations completed...']);
                 end
                 randompermutations = actual_combos(permIndex,:);
 
-                data_x_temp=data_x(randompermutations,:);
-                r_corr=NaN(1,number_of_inputs);
-                for i = 1:number_of_inputs
-                   idxfinite=~isnan(data_x_temp(:,i)) & ~isnan(data_y(:,i));
-    %                 [r_tmp,~]=corrcoef(data_x_temp(idxfinite,i),data_y(idxfinite,i));
-    %                 r_corr(i)=r_tmp(1,2);
-                   if sum(idxfinite)~=0
-                      r_tmp=corr(data_x_temp(idxfinite,i),data_y(idxfinite,i),'Type','Spearman','rows','complete');
-                      r_corr(i)=r_tmp;
-    
-                   else
-                      r_corr(i)=NaN;
-                   end                
-     
-                end
+                r_corr = snpm_corr_columns(rank_x(randompermutations,:), rank_y);
+                % NOT redundant in the Spearman arm: tiedrank maps -Inf to a
+                % finite rank (unlike NaN, which it propagates), so a column made
+                % non-finite by log10(0) would otherwise produce a real-looking r.
+                r_corr(~evaluable_col) = NaN;
+
                 tVals(permIndex,:)=r_corr;
                 clusterTmp = ClusterEnhancement(r_corr,sparse_channel_adjacency_matrix,E,H);
-                if length(clusterTmp) <  size(TFCEdata,2) % to solve same data for data_x_temp and data_y_temp corr 
-                    clusterTmp(end+1) = NaN; 
+                if length(clusterTmp) <  size(TFCEdata,2) % to solve same data for data_x_temp and data_y_temp corr
+                    clusterTmp(end+1) = NaN; %#ok<AGROW>
                 end
                 TFCEdata(permIndex,:) = clusterTmp;
             end
             clear  p STATS group1 group2
-            
-            % calculate real correlation values
-             T.real_T=NaN(1,number_of_inputs);
+
+            % OBSERVED MAP VIA THE IDENTICAL CODE PATH AS THE PERMUTED MAPS:
+            % same rank_x/rank_y, same snpm_corr_columns call, so the identity
+            % relabelling reproduces it bitwise and max-statistic ties are
+            % exact. Do not replace this with corr(...,'Type','Spearman'): one
+            % ulp of disagreement flips a >= against the max null and moves p by
+            % 1/(N+1). The uncorrected parametric p below is a separate quantity
+            % that is never scored against the null, so corr() is fine there.
+             T.real_T = snpm_corr_columns(rank_x, rank_y);
+             T.real_T(~evaluable_col) = NaN;
              p.real=NaN(1,number_of_inputs);
              for i = 1:number_of_inputs
-                 idxfinite=~isnan(data_x(:,i)) & ~isnan(data_y(:,i));
-                 %[r_tmp,p_tmp]=corrcoef(data_x(idxfinite,i),data_y(idxfinite,i));
-                 if sum(idxfinite)~=0
-                     [r_tmp,p_tmp]=corr(data_x(idxfinite,i),data_y(idxfinite,i),'Type','Spearman','rows','complete');           
-                     T.real_T(i)=r_tmp;
-                     p.real(i)=p_tmp;
-                 else
-                     T.real_T(i)=NaN;
-                     p.real(i)=NaN;  
-                 end
+                 if ~evaluable_col(i), continue; end
+                 [~,p_tmp]=corr(data_x(:,i),data_y(:,i),'Type','Spearman');
+                 p.real(i)=p_tmp;
              end
-             
+
             T.tMax = sort(max(abs(tVals),[],2),'descend');
             T.chk_T = mean(abs(tVals));
             [T.tMaxTFCE ,~] = sort(max(abs(TFCEdata),[],2),'descend');
@@ -512,8 +523,25 @@ switch compstring
        
         
     otherwise
-        display('error - improproper comparison')
-        return;
+        % FATAL. This used to print 'error - improproper comparison' and RETURN,
+        % handing the caller a half-filled T (no real_T, no tMax, no TFCE null)
+        % and an unset p, which downstream code then indexed into. A comparison
+        % this engine has no permutation scheme for is not a warning condition.
+        %
+        % Nothing legitimate reaches here from core_snpm_analysis: it calls
+        % global_stat_test with the same comparison/tail FIRST, and that function
+        % errors on exactly the same set of unsupported compstrings, so any
+        % combination that would land here has already aborted the run. This
+        % branch protects direct callers (export_report, scripts, tests).
+        error('snpm_single_threshold_with_TFCE:unsupportedComparison', ...
+            ['No permutation scheme for comparison ''%s'' with tail ''%s'' (compstring ''%s''). ' ...
+             'Supported here: pairedT and unpairedT (both|left|right), onesampleT (both), ' ...
+             'correlationP and correlationS (both). The circular analyses ' ...
+             '(circ_phase_group, circ_phase_group_u2, circ_corrAngLinear), the GLM presets ' ...
+             '(anova1, ancova, regression, rmanova, mixed2way) and mixedmodel are NOT ' ...
+             'compstring cases -- they run in their own pipelines and never reach this engine. ' ...
+             'circ_wheeler_watson_Test and circ_WatsonsU2Test are retired.'], ...
+            comparison, tail, compstring);
 end
 clear  random* permIndex 
 

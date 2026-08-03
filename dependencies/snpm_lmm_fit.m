@@ -1,4 +1,4 @@
-function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec)
+function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec, evaluable)
 % Fit a linear mixed model at every channel and return the statistic of
 % the effect of interest. This is the per-channel engine used by
 % snpm_lmm_TFCE and snpm_lmm_cluster (analogous to the per-channel ttest
@@ -11,6 +11,14 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec)
 %           the dependent variable, Subject, group, time. The per-channel
 %           predictor is injected as a variable named 'POWER' before fitting,
 %           so spec.fixed must reference 'POWER'.
+%   evaluable : (optional) 1 x nCh logical. Channels that are FALSE are not
+%           fitted at all and come back stat=NaN, wald=0, p_model=NaN. The
+%           mask is decided ONCE by the caller (snpm_lmm_TFCE /
+%           snpm_lmm_cluster / core_snpm_lmm) from the channel's completeness
+%           and is held fixed across the observed fit and every permuted fit,
+%           so the observed and null maps are defined on one channel set.
+%           Omit (or pass []) to fit every channel, which is the historical
+%           behaviour and is identical on complete data.
 %   spec  : struct describing the model:
 %       .dv          (char) name of the dependent-variable column in meta
 %       .fixed       (char) fixed-effects part of the formula, referencing
@@ -25,12 +33,28 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec)
 %
 % OUTPUTS (each 1 x nCh)
 %   stat    : signed t (continuous) or F (factor) for the effect of interest.
-%             NaN for channels that could not be fit.
-%   wald    : t^2 (continuous) or F (factor). 0 for unfit channels so they
-%             cannot contribute to cluster mass.
+%             NaN for channels that could not be fit, and for channels whose
+%             statistic came back non-finite (fitlme does NOT throw when the
+%             effect is inestimable on the rows it was given -- e.g. a group
+%             factor that is constant among a channel's non-missing rows --
+%             it returns FStat = NaN from anova(lme)).
+%   wald    : t^2 (continuous) or F (factor). 0 whenever stat is not finite,
+%             so an unfit or undefined channel cannot contribute to (or
+%             poison, via NaN) cluster mass. This is the documented contract
+%             and it is now enforced on BOTH the continuous and factor paths.
 %   p_model : model p-value of the effect of interest. NaN for unfit channels.
 
     nCh = size(power, 2);
+
+    if nargin < 4 || isempty(evaluable)
+        evaluable = true(1, nCh);
+    end
+    evaluable = reshape(logical(evaluable), 1, []);
+    if numel(evaluable) ~= nCh
+        error('snpm_lmm_fit:evaluableSize', ...
+            'evaluable mask has %d entries but power has %d channels.', ...
+            numel(evaluable), nCh);
+    end
 
     dv          = spec.dv;
     fixed       = spec.fixed;
@@ -63,6 +87,9 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec)
     min_trials = 5;
 
     parfor ch = 1:nCh
+        if ~evaluable(ch)
+            continue   % masked out by the caller: stat NaN, wald 0, p NaN
+        end
         col = power(:, ch);
         valid = ~isnan(col);
         if sum(valid) < min_trials
@@ -87,7 +114,10 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec)
                     % fall back to first coefficient that contains the name
                     row = find(contains(names, effect), 1);
                 end
-                if ~isempty(row)
+                % A non-finite t means the coefficient is not estimable on the
+                % rows supplied; leave the channel at stat=NaN / wald=0 rather
+                % than propagating NaN into the cluster mass or the max null.
+                if ~isempty(row) && isfinite(lme.Coefficients.tStat(row))
                     t = lme.Coefficients.tStat(row);
                     stat(ch)    = t;
                     wald(ch)    = t^2;
@@ -98,7 +128,10 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec)
                 % omnibus (k-1 df) F statistic for the categorical term
                 av = anova(lme);
                 row = find(strcmp(av.Term, effect), 1);
-                if ~isempty(row)
+                % anova(lme) RETURNS the term with FStat = NaN when the factor
+                % is constant among the fitted rows (no error is thrown), so
+                % the finiteness check is what keeps the wald contract honest.
+                if ~isempty(row) && isfinite(av.FStat(row))
                     f = av.FStat(row);
                     stat(ch)    = f;
                     wald(ch)    = f;     % already a ratio; summed for cluster mass

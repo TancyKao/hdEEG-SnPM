@@ -1,5 +1,5 @@
 function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn, ...
-        neighbors, E, H, alpha, permutations, contrast_type)
+        neighbors, E, H, alpha, permutations, contrast_type, evaluable, dh)
 % Shared permutation correction driver for the GLM tier. Given the real
 % per-channel statistic map and a function that returns one permuted
 % statistic map, it builds BOTH corrections in a single permutation loop:
@@ -19,18 +19,79 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
 %   alpha        : significance / cluster-forming level
 %   permutations : number of permutations
 %   contrast_type: 't' (signed -> two-sided abs) | 'F' (non-negative)
+%   evaluable    : (optional) 1 x nCh logical, TRUE for channels that CAN be
+%                  evaluated in every permutation. Channels that are FALSE are
+%                  set to NaN in the observed map as well as in every permuted
+%                  map, so both are defined on exactly the same channel set.
+%                  Omit (or pass []) for all-channels-evaluable, which is the
+%                  pre-existing behaviour on complete data.
+%   dh           : (optional) TFCE integration step forwarded to
+%                  ClusterEnhancement. OMIT (or pass []) to let
+%                  ClusterEnhancement apply its own default of 0.1, which is
+%                  what every t- and F-scale caller wants and is byte-identical
+%                  to the pre-2026-08 behaviour: when dh is absent the 5th
+%                  argument is genuinely not passed. It exists for statistics
+%                  that do not live on a t/F scale -- Watson's U^2 spans roughly
+%                  [0, 0.5], so dh=0.1 leaves ~5 integration levels and enhances
+%                  most channels to exactly 0; that path passes dh=0.005. dh is
+%                  applied identically to the observed and to every permuted map,
+%                  so it never puts the two on different scales.
+%                  It is positioned LAST so that every existing positional call
+%                  (which ends at evaluable, or earlier) is unaffected; to set dh
+%                  while leaving all channels evaluable, pass [] for evaluable.
 %
-% OUTPUTS: T (real_T, real_TFCE, tMaxTFCE, critical_T_TFCE),
+% OUTPUTS: T (real_T, real_TFCE, tMaxTFCE, critical_T_TFCE, excluded_channels),
 %          p (real, correctedTFCE), Clusters (channels, mass, p, ...)
+%
+% WHY THE MASK IS NOT OPTIONAL IN PRACTICE
+% The max-statistic null is only a valid reference distribution for a channel
+% if that channel could itself have contributed to it. A channel with an
+% observed value but a permanently NaN permuted value (see snpm_glm_fl_context)
+% is scored against a null assembled from the OTHER channels, which is wrong in
+% an unquantified direction; on top of that, TFCE integrates over neighbours,
+% so an observed map computed with the channel present is not comparable with
+% permuted maps computed without it. Masking both maps up front, once, makes
+% the comparison honest (and conservative: the channel reports NaN rather than
+% a p-value that cannot be defended).
 
     sparse_adj = make_neighbors_sparse(neighbors, size(neighbors, 1));
     nCh = numel(real_stat);
     is_F = strcmpi(contrast_type, 'F');
     waldfun = @(s) wald_of(s, is_F);
 
+    if nargin < 10 || isempty(evaluable)
+        evaluable = true(1, nCh);
+    end
+    evaluable = reshape(logical(evaluable), 1, []);
+    if numel(evaluable) ~= nCh
+        error('snpm_perm_correction:evaluableSize', ...
+            'evaluable mask has %d entries but the statistic map has %d channels.', ...
+            numel(evaluable), nCh);
+    end
+    excluded = find(~evaluable);
+
+    % One enhancer, used for BOTH the observed and every permuted map. When dh
+    % is not supplied the 5th argument is omitted entirely, so
+    % ClusterEnhancement takes its own default path -- no existing caller can be
+    % shifted by this addition.
+    if nargin < 11 || isempty(dh)
+        enhance = @(x) ClusterEnhancement(x, sparse_adj, E, H);
+    else
+        if ~isscalar(dh) || ~isfinite(dh) || dh <= 0
+            error('snpm_perm_correction:badDh', ...
+                'dh must be a positive finite scalar; got %s.', mat2str(dh));
+        end
+        enhance = @(x) ClusterEnhancement(x, sparse_adj, E, H, dh);
+    end
+
+    % Restrict the OBSERVED map to the evaluable set BEFORE any enhancement, so
+    % the observed TFCE integral sees the same channels the permuted ones do.
+    real_stat(~evaluable) = NaN;
+    real_p(~evaluable)    = NaN;
+
     % ---- real maps ----
     T.real_T    = real_stat;
-    T.real_TFCE = ClusterEnhancement(real_stat, sparse_adj, E, H);
+    T.real_TFCE = enhance(real_stat);
     p.real      = real_p;
     real_clusters = find_pclusters(real_p, waldfun(real_stat), alpha, sparse_adj);
 
@@ -42,7 +103,9 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
             disp([num2str(i), ' out of ', num2str(permutations), ' GLM permutations completed...']);
         end
         [s, pp] = perm_stat_fn();
-        tfce = ClusterEnhancement(s, sparse_adj, E, H);
+        s(~evaluable)  = NaN;   % identical channel set to the observed map
+        pp(~evaluable) = NaN;
+        tfce = enhance(s);
         if is_F
             maxTFCE(i) = max(tfce, [], 'omitnan');
         else
@@ -66,6 +129,11 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
         if is_F, obs = T.real_TFCE(i); else, obs = abs(T.real_TFCE(i)); end
         p.correctedTFCE(i) = (sum(T.tMaxTFCE >= obs) + 1) / (permutations + 1);
     end
+    p.correctedTFCE(~evaluable) = NaN;   % explicit: not tested, not "p = 1"
+
+    % Carry the exclusion with the result so callers cannot report a channel
+    % set without also being able to report what left it.
+    T.excluded_channels = excluded;
 
     % ---- cluster p-values from the max-mass null ----
     if isempty(real_clusters)

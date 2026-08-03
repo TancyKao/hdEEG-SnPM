@@ -31,9 +31,40 @@ The internal analysis keys used by `core_snpm_analysis` and the GUI's `Compariso
 |---|---|---|
 | `onesampleT`, `pairedT`, `unpairedT` | one-sample / paired / unpaired t | legacy `compstring` switch |
 | `correlationP`, `correlationS` | Pearson / Spearman correlation | legacy `compstring` switch |
-| `circ_wheeler_watson_Test`, `circ_WatsonsU2Test` | circular tests | legacy `_circ` switch (CircStat toolbox required) |
+| `circ_phase_group` | phase, 2 groups — covariate-adjusted Hotelling T² | `core_snpm_circ` |
+| `circ_phase_group_u2` | phase, 2 groups — Watson's U² | `core_snpm_circ` |
+| `circ_corrAngLinear` | circular–linear correlation | `core_snpm_circ` |
 | `anova1`, `ancova`, `regression`, `rmanova`, `mixed2way` | GLM presets | `core_snpm_glm` |
 | `mixedmodel` | per-channel linear mixed model | `core_snpm_lmm` |
 
+### `snpm_perm_correction` optional arguments
+
+The shared TFCE + cluster-mass driver (`dependencies/snpm_perm_correction.m`) takes two optional
+trailing positional arguments, in this order:
+
+```
+snpm_perm_correction(real_stat, real_p, perm_stat_fn, neighbors, E, H, alpha, ...
+                     permutations, contrast_type, evaluable, dh)
+```
+
+- **`evaluable`** (10th) — `1 × nCh` logical; channels that are `false` are NaN in the observed
+  map *and* in every permuted map. Omit or pass `[]` for all channels evaluable.
+- **`dh`** (11th) — TFCE integration step forwarded to `ClusterEnhancement`. Omit or pass `[]`
+  to let `ClusterEnhancement` apply its own default of 0.1; when `dh` is absent the fifth
+  argument is genuinely not passed, so the default path is byte-identical to the pre-2026-08
+  behaviour. The same `dh` is applied to the observed map and to every permuted map. A
+  non-positive or non-finite `dh` errors with `snpm_perm_correction:badDh`.
+
+`dh` is positioned **after** `evaluable`, so **to set `dh` while leaving all channels evaluable,
+pass `[]` for `evaluable`**. The Watson U² path (`core_snpm_circ`) is the only caller that sets
+it, at `dh = 0.005`; every t- and F-scale caller omits it. Pinned by `test_circ_snpm` T2.
+
 `params.tail` ∈ `both` / `left` / `right` for the legacy t-tests and correlations. The GLM
 and LMM presets pick statistic, contrast and permutation scheme automatically from the design.
+The circular keys **lock** `tail` to `both` and `datatype` to `absolute`, and additionally
+require `circ_units` and `circ_convention` (neither has a default) — see the
+[how-to](../how-to/run-a-circular-phase-analysis.md).
+
+`circ_wheeler_watson_Test` and `circ_WatsonsU2Test` are **retired**, together with the
+`snpm_single_threshold_with_TFCE_circ` / `snpm_cluster_analysis_circ` engines. Use the three
+`core_snpm_circ` keys above.

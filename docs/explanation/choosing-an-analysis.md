@@ -66,7 +66,10 @@ fewer channels. The LMM is **script-only** (`scripts/run_lmm_analysis.m`) — no
 | Does the condition effect differ between groups? (group × stage) | `mixed2way` |
 | Monotonic power–behaviour association? | `correlationP` / `correlationS` |
 | Trial/event-level effect with many observations per subject? (per-awakening power vs sleep depth, Stephan 2021) | `mixedmodel` |
-| Phase / angle question? (spindle phase relative to SO) | circular (`circ_*`) |
+| Coupling **strength** or event **prevalence** differs? | the ordinary presets — `unpairedT` / `anova1` / `regression`. These are linear quantities and need no circular test. |
+| Preferred **phase** differs between two independent groups? | `circ_phase_group` (Hotelling T², primary) or `circ_phase_group_u2` (Watson U², secondary) |
+| Does a behavioural measure vary with phase? | `circ_corrAngLinear` |
+| Want a **directional** phase claim ("group A couples later")? | the *signed* linearised measure through `unpairedT` / `ancova` — the circular tests are non-directional |
 
 **Caveat locked from the the example study data:** `condition-a` / `condition-b` are within-subject
 (same subjects) → compare with `rmanova` / `pairedT`, **not** `anova1` (which assumes

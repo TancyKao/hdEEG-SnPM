@@ -72,6 +72,14 @@ This document summarizes the modifications made to the SnPM Analysis Tool to add
 ### 3. dependencies/partial_correlation.m
 **Purpose**: New helper function for partial correlation
 
+> **Deleted 2026-08-03.** This file no longer exists. It had become dead code — the live
+> residualization is inline in `core_snpm_analysis.m` — and it still implemented the pairwise
+> deletion described under "Handles NaN values appropriately" below, plus a failure mode where a
+> channel it could not fit was returned **raw and unresidualized** rather than as missing. What
+> the current path does instead is in `CLAUDE.md` step 5 and
+> `docs/explanation/missing-data-and-excluded-channels.md`. The rest of this section is kept as
+> history of the v2.0 design.
+
 **Features**:
 - Implements residualization method for partial correlation
 - Removes linear effects of covariates from both neural data and behavioral variables

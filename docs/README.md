@@ -21,6 +21,8 @@ Take you by the hand through a first, working analysis so you build confidence.
 ### How-to guides — goal-oriented
 Assume you know what you want; get you there.
 - [Run an analysis in the GUI](how-to/run-an-analysis-in-the-gui.md)
+- [Run a circular (phase) analysis](how-to/run-a-circular-phase-analysis.md)
+- [Run a source-level (2447-voxel) analysis](how-to/run-a-source-level-analysis.md)
 - Run analyses headless (NCI/HPC) → [`scripts/README_scripts.md`](../scripts/README_scripts.md)
 
 ### Reference — information-oriented
@@ -33,6 +35,9 @@ The source of truth; consult, don't read cover to cover.
 Background reading; the *why* behind the design.
 - [Choosing an analysis: design, missing data, and cost](explanation/choosing-an-analysis.md)
 - [Two-way mixed ANOVA — how the interaction is computed](explanation/mixed2way-interaction.md)
+- [About circular statistics for phase](explanation/circular-statistics-for-phase.md)
+- [Missing data and the complete-column rule](explanation/missing-data-and-excluded-channels.md)
+- [Interpreting cluster results](explanation/interpreting-cluster-results.md)
 - [EEG_Processor group analysis vs. SnPM_2025](explanation/eeg-processor-vs-snpm.md)
 
 ## Archive

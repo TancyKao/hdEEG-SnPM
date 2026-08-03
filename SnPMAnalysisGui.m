@@ -29,6 +29,26 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         Data2SheetTitleLabel        matlab.ui.control.Label
         Data2SheetDropDown          matlab.ui.control.DropDown
         Data2SheetLabel             matlab.ui.control.Label
+
+        % Event-count files (circular phase-group analyses only): one wide
+        % subjects x channels file per group, matching the angle file's subject
+        % column and channel names. log(event count) enters the model as a
+        % covariate -- without it, groups that differ in detected-event count
+        % show inflated false positives (fewer events => noisier per-subject
+        % phase estimate => genuinely wider observed spread, which the test
+        % reads as a real group difference).
+        Count1FileTitleLabel        matlab.ui.control.Label
+        Count1FileButton            matlab.ui.control.Button
+        Count1FileLabel             matlab.ui.control.Label
+        Count1SheetTitleLabel       matlab.ui.control.Label
+        Count1SheetDropDown         matlab.ui.control.DropDown
+
+        Count2FileTitleLabel        matlab.ui.control.Label
+        Count2FileButton            matlab.ui.control.Button
+        Count2FileLabel             matlab.ui.control.Label
+        Count2SheetTitleLabel       matlab.ui.control.Label
+        Count2SheetDropDown         matlab.ui.control.DropDown
+
         DetectCaptionLabel          matlab.ui.control.Label   % "Detected: N channels, M metadata columns"
 
         % Data-source toggle + spectral-folder controls (spectral mode)
@@ -66,6 +86,19 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         SubjectColField             matlab.ui.control.DropDown
         CovColsField                matlab.ui.control.ListBox     % multi-select covariate columns
 
+        % Phase / angle settings Panel (circular analyses only).
+        % Units and zero-phase convention are REQUIRED and deliberately have no
+        % preselected value: the engine rejects a missing value rather than
+        % guessing, because guessing wrong silently rotates every angle.
+        CircPanel                   matlab.ui.container.Panel
+        CircUnitsLabel              matlab.ui.control.Label
+        CircUnitsDropDown           matlab.ui.control.DropDown
+        CircConventionLabel         matlab.ui.control.Label
+        CircConventionDropDown      matlab.ui.control.DropDown
+        CircOffsetLabel             matlab.ui.control.Label
+        CircOffsetField             matlab.ui.control.NumericEditField
+        CircNoteLabel               matlab.ui.control.Label
+
         % Covariate-file Panel (legacy correlation covariates)
         CovariatePanel              matlab.ui.container.Panel
         CovariateFileButton         matlab.ui.control.Button
@@ -98,6 +131,8 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
     properties (Access = private)
         data1_file = ''
         data2_file = ''
+        count1_file = ''  % group A event-count file (circular phase-group analyses)
+        count2_file = ''  % group B event-count file (circular phase-group analyses)
         output_path = ''
         covariate_file = ''  % Store covariate file path
         snpm_toolbox_path = ''
@@ -111,6 +146,17 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         SubjectsCsv = ''  % optional subject-metadata CSV joined on Subject (spectral mode)
         FullComparisonItems = {}  % saved ComparisonDropDown Items/ItemsData to restore when leaving spectral mode
         FullComparisonItemsData = {}
+        % Channel-column counts per picker, used to catch an angle/count file
+        % pair that does not describe the same channels.
+        NChanAngle1 = 0
+        NChanAngle2 = 0
+        NChanCount1 = 0
+        NChanCount2 = 0
+        % Data Type / Tails selections saved when a circular analysis locks
+        % them, so switching back to any other analysis restores the user's
+        % choice rather than silently dropping the options.
+        PreCircDataType = 'absolute'
+        PreCircTail = 'both'
     end
 
     % Row indices of the collapsible auxiliary panels in app.GridLayout.
@@ -118,8 +164,12 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
     properties (Access = private, Constant)
         RolesRow = 8
         CovRow   = 9
+        CircRow  = 10   % phase/angle settings (circular analyses only)
         RolesRowH = 170
         CovRowH   = 64
+        % Rows of dataFilesGrid holding the event-count file pickers.
+        CountRow1 = 4
+        CountRow2 = 5
     end
 
     % Callbacks that handle component events
@@ -167,12 +217,14 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         function Data1SheetChanged(app, ~)
             if ~isempty(app.data1_file)
                 detectAndFill(app, app.data1_file, app.Data1SheetDropDown.Value, true);
+                app.NChanAngle1 = app.DetectedNChan;
                 checkReadyToRun(app);
             end
         end
         function Data2SheetChanged(app, ~)
             if ~isempty(app.data2_file)
                 detectAndFill(app, app.data2_file, app.Data2SheetDropDown.Value, false);
+                app.NChanAngle2 = app.DetectedNChan;
                 checkReadyToRun(app);
             end
         end
@@ -192,10 +244,15 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             spec = strcmp(app.DataSourceDropDown.Value, 'Spectral folder');
             g  = app.SpecGrid.Parent;                  % dataFilesGrid
             rh = g.RowHeight;
+            % dataFilesGrid rows: 1 source toggle, 2 file-1, 3 file-2,
+            % 4 count-1, 5 count-2, 6 spectral grid, 7 caption.
+            % The count rows are sized by applyAnalysisLayout (circular only);
+            % here they are only forced shut for the spectral source.
             if spec
-                rh{2} = 0;     rh{3} = 0;     rh{4} = '1x';   % hide file rows; let the spectral grid grow
+                rh{2} = 0;     rh{3} = 0;     rh{6} = '1x';   % hide file rows; let the spectral grid grow
+                rh{app.CountRow1} = 0; rh{app.CountRow2} = 0;
             else
-                rh{2} = 'fit'; rh{3} = 'fit'; rh{4} = 0;      % file rows fit content; collapse spectral grid
+                rh{2} = 'fit'; rh{3} = 'fit'; rh{6} = 0;      % file rows fit content; collapse spectral grid
             end
             g.RowHeight = rh;
             app.SpecGrid.Visible = spec;
@@ -209,8 +266,9 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             restrictComparisons(app, spec);
             if spec   % roles are automatic in spectral mode (factor = folder label)
                 app.RolesPanel.Visible = false; app.CovariatePanel.Visible = false;
+                app.CircPanel.Visible = false;
                 orh = app.GridLayout.RowHeight;
-                orh{app.RolesRow} = 0; orh{app.CovRow} = 0;
+                orh{app.RolesRow} = 0; orh{app.CovRow} = 0; orh{app.CircRow} = 0;
                 app.GridLayout.RowHeight = orh;
             end
         end
@@ -350,7 +408,7 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         % and show only the panels the selected analysis needs.
         function applyAnalysisLayout(app)
             key = app.ComparisonDropDown.Value;
-            [l1, l2, hint] = analysis_labels(key);
+            [l1, l2, hint, c1, c2] = analysis_labels(key);
             app.Data1FileTitleLabel.Text = l1;
             app.HintLabel.Text = hint;
             twoFile = ~isempty(l2);
@@ -363,15 +421,111 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             % Roles panel only for the GLM presets; covariate-file panel only for correlation.
             isGLM  = ismember(key, {'anova1','ancova','regression','rmanova','mixed2way'});
             isCorr = ischar(key) && contains(key, 'correlation');
+            isCirc = ischar(key) && startsWith(key, 'circ');
             app.RolesPanel.Visible     = isGLM;
             app.CovariatePanel.Visible = isCorr;
+            app.CircPanel.Visible      = isCirc;
+
+            % ---- Event-count file pickers (circular phase-group analyses) ----
+            % Required whenever the design compares phase distributions between
+            % groups; not used by the circular-linear correlation, whose pairing
+            % is by subject. Collapsed and hidden otherwise.
+            spec = strcmp(app.DataSourceDropDown.Value, 'Spectral folder');
+            needCounts = isCirc && ~isempty(c1) && ~spec;
+            if needCounts
+                app.Count1FileTitleLabel.Text = c1;
+                app.Count2FileTitleLabel.Text = c2;
+            end
+            for h = {app.Count1FileTitleLabel, app.Count1FileButton, app.Count1FileLabel, ...
+                     app.Count1SheetTitleLabel, app.Count1SheetDropDown, ...
+                     app.Count2FileTitleLabel, app.Count2FileButton, app.Count2FileLabel, ...
+                     app.Count2SheetTitleLabel, app.Count2SheetDropDown}
+                h{1}.Visible = needCounts;
+            end
+            drh = app.SpecGrid.Parent.RowHeight;
+            if needCounts
+                drh{app.CountRow1} = 'fit'; drh{app.CountRow2} = 'fit';
+            else
+                drh{app.CountRow1} = 0;     drh{app.CountRow2} = 0;
+            end
+            app.SpecGrid.Parent.RowHeight = drh;
+
+            % ---- Data Type / Tails: locked for circular analyses ----
+            % Angles are a circular domain: log10 of a radian goes complex and a
+            % cross-channel z-score is meaningless, so only 'absolute' is valid.
+            % Both circular statistics are non-negative and inherently
+            % upper-tailed, so only 'both' is valid; the engine rejects the rest.
+            % Switching AWAY must restore the full option sets, otherwise every
+            % other analysis in the toolbox silently loses those options.
+            if isCirc
+                if strcmp(char(app.DataTypeDropDown.Enable), 'on')
+                    app.PreCircDataType = app.DataTypeDropDown.Value;   % save once, on entry
+                    app.PreCircTail     = app.TailsDropDown.Value;
+                end
+                app.DataTypeDropDown.Items  = {'absolute'};
+                app.DataTypeDropDown.Value  = 'absolute';
+                app.DataTypeDropDown.Enable = 'off';
+                app.DataTypeDropDown.Tooltip = ...
+                    'Angles are used as-is; log/z-score are undefined on a circular domain.';
+                app.TailsDropDown.Items  = {'both'};
+                app.TailsDropDown.Value  = 'both';
+                app.TailsDropDown.Enable = 'off';
+                app.TailsDropDown.Tooltip = ...
+                    'The circular statistics are non-negative and inherently upper-tailed.';
+            else
+                app.DataTypeDropDown.Items = {'absolute', 'logscale', 'normalize'};
+                if ismember(app.PreCircDataType, app.DataTypeDropDown.Items)
+                    app.DataTypeDropDown.Value = app.PreCircDataType;
+                else
+                    app.DataTypeDropDown.Value = 'absolute';
+                end
+                app.DataTypeDropDown.Enable  = 'on';
+                app.DataTypeDropDown.Tooltip = '';
+                app.TailsDropDown.Items = {'both', 'left', 'right'};
+                if ismember(app.PreCircTail, app.TailsDropDown.Items)
+                    app.TailsDropDown.Value = app.PreCircTail;
+                else
+                    app.TailsDropDown.Value = 'both';
+                end
+                app.TailsDropDown.Enable  = 'on';
+                app.TailsDropDown.Tooltip = '';
+            end
+
+            % Recording-system picker is analysis-aware: source-space montages
+            % (is_source) have no GLM guards in core_snpm_glm, so exclude them
+            % for the GLM presets. They are excluded for circular analyses too:
+            % no exporter produces a per-voxel preferred phase, so the option
+            % would only ever be a mistake. If a source system was selected when
+            % the user switches to such an analysis, fall back to the scalp
+            % default (egi) and note it in the hint so the reset is visible.
+            reg = snpm_montage_registry();
+            if isGLM || isCirc, keep = ~[reg.is_source]; else, keep = true(1, numel(reg)); end
+            prevSys = app.ChannelsDropDown.Value;
+            app.ChannelsDropDown.Items     = {reg(keep).display};
+            app.ChannelsDropDown.ItemsData = {reg(keep).key};
+            if ismember(prevSys, app.ChannelsDropDown.ItemsData)
+                app.ChannelsDropDown.Value = prevSys;   % keep the user's choice
+            else
+                app.ChannelsDropDown.Value = 'egi';     % scalp default
+                app.HintLabel.Text = [hint ...
+                    '   (Source montage is scalp-only for this analysis ' char(8212) ' reset to EGI 256.)'];
+            end
 
             % Collapse the rows of the hidden panels so there is no empty gap;
             % a visible auxiliary panel sizes to its content ('fit').
             rh = app.GridLayout.RowHeight;
             if isGLM,  rh{app.RolesRow} = 'fit'; else, rh{app.RolesRow} = 0; end
             if isCorr, rh{app.CovRow}   = 'fit'; else, rh{app.CovRow}   = 0; end
+            if isCirc, rh{app.CircRow}  = 'fit'; else, rh{app.CircRow}  = 0; end
             app.GridLayout.RowHeight = rh;
+        end
+
+        % Enable the custom zero-offset field only for the 'custom' convention.
+        function CircConventionChanged(app, ~)
+            isCustom = strcmp(app.CircConventionDropDown.Value, 'custom');
+            app.CircOffsetField.Enable = matlab.lang.OnOffSwitchState(isCustom);
+            app.CircOffsetLabel.Enable = matlab.lang.OnOffSwitchState(isCustom);
+            checkReadyToRun(app);
         end
 
         % Show only the GLM column-role controls relevant to the selected analysis
@@ -471,6 +625,7 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 end
 
                 detectAndFill(app, app.data1_file, app.Data1SheetDropDown.Value, true);
+                app.NChanAngle1 = app.DetectedNChan;
                 checkReadyToRun(app);
             end
         end
@@ -505,8 +660,70 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 end
 
                 detectAndFill(app, app.data2_file, app.Data2SheetDropDown.Value, false);
+                app.NChanAngle2 = app.DetectedNChan;
                 checkReadyToRun(app);
             end
+        end
+
+        % Button pushed function: Count1FileButton (group A event counts)
+        function Count1FileButtonPushed(app, event)
+            pickCountFile(app, 1);
+        end
+
+        % Button pushed function: Count2FileButton (group B event counts)
+        function Count2FileButtonPushed(app, event)
+            pickCountFile(app, 2);
+        end
+
+        function Count1SheetChanged(app, ~)
+            if ~isempty(app.count1_file)
+                detectAndFill(app, app.count1_file, app.Count1SheetDropDown.Value, false);
+                app.NChanCount1 = app.DetectedNChan;
+                checkReadyToRun(app);
+            end
+        end
+        function Count2SheetChanged(app, ~)
+            if ~isempty(app.count2_file)
+                detectAndFill(app, app.count2_file, app.Count2SheetDropDown.Value, false);
+                app.NChanCount2 = app.DetectedNChan;
+                checkReadyToRun(app);
+            end
+        end
+
+        % Shared picker for the two event-count files (mirrors the Data 1 / 2
+        % pickers: browse, list Excel sheets, detect channel columns, revalidate).
+        function pickCountFile(app, which)
+            [file, path] = uigetfile({'*.xlsx;*.xls;*.csv', 'Excel and CSV Files (*.xlsx,*.xls,*.csv)'}, ...
+                                   sprintf('Select the Group %c Event Count File', 'A' + which - 1));
+            drawnow;
+            figure(app.UIFigure);
+            if isequal(file, 0), return; end
+            full = fullfile(path, file);
+            if which == 1
+                dd = app.Count1SheetDropDown; lb = app.Count1FileLabel;
+            else
+                dd = app.Count2SheetDropDown; lb = app.Count2FileLabel;
+            end
+            if endsWith(file, {'.xlsx', '.xls'})
+                try
+                    sheets = sheetnames(full);
+                    dd.Items = sheets; dd.Value = sheets{1};
+                catch ME
+                    % leave the slot empty rather than half-set, so the gate
+                    % keeps reporting the file as missing
+                    app.StatusLabel.Text = 'Error reading Excel file';
+                    uialert(app.UIFigure, ME.message, 'File Error');
+                    return;
+                end
+            else
+                dd.Items = {'CSV File'}; dd.Value = 'CSV File';
+            end
+            if which == 1, app.count1_file = full; else, app.count2_file = full; end
+            lb.Text = file;
+            detectAndFill(app, full, dd.Value, false);
+            if which == 1, app.NChanCount1 = app.DetectedNChan; else, app.NChanCount2 = app.DetectedNChan; end
+            app.StatusLabel.Text = sprintf('Group %c event-count file loaded', 'A' + which - 1);
+            checkReadyToRun(app);
         end
 
         % Button pushed function: OutputPathButton
@@ -620,6 +837,25 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                     return;
                 end
 
+                % ---- Circular (phase / angle) analyses ----
+                % Units and convention are always passed; the engine rejects a
+                % missing value rather than assuming one. Event-count files are
+                % passed for the phase-group designs only.
+                if ischar(params.comparison) && startsWith(params.comparison, 'circ')
+                    params.circ_units      = app.CircUnitsDropDown.Value;
+                    params.circ_convention = app.CircConventionDropDown.Value;
+                    if strcmp(params.circ_convention, 'custom')
+                        params.circ_zero_offset_deg = app.CircOffsetField.Value;
+                    end
+                    [~, ~, ~, cl1] = analysis_labels(params.comparison);
+                    if ~isempty(cl1)
+                        params.count1_file  = app.count1_file;
+                        params.count2_file  = app.count2_file;
+                        params.count1_sheet = app.Count1SheetDropDown.Value;
+                        params.count2_sheet = app.Count2SheetDropDown.Value;
+                    end
+                end
+
                 if contains(params.comparison, 'correlation')
                     app.StatusLabel.Text = 'Validating subject matching for correlation...';
                     drawnow;
@@ -716,11 +952,15 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             % Reset all fields to default
             app.data1_file = '';
             app.data2_file = '';
+            app.count1_file = '';
+            app.count2_file = '';
             app.output_path = '';
             app.covariate_file = '';
 
             app.Data1FileLabel.Text = 'No file selected';
             app.Data2FileLabel.Text = 'No file selected';
+            app.Count1FileLabel.Text = 'No file selected';
+            app.Count2FileLabel.Text = 'No file selected';
             app.OutputPathLabel.Text = 'No path selected';
             app.CovariateFileLabel.Text = 'No covariate file selected';
             app.UseCovariatesCheckBox.Value = false;
@@ -730,14 +970,25 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             app.Data1SheetDropDown.Items = {};
             app.Data2SheetDropDown.Items = {};
+            app.Count1SheetDropDown.Items = {};
+            app.Count2SheetDropDown.Items = {};
+
+            % circular settings back to "not chosen" (they are required inputs)
+            app.CircUnitsDropDown.Value = '';
+            app.CircConventionDropDown.Value = '';
+            app.CircOffsetField.Value = 0;
+            app.CircOffsetField.Enable = 'off';
+            app.CircOffsetLabel.Enable = 'off';
+            app.NChanAngle1 = 0; app.NChanAngle2 = 0;
+            app.NChanCount1 = 0; app.NChanCount2 = 0;
 
             app.ChannelsDropDown.Value = 'egi';
-            app.DataTypeDropDown.Value = 'absolute';
+            app.PreCircDataType = 'absolute';
+            app.PreCircTail = 'both';
             app.ComparisonDropDown.Value = 'pairedT';
             app.lastComparison = 'pairedT';
             updateRoleFields(app);
-            applyAnalysisLayout(app);
-            app.TailsDropDown.Value = 'both';
+            applyAnalysisLayout(app);   % restores + resets Data Type / Tails
             app.PermutationField.Value = 5000;
 
             app.StatusLabel.Text = 'Ready to start analysis';
@@ -798,8 +1049,10 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         function checkReadyToRun(app)
             key = app.ComparisonDropDown.Value;
             isGLM = ismember(key, {'anova1','ancova','regression','rmanova','mixed2way'});
-            [~, l2] = analysis_labels(key);
+            isCirc = ischar(key) && startsWith(key, 'circ');
+            [~, l2, ~, c1] = analysis_labels(key);
             twoFile = ~isempty(l2);
+            needCounts = isCirc && ~isempty(c1);
 
             missing = {};
             spec = strcmp(app.DataSourceDropDown.Value, 'Spectral folder');
@@ -836,6 +1089,41 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                     lab2 = strtrim(erase(app.Data2FileTitleLabel.Text, ':'));
                     if isempty(app.data2_file), missing{end+1} = ['Select the ' lab2]; end
                 end
+
+                % Event-count files: hard requirement for the circular
+                % phase-group analyses. The engine errors without them, so
+                % gating here is the difference between a clear checklist item
+                % and a run that dies after the user clicks Run.
+                if needCounts
+                    labc1 = strtrim(erase(app.Count1FileTitleLabel.Text, ':'));
+                    labc2 = strtrim(erase(app.Count2FileTitleLabel.Text, ':'));
+                    if isempty(app.count1_file), missing{end+1} = ['Select the ' labc1]; end
+                    if isempty(app.count2_file), missing{end+1} = ['Select the ' labc2]; end
+                    % An angle/count pair describing different channel sets is a
+                    % wrong-file mistake, not a formatting one -- catch it here.
+                    if app.NChanAngle1 > 0 && app.NChanCount1 > 0 && app.NChanAngle1 ~= app.NChanCount1
+                        missing{end+1} = sprintf(['Group A count file has %d channel columns but the ' ...
+                            'angle file has %d ' char(8212) ' they must describe the same channels'], ...
+                            app.NChanCount1, app.NChanAngle1);
+                    end
+                    if app.NChanAngle2 > 0 && app.NChanCount2 > 0 && app.NChanAngle2 ~= app.NChanCount2
+                        missing{end+1} = sprintf(['Group B count file has %d channel columns but the ' ...
+                            'angle file has %d ' char(8212) ' they must describe the same channels'], ...
+                            app.NChanCount2, app.NChanAngle2);
+                    end
+                end
+            end
+
+            % Angle units + zero-phase convention: required, no default. Both
+            % silently rotate or rescale every angle if wrong, and neither is
+            % recoverable from the output, so neither may be left unset.
+            if isCirc
+                if isempty(app.CircUnitsDropDown.Value)
+                    missing{end+1} = 'Choose the angle units (radians or degrees)';
+                end
+                if isempty(app.CircConventionDropDown.Value)
+                    missing{end+1} = 'Choose where zero sits in your exported phase (the convention)';
+                end
             end
 
             % Output folder
@@ -851,6 +1139,18 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 else
                     app.DetectCaptionLabel.Text = sprintf('Detected: %d channels  (matches %d of %d %s channels)', ...
                         app.DetectedNChan, present, numel(m.labels), m.display);
+                end
+            end
+
+            % Source-space montage is scalp-only for the GLM presets (no source
+            % guards in core_snpm_glm) and for the circular analyses (no
+            % exporter produces a per-voxel preferred phase) -- backstop the
+            % dropdown filter in case a stale value survives.
+            if isGLM || isCirc
+                msys = snpm_montage_registry(app.ChannelsDropDown.Value);
+                if isfield(msys,'is_source') && msys.is_source
+                    missing{end+1} = sprintf(['%s is scalp-only ' char(8212) ...
+                        ' the source montage is not supported for this analysis'], key);
                 end
             end
 
@@ -923,20 +1223,19 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             % top-level '1x'), so the Results row below is a fixed height.
             app.GridLayout.Scrollable = 'on';
             app.GridLayout.ColumnWidth = {'1x'};
-            % rows: 1 title, 2 subtitle, 3 note, 4 analysis(1), 5 data(2), 6 params(3),
-            %       7 output(4), 8 roles(GLM), 9 covariate(corr), 10 validation,
-            %       11 buttons, 12 status, 13 results
-            % Sections 1-4 always render in order; roles/covariate are auxiliary boxes below them.
+            % rows: 1 title, 2 subtitle, 3 note, 4 analysis(1), 5 DATA(2, expands),
+            %       6 params(3), 7 output(4), 8 roles(GLM), 9 covariate(corr),
+            %       10 phase/angle(circular), 11 validation, 12 buttons,
+            %       13 status, 14 results.
+            % Sections 1-4 always render in order; roles/covariate/phase are
+            % auxiliary boxes below them, start collapsed (0), and are sized by
+            % the layout helpers (see RolesRow / CovRow / CircRow).
             % Weighted rows so panels grow with the window instead of clipping.
             % 'fit' = size to content (compact control rows); '1x' / '2x' = expand.
-            % rows: 1 title, 2 subtitle, 3 note, 4 analysis, 5 DATA(expands),
-            %       6 params, 7 output, 8 roles, 9 covariate, 10 validation,
-            %       11 buttons, 12 status, 13 RESULTS(expands).
-            % Roles(8)/covariate(9) start collapsed (0) and are sized by the layout helpers.
             % Last row (Results) is a fixed height, not '1x': a '1x' row would
             % expand to fill and suppress overflow, so the grid would never
             % scroll. Fixed height keeps the total content height determinate.
-            app.GridLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 0, 0, 'fit', 'fit', 'fit', 180};
+            app.GridLayout.RowHeight = {'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 'fit', 0, 0, 0, 'fit', 'fit', 'fit', 180};
             app.GridLayout.RowSpacing = 10;
             app.GridLayout.Padding = [16 16 16 16];
 
@@ -1007,13 +1306,14 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 '   Spearman correlation (rank)', ...
                 '   Linear regression (continuous predictor)', ...
                 '--- Phase / angle data (advanced) ---', ...
-                '   Wheeler-Watson test', ...
-                '   Watson U2 test'};
+                '   Preferred phase: 2 groups (recommended)', ...
+                '   Preferred phase: 2 groups (Watson U2, alternative)', ...
+                '   Preferred phase vs a linear measure (paired by subject)'};
             app.ComparisonDropDown.ItemsData = { ...
                 '__h1__', 'unpairedT', 'pairedT', 'onesampleT', ...
                 '__h2__', 'anova1', 'ancova', 'rmanova', 'mixed2way', ...
                 '__h3__', 'correlationP', 'correlationS', 'regression', ...
-                '__h4__', 'circ_wheeler_watson_Test', 'circ_WatsonsU2Test'};
+                '__h4__', 'circ_phase_group', 'circ_phase_group_u2', 'circ_corrAngLinear'};
             app.ComparisonDropDown.ValueChangedFcn = createCallbackFcn(app, @ComparisonDropDownValueChanged, true);
 
             % Light-blue hint box with a per-analysis one-line explanation
@@ -1046,9 +1346,11 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             dataFilesGrid = uigridlayout(app.DataFilesPanel);
             dataFilesGrid.ColumnWidth = {175, 80, '1x', 50, 115};
-            % rows: 1 source toggle, 2 file-1, 3 file-2, 4 spectral grid (expands), 5 caption.
-            % Row 4 starts collapsed; the layout helper grows it in spectral mode.
-            dataFilesGrid.RowHeight = {'fit', 'fit', 'fit', 0, 'fit'};
+            % rows: 1 source toggle, 2 file-1, 3 file-2, 4 count-1, 5 count-2,
+            %       6 spectral grid (expands), 7 caption.
+            % Rows 4-5 are shown only for the circular phase-group analyses
+            % (applyAnalysisLayout); row 6 grows in spectral mode.
+            dataFilesGrid.RowHeight = {'fit', 'fit', 'fit', 0, 0, 0, 'fit'};
             dataFilesGrid.RowSpacing = 10;
             dataFilesGrid.ColumnSpacing = 8;
             dataFilesGrid.Padding = [12 12 12 12];
@@ -1113,9 +1415,78 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             app.Data2SheetDropDown.Layout.Row = 3; app.Data2SheetDropDown.Layout.Column = 5;
             app.Data2SheetDropDown.ValueChangedFcn = createCallbackFcn(app, @Data2SheetChanged, true);
 
-            % --- Spectral-folder controls (row 4 nested grid): shown in 'Spectral folder' mode ---
+            % --- Event-count rows (4-5): circular phase-group analyses only ---
+            % One wide subjects x channels file per group, same subject column
+            % and same channel names as the matching angle file.
+            countTip = ['Number of detected events (e.g. spindles) behind each subject''s ' ...
+                        'preferred phase, one column per channel. Required: log(count) is ' ...
+                        'entered as a covariate, because a subject with few events has a ' ...
+                        'noisier and genuinely wider-looking phase estimate, which the test ' ...
+                        'would otherwise read as a real group difference.'];
+
+            app.Count1FileTitleLabel = uilabel(dataFilesGrid);
+            app.Count1FileTitleLabel.Layout.Row = 4; app.Count1FileTitleLabel.Layout.Column = 1;
+            app.Count1FileTitleLabel.Text = 'Group A Event Count File:';
+            app.Count1FileTitleLabel.WordWrap = 'on';
+            app.Count1FileTitleLabel.VerticalAlignment = 'center';
+            app.Count1FileTitleLabel.Tooltip = countTip;
+            app.Count1FileTitleLabel.Visible = 'off';
+
+            app.Count1FileButton = uibutton(dataFilesGrid);
+            app.Count1FileButton.Layout.Row = 4; app.Count1FileButton.Layout.Column = 2;
+            app.Count1FileButton.Text = 'Browse...';
+            app.Count1FileButton.Tooltip = countTip;
+            app.Count1FileButton.Visible = 'off';
+            app.Count1FileButton.ButtonPushedFcn = createCallbackFcn(app, @Count1FileButtonPushed, true);
+
+            app.Count1FileLabel = uilabel(dataFilesGrid);
+            app.Count1FileLabel.Layout.Row = 4; app.Count1FileLabel.Layout.Column = 3;
+            app.Count1FileLabel.Text = 'No file selected'; app.Count1FileLabel.FontAngle = 'italic';
+            app.Count1FileLabel.Visible = 'off';
+
+            app.Count1SheetTitleLabel = uilabel(dataFilesGrid);
+            app.Count1SheetTitleLabel.Layout.Row = 4; app.Count1SheetTitleLabel.Layout.Column = 4;
+            app.Count1SheetTitleLabel.Text = 'Sheet:';
+            app.Count1SheetTitleLabel.Visible = 'off';
+
+            app.Count1SheetDropDown = uidropdown(dataFilesGrid);
+            app.Count1SheetDropDown.Layout.Row = 4; app.Count1SheetDropDown.Layout.Column = 5;
+            app.Count1SheetDropDown.Visible = 'off';
+            app.Count1SheetDropDown.ValueChangedFcn = createCallbackFcn(app, @Count1SheetChanged, true);
+
+            app.Count2FileTitleLabel = uilabel(dataFilesGrid);
+            app.Count2FileTitleLabel.Layout.Row = 5; app.Count2FileTitleLabel.Layout.Column = 1;
+            app.Count2FileTitleLabel.Text = 'Group B Event Count File:';
+            app.Count2FileTitleLabel.WordWrap = 'on';
+            app.Count2FileTitleLabel.VerticalAlignment = 'center';
+            app.Count2FileTitleLabel.Tooltip = countTip;
+            app.Count2FileTitleLabel.Visible = 'off';
+
+            app.Count2FileButton = uibutton(dataFilesGrid);
+            app.Count2FileButton.Layout.Row = 5; app.Count2FileButton.Layout.Column = 2;
+            app.Count2FileButton.Text = 'Browse...';
+            app.Count2FileButton.Tooltip = countTip;
+            app.Count2FileButton.Visible = 'off';
+            app.Count2FileButton.ButtonPushedFcn = createCallbackFcn(app, @Count2FileButtonPushed, true);
+
+            app.Count2FileLabel = uilabel(dataFilesGrid);
+            app.Count2FileLabel.Layout.Row = 5; app.Count2FileLabel.Layout.Column = 3;
+            app.Count2FileLabel.Text = 'No file selected'; app.Count2FileLabel.FontAngle = 'italic';
+            app.Count2FileLabel.Visible = 'off';
+
+            app.Count2SheetTitleLabel = uilabel(dataFilesGrid);
+            app.Count2SheetTitleLabel.Layout.Row = 5; app.Count2SheetTitleLabel.Layout.Column = 4;
+            app.Count2SheetTitleLabel.Text = 'Sheet:';
+            app.Count2SheetTitleLabel.Visible = 'off';
+
+            app.Count2SheetDropDown = uidropdown(dataFilesGrid);
+            app.Count2SheetDropDown.Layout.Row = 5; app.Count2SheetDropDown.Layout.Column = 5;
+            app.Count2SheetDropDown.Visible = 'off';
+            app.Count2SheetDropDown.ValueChangedFcn = createCallbackFcn(app, @Count2SheetChanged, true);
+
+            % --- Spectral-folder controls (row 6 nested grid): shown in 'Spectral folder' mode ---
             app.SpecGrid = uigridlayout(dataFilesGrid);
-            app.SpecGrid.Layout.Row = 4; app.SpecGrid.Layout.Column = [1 5];
+            app.SpecGrid.Layout.Row = 6; app.SpecGrid.Layout.Column = [1 5];
             app.SpecGrid.ColumnWidth = {'1x', '1x', '1x'};
             % rows: 1 buttons, 2 hint, 3 folder table (expands),
             %       4 band/stage/type headers, 5 band/stage/type listboxes (expand).
@@ -1185,7 +1556,7 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             % Detected channels / metadata caption (auto-filled on file/folder load)
             app.DetectCaptionLabel = uilabel(dataFilesGrid);
-            app.DetectCaptionLabel.Layout.Row = 5;
+            app.DetectCaptionLabel.Layout.Row = 7;
             app.DetectCaptionLabel.Layout.Column = [1 5];
             app.DetectCaptionLabel.Text = '';
             app.DetectCaptionLabel.FontAngle = 'italic';
@@ -1295,6 +1666,85 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 'subject',   lbSubj,  app.SubjectColField; ...
                 'cov',       lbCov,   app.CovColsField};
 
+            % ============ Phase / angle settings (circular analyses only) ============
+            % Units and convention are REQUIRED with no preselected value. A
+            % preselected default would be a guess about how the user's detector
+            % exported its angles, and a wrong guess rotates every angle in the
+            % dataset without anything in the output looking wrong.
+            app.CircPanel = uipanel(app.GridLayout);
+            app.CircPanel.Layout.Row = app.CircRow;
+            app.CircPanel.Layout.Column = 1;
+            app.CircPanel.Title = 'Phase / angle settings (required)';
+            app.CircPanel.FontWeight = 'bold';
+            app.CircPanel.FontSize = 12;
+            app.CircPanel.Visible = 'off';
+
+            circGrid = uigridlayout(app.CircPanel);
+            circGrid.ColumnWidth = {150, '1x', 150, '1x'};
+            circGrid.RowHeight = {30, 30, 'fit'};
+            circGrid.RowSpacing = 8;
+            circGrid.ColumnSpacing = 12;
+            circGrid.Padding = [10 10 10 10];
+
+            app.CircUnitsLabel = uilabel(circGrid);
+            app.CircUnitsLabel.Layout.Row = 1; app.CircUnitsLabel.Layout.Column = 1;
+            app.CircUnitsLabel.Text = 'Angle units:';
+
+            app.CircUnitsDropDown = uidropdown(circGrid);
+            app.CircUnitsDropDown.Layout.Row = 1; app.CircUnitsDropDown.Layout.Column = 2;
+            app.CircUnitsDropDown.Items     = {'(choose)', 'radians (-pi to pi or 0 to 2pi)', 'degrees (0 to 360)'};
+            app.CircUnitsDropDown.ItemsData = {'', 'radians', 'degrees'};
+            app.CircUnitsDropDown.Value = '';
+            app.CircUnitsDropDown.Tooltip = ['The units your detector exported. There is no default: ' ...
+                'reading degrees as radians silently scrambles every angle.'];
+            app.CircUnitsDropDown.ValueChangedFcn = createCallbackFcn(app, @ChannelsChanged, true);
+
+            app.CircConventionLabel = uilabel(circGrid);
+            app.CircConventionLabel.Layout.Row = 1; app.CircConventionLabel.Layout.Column = 3;
+            app.CircConventionLabel.Text = 'Where zero sits:';
+
+            app.CircConventionDropDown = uidropdown(circGrid);
+            app.CircConventionDropDown.Layout.Row = 1; app.CircConventionDropDown.Layout.Column = 4;
+            app.CircConventionDropDown.Items = { ...
+                '(choose)', ...
+                'Zero = slow-oscillation up-state peak (standard)', ...
+                'Luna COUPL_ANGLE (zero = SO zero crossing)', ...
+                'YASA (zero = SO up-state peak)', ...
+                'TurtleWave before v4.0 (180 degrees off)', ...
+                'Custom offset (enter below)'};
+            app.CircConventionDropDown.ItemsData = { ...
+                '', 'literature_uppeak0', 'luna_zerocross0', 'yasa_uppeak0', ...
+                'turtlewave_pre_v4', 'custom'};
+            app.CircConventionDropDown.Value = '';
+            app.CircConventionDropDown.Tooltip = ['Which point of the slow oscillation your ' ...
+                'exported angle calls zero. This is a live trap, not a hypothetical: Luna''s ' ...
+                'COUPL_ANGLE puts the up-state peak at 270 degrees, and any TurtleWave export ' ...
+                'from before v4.0 is exactly 180 degrees wrong. Choosing the wrong one rotates ' ...
+                'every angle and moves the reported preferred phase.'];
+            app.CircConventionDropDown.ValueChangedFcn = createCallbackFcn(app, @CircConventionChanged, true);
+
+            app.CircOffsetLabel = uilabel(circGrid);
+            app.CircOffsetLabel.Layout.Row = 2; app.CircOffsetLabel.Layout.Column = 1;
+            app.CircOffsetLabel.Text = 'Custom offset (deg):';
+            app.CircOffsetLabel.Enable = 'off';
+
+            app.CircOffsetField = uieditfield(circGrid, 'numeric');
+            app.CircOffsetField.Layout.Row = 2; app.CircOffsetField.Layout.Column = 2;
+            app.CircOffsetField.Value = 0;
+            app.CircOffsetField.Enable = 'off';
+            app.CircOffsetField.Tooltip = ['Degrees to add so that zero lands on the ' ...
+                'slow-oscillation up-state peak. Only used for the Custom convention.'];
+
+            app.CircNoteLabel = uilabel(circGrid);
+            app.CircNoteLabel.Layout.Row = 3; app.CircNoteLabel.Layout.Column = [1 4];
+            app.CircNoteLabel.WordWrap = 'on';
+            app.CircNoteLabel.FontSize = 11;
+            app.CircNoteLabel.FontColor = [0.55 0.30 0.05];
+            app.CircNoteLabel.Text = ['Angles are converted to the standard convention (zero = ' ...
+                'up-state peak) before testing, so this setting changes the result. Data Type and ' ...
+                'Tails are fixed for circular analyses: angles cannot be log-scaled or z-scored, ' ...
+                'and the statistic is inherently two-sided.'];
+
             % ============ Covariate file (correlation analyses only) ============
             app.CovariatePanel = uipanel(app.GridLayout);
             app.CovariatePanel.Layout.Row = app.CovRow;
@@ -1358,7 +1808,7 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             % ============ Before you can run: (validation checklist) ============
             app.ValidationPanel = uipanel(app.GridLayout);
-            app.ValidationPanel.Layout.Row = 10;
+            app.ValidationPanel.Layout.Row = 11;
             app.ValidationPanel.Layout.Column = 1;
             app.ValidationPanel.Title = 'Before you can run:';
             app.ValidationPanel.FontWeight = 'bold';
@@ -1380,7 +1830,7 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             % ============ Run / Reset buttons ============
             buttonGrid = uigridlayout(app.GridLayout);
-            buttonGrid.Layout.Row = 11;
+            buttonGrid.Layout.Row = 12;
             buttonGrid.Layout.Column = 1;
             buttonGrid.ColumnWidth = {'1x', '1x'};
             buttonGrid.RowHeight = {42};
@@ -1408,14 +1858,14 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             % Status Label
             app.StatusLabel = uilabel(app.GridLayout);
-            app.StatusLabel.Layout.Row = 12;
+            app.StatusLabel.Layout.Row = 13;
             app.StatusLabel.Layout.Column = 1;
             app.StatusLabel.HorizontalAlignment = 'center';
             app.StatusLabel.FontAngle = 'italic';
 
             % Results Panel
             app.ResultsPanel = uipanel(app.GridLayout);
-            app.ResultsPanel.Layout.Row = 13;
+            app.ResultsPanel.Layout.Row = 14;
             app.ResultsPanel.Layout.Column = 1;
             app.ResultsPanel.Title = 'Results';
             app.ResultsPanel.FontWeight = 'bold';
@@ -1431,6 +1881,101 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             % Show the figure after all components are created
             app.UIFigure.Visible = 'on';
+        end
+    end
+
+    % Scripted input setting (used by the headless test harness).
+    % These do exactly what the corresponding Browse... buttons do once the
+    % file dialog has returned: record the path, list the sheets, re-detect the
+    % channel columns and re-run the readiness gate. They exist because the
+    % readiness gate is a correctness guard and there is no display in CI, so
+    % the only way to prove it blocks the invalid configurations and allows the
+    % valid one is to drive it without a file dialog. No UI code calls them.
+    methods (Access = public, Hidden)
+
+        % SLOT is 'data1' | 'data2' | 'count1' | 'count2' | 'output'.
+        % For 'output', FILE is the folder path and SHEET is ignored.
+        function setInputPath(app, slot, file, sheet)
+            if nargin < 4, sheet = ''; end
+            if strcmp(slot, 'output')
+                app.output_path = file;
+                app.OutputPathLabel.Text = file;
+                checkReadyToRun(app);
+                return;
+            end
+            switch slot
+                case 'data1',  dd = app.Data1SheetDropDown;  lb = app.Data1FileLabel;
+                case 'data2',  dd = app.Data2SheetDropDown;  lb = app.Data2FileLabel;
+                case 'count1', dd = app.Count1SheetDropDown; lb = app.Count1FileLabel;
+                case 'count2', dd = app.Count2SheetDropDown; lb = app.Count2FileLabel;
+                otherwise, error('SnPMAnalysisGui:badSlot', 'Unknown input slot "%s".', slot);
+            end
+            if isempty(file)   % clearing an input
+                dd.Items = {}; lb.Text = 'No file selected'; n = 0;
+            else
+                if isempty(sheet)
+                    if endsWith(file, {'.xlsx','.xls'})
+                        sn = sheetnames(file); sheet = char(sn(1));
+                    else
+                        sheet = 'CSV File';
+                    end
+                end
+                dd.Items = {sheet}; dd.Value = sheet;
+                [~, b, e] = fileparts(file); lb.Text = [b e];
+                detectAndFill(app, file, sheet, strcmp(slot,'data1'));
+                n = app.DetectedNChan;
+            end
+            switch slot
+                case 'data1',  app.data1_file  = file; app.NChanAngle1 = n;
+                case 'data2',  app.data2_file  = file; app.NChanAngle2 = n;
+                case 'count1', app.count1_file = file; app.NChanCount1 = n;
+                case 'count2', app.count2_file = file; app.NChanCount2 = n;
+            end
+            checkReadyToRun(app);
+        end
+
+        % Select a comparison exactly as the dropdown callback would.
+        function setComparison(app, key)
+            app.ComparisonDropDown.Value = key;
+            ComparisonDropDownValueChanged(app, []);
+        end
+
+        % Read-only snapshot of the state the readiness gate acts on.
+        function s = uiState(app)
+            s = struct( ...
+                'comparison',      app.ComparisonDropDown.Value, ...
+                'datatypeItems',   {app.DataTypeDropDown.Items}, ...
+                'datatypeValue',   app.DataTypeDropDown.Value, ...
+                'datatypeEnable',  char(app.DataTypeDropDown.Enable), ...
+                'tailItems',       {app.TailsDropDown.Items}, ...
+                'tailValue',       app.TailsDropDown.Value, ...
+                'tailEnable',      char(app.TailsDropDown.Enable), ...
+                'systemKeys',      {app.ChannelsDropDown.ItemsData}, ...
+                'systemValue',     app.ChannelsDropDown.Value, ...
+                'comparisonKeys',  {app.ComparisonDropDown.ItemsData}, ...
+                'label1',          app.Data1FileTitleLabel.Text, ...
+                'label2',          app.Data2FileTitleLabel.Text, ...
+                'countLabel1',     app.Count1FileTitleLabel.Text, ...
+                'countLabel2',     app.Count2FileTitleLabel.Text, ...
+                'countVisible',    char(app.Count1FileButton.Visible), ...
+                'circPanelVisible',char(app.CircPanel.Visible), ...
+                'circOffsetEnable',char(app.CircOffsetField.Enable), ...
+                'hint',            app.HintLabel.Text, ...
+                'runEnable',       char(app.RunAnalysisButton.Enable), ...
+                'validationTitle', app.ValidationPanel.Title, ...
+                'validation',      {cellstr(app.ValidationLabel.Text)});
+        end
+
+        % Set a circular setting ('units' | 'convention' | 'offset' | 'system')
+        % through the same callback path the widget uses.
+        function setCircOption(app, what, value)
+            switch what
+                case 'units',      app.CircUnitsDropDown.Value = value; ChannelsChanged(app, []);
+                case 'convention', app.CircConventionDropDown.Value = value; CircConventionChanged(app, []);
+                case 'offset',     app.CircOffsetField.Value = value; checkReadyToRun(app);
+                case 'system',     app.ChannelsDropDown.Value = value; ChannelsChanged(app, []);
+                otherwise, error('SnPMAnalysisGui:badOption', 'Unknown option "%s".', what);
+            end
         end
     end
 
@@ -1497,8 +2042,10 @@ function p = specMinP(rs)
     end
 end
 
-function [l1, l2, hint] = analysis_labels(key)
+function [l1, l2, hint, c1, c2] = analysis_labels(key)
     % Per-analysis file-picker labels (l2 empty => hide the 2nd picker) and a hint.
+    % c1/c2 are the event-count file-picker labels; both empty => no count files.
+    c1 = ''; c2 = '';
     switch key
         case 'anova1'
             l1='Data File:'; l2=''; hint='Compares 3+ groups. Pick the column that labels the groups.';
@@ -1520,8 +2067,29 @@ function [l1, l2, hint] = analysis_labels(key)
             l1='Measure 1 File (e.g. EEG):'; l2='Measure 2 File (e.g. behaviour):'; hint='Linear correlation across subjects, channel by channel. Both files need a Subject column.';
         case 'correlationS'
             l1='Measure 1 File (e.g. EEG):'; l2='Measure 2 File (e.g. behaviour):'; hint='Rank correlation (robust to outliers). Both files need a Subject column.';
-        case {'circ_wheeler_watson_Test','circ_WatsonsU2Test'}
-            l1='Angles A File (radians):'; l2='Angles B File (radians):'; hint='Circular statistics for phase/angle data in radians. Load both condition files.';
+        case {'circ_phase_group','circ_phase_group_u2'}
+            % Wording is deliberately group-explicit. The retired labels said
+            % "Load both condition files", which invited the single worst
+            % mistake available here: running within-subject paired data
+            % through an independent-samples test.
+            l1='Group A Angles File:'; l2='Group B Angles File:';
+            c1='Group A Event Count File:'; c2='Group B Event Count File:';
+            hint=['Two INDEPENDENT groups of subjects (not two conditions of the same subjects). ' ...
+                  'Each angle file holds one preferred coupling phase per subject per channel. ' ...
+                  'The matching event-count file holds the number of detected events behind each ' ...
+                  'of those angles ' char(8212) ' it is required, and controls for the fact that ' ...
+                  'fewer events give a noisier, wider-looking phase estimate.'];
+            if strcmp(key, 'circ_phase_group_u2')
+                hint=[hint '   Watson U2 is the alternative test and needs full-precision ' ...
+                      'angles: a whole-degree export (Luna COUPL_ANGLE, TurtleWave''s degree ' ...
+                      'column) is rejected. Prefer the recommended test unless you have a ' ...
+                      'specific reason.'];
+            end
+        case 'circ_corrAngLinear'
+            l1='Angles File:'; l2='Measure File (linear):';
+            hint=['Circular-linear correlation: preferred phase versus a linear behavioural ' ...
+                  'measure, PAIRED WITHIN SUBJECT. Both files need a matching Subject column. ' ...
+                  'No event-count file is used.'];
         otherwise
             l1='Data 1 File:'; l2='Data 2 File:'; hint='';
     end

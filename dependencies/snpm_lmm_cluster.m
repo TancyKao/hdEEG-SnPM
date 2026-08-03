@@ -1,4 +1,4 @@
-function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, permutations)
+function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, permutations, evaluable)
 % Cluster-based permutation correction for the per-channel LMM, following
 % Stephan et al. 2021: neighbouring channels with model p < alpha form a
 % cluster; the cluster statistic is the mean Wald inside the cluster
@@ -18,6 +18,14 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
 %   neighbors    : channels x maxNeighbors adjacency (NaN padded)
 %   alpha        : cluster-forming AND significance level (default 0.05)
 %   permutations : number of permutations
+%   evaluable    : (optional) 1 x nCh logical, TRUE for channels that can be
+%                  evaluated in EVERY permutation. Defaults to
+%                  all(isfinite(power), 1). Channels outside the mask form no
+%                  cluster and contribute no mass, in the observed map and in
+%                  every permuted map alike, so the observed cluster statistic
+%                  and its null are built on one channel set. See
+%                  snpm_lmm_TFCE for why per-channel row deletion otherwise
+%                  breaks exchangeability.
 %
 % OUTPUT
 %   Clusters : struct array with fields .channels, .mass, .p, .threshold,
@@ -25,12 +33,29 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
 
     if nargin < 5 || isempty(alpha), alpha = 0.05; end
 
-    nCh = size(power, 2); %#ok<NASGU>
+    nCh = size(power, 2);
     sparse_adj = make_neighbors_sparse(neighbors, size(neighbors, 1));
     possible_permutations = permutations;
 
+    if nargin < 7 || isempty(evaluable)
+        evaluable = all(isfinite(power), 1);
+    end
+    evaluable = reshape(logical(evaluable), 1, []);
+    if numel(evaluable) ~= nCh
+        error('snpm_lmm_cluster:evaluableSize', ...
+            'evaluable mask has %d entries but power has %d channels.', ...
+            numel(evaluable), nCh);
+    end
+    if ~any(evaluable)
+        error('snpm_lmm_cluster:noEvaluableChannels', ...
+            ['No channel is complete across all %d analysed rows, so no channel can be ' ...
+             'tested against a permutation null. Drop the incomplete subjects/trials ' ...
+             'instead of the channels.'], size(power, 1));
+    end
+
     % ---- real clusters ----
-    [~, real_wald, real_p] = snpm_lmm_fit(power, meta, spec);
+    [~, real_wald, real_p] = snpm_lmm_fit(power, meta, spec, evaluable);
+    [real_p, real_wald] = mask_map(real_p, real_wald, evaluable);
     real_clusters = local_find_pclusters(real_p, real_wald, alpha, sparse_adj);
 
     % ---- null distribution of the max cluster mass ----
@@ -40,7 +65,8 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
             disp([num2str(permIndex), ' out of ', num2str(possible_permutations), ' LMM cluster permutations completed...']);
         end
         meta_perm = snpm_lmm_permute_meta(meta, spec, spec.perm);
-        [~, pwald, pp] = snpm_lmm_fit(power, meta_perm, spec);
+        [~, pwald, pp] = snpm_lmm_fit(power, meta_perm, spec, evaluable);
+        [pp, pwald] = mask_map(pp, pwald, evaluable);
         pc = local_find_pclusters(pp, pwald, alpha, sparse_adj);
         if isempty(pc)
             max_cluster_mass(permIndex) = 0;
@@ -67,6 +93,13 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
         Clusters(cli, 1).threshold    = alpha;
         Clusters(cli, 1).permutations = possible_permutations;
     end
+end
+
+function [p_model, wald] = mask_map(p_model, wald, evaluable)
+% One channel set for the observed and the permuted maps: a channel outside
+% the evaluable mask has no p (so it can never join a cluster) and no mass.
+    p_model(~evaluable) = NaN;
+    wald(~evaluable)    = 0;
 end
 
 function clusters = local_find_pclusters(p_model, wald, alpha, sparse_adj)

@@ -3,7 +3,8 @@
 MATLAB tool for **Statistical non-Parametric Mapping (SnPM)** of high-density EEG
 topographies — permutation-based TFCE and cluster statistics across scalp channels with
 channel-adjacency (neighbour) structure. Group comparisons, correlations, GLM presets
-(ANOVA/ANCOVA/regression/RM-ANOVA/two-way mixed), per-channel LMM, and circular variants.
+(ANOVA/ANCOVA/regression/RM-ANOVA/two-way mixed), per-channel LMM, and a circular (phase/angle)
+tier — Hotelling T², Watson's U², circular–linear correlation.
 Produces topoplots, an Excel table, a `.mat` results struct, and HTML reports.
 
 Theory: Maris & Oostenveld (2007), Nichols & Holmes (2001) — PDFs in `Ref/`.
@@ -20,7 +21,8 @@ root** (`core_snpm_analysis` does `addpath(genpath(pwd))` and expects `eeglab202
   `matlab -batch "run('scripts/<name>.m')"`. See `scripts/README_scripts.md`.
 - **Verify everything:** `matlab -batch "test_all"` → one PASS/FAIL/SKIP summary
   (checkcode + GUI construct + all test suites + per-analysis outputs + spectral smoke +
-  edge cases). Individual suites: `test_glm_snpm`, `test_lmm_snpm`, `test_legacy_snpm`.
+  edge cases). Individual suites: `test_glm_snpm`, `test_lmm_snpm`, `test_legacy_snpm`,
+  `test_circ_snpm`, `test_circ_stats`, `test_cluster_enhancement_identity`, `test_source_snpm`.
   Per-analysis import/output reference: `docs/reference/ANALYSIS_CATALOG.md`.
 
 ## Layout

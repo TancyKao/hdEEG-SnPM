@@ -107,3 +107,13 @@ Desktop.ini
 # Personal one-off run scripts: contain real subject IDs and local data paths.
 # Keep these out of the public repo.
 scripts/run_spectral_report_2*.m
+
+# =============================================================================
+# Private data and one-off study material must never enter this repository.
+# Generic layout rules live below. Name-based patterns for specific datasets are
+# deliberately kept in .git/info/exclude instead, which is local-only: putting a
+# study identifier in a published .gitignore would leak the very name it guards.
+
+# Study folder layouts a runner may create in the working tree
+01_data/
+03_results/

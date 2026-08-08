@@ -21,8 +21,10 @@ events) sit — between two independent groups, or correlate it with a per-subje
 
 ## Export the right columns upstream
 
-If you are running TurtleWave's phase–amplitude coupling module across a cohort, export **per
-subject per channel**:
+If you are running [TurtleWave-hdEEG](https://github.com/TancyKao/TurtleWave-hdEEG)'s
+phase–amplitude coupling module across a cohort — see
+[Take TurtleWave detections into a group analysis](analyse-turtlewave-event-data.md) for the
+rest of that hand-off — export **per subject per channel**:
 
 | Column | Why you need it |
 |---|---|
@@ -103,9 +105,11 @@ enables the **Custom offset (deg)** field, which is `circ_zero_offset_deg`:
 | `turtlewave_pre_v4` | TurtleWave **before v4.0** | exactly **180° wrong** | +180° |
 | `custom` | anything else | you declare it in `circ_zero_offset_deg` | as declared |
 
-**TurtleWave exports predating v4.0 are exactly 180° wrong.** This was an upstream bug: the
-phase-bin centres spanned `[0, 2π)` while the amplitude binning used `[−π, π)`. It was fixed in
-commit `d341690` on 16 July 2026. Recording **polarity inversion** adds a further 180° on top,
+**TurtleWave exports predating v4.0 are exactly 180° wrong.** This was an upstream bug in
+[TurtleWave-hdEEG](https://github.com/TancyKao/TurtleWave-hdEEG): the phase-bin centres spanned
+`[0, 2π)` while the amplitude binning used `[−π, π)`. It was fixed in
+[commit `d341690`](https://github.com/TancyKao/TurtleWave-hdEEG/commit/d3416909571b7f6fa39c624b72136acf8fc566ef)
+on 16 July 2026. Recording **polarity inversion** adds a further 180° on top,
 so an inverted recording exported from a fixed TurtleWave is back to correct, and a
 non-inverted recording from an old TurtleWave is not.
 
@@ -201,8 +205,9 @@ circular domain and are refused (`core_snpm:circDatatypeNotSupported`). All thre
 non-negative omnibus quantities with a single upper tail, so `left` / `right` are refused too
 (`core_snpm:circTailNotSupported`) and the GUI Tails control is disabled.
 
-Try it on the shipped fixtures first: `test_data/synthetic_gui/circ_phase_group{A,B}.csv` plus
-`circ_phase_counts{A,B}.csv`, radians, `literature_uppeak0`. See that folder's `README.md`.
+Try it on the synthetic fixtures first — run `gen_synthetic_testdata` to write them, then use
+`test_data/synthetic_gui/circ_phase_group{A,B}.csv` plus `circ_phase_counts{A,B}.csv`, radians,
+`literature_uppeak0`. See that folder's `README.md`.
 
 ## Read the diagnostics before the p-values
 

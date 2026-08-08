@@ -15,7 +15,8 @@
 %   matlab -batch "run('scripts/run_event_report.m')"
 
 % ======================= CONFIG (edit me) =======================
-ROOT = '/path/to/hdEEG-SnPM';
+ROOT = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
+if isempty(ROOT), ROOT = pwd; end
 DATA = fullfile(ROOT,'test_data','synthetic_events');     % folder with subjects.csv + eventStat_*.csv
 OUT  = fullfile(ROOT,'03_results','statistical_outputs','hdEEG_events');
 

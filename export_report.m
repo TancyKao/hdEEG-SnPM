@@ -12,8 +12,8 @@ function export_report(DATA, OUT, opts)
 %
 % Within-subject paired contrast condition-a vs condition-b (same subjects),
 % per stage x band, on the 178-ch montage (NeighborMatrix_178), TFCE + cluster
-% correction. Mirrors the per-cell batch runner but with the report's filename scheme,
-% a per-frequency p-value periodogram, and REPORT emission.
+% correction. Adds the report's filename scheme, a per-frequency p-value
+% periodogram, and REPORT emission on top of the plain per-cell analysis.
 %
 % USAGE
 %   DATA='.../hdeeg_analysis_all_sub';
@@ -73,7 +73,7 @@ function export_report(DATA, OUT, opts)
     ex = getdef(opts,'exclude_subjects',{});                % drop bad-data subjects entirely
     if ~isempty(ex)
         % R.subject is the token AFTER 'sub-' (parse_name), so a literal
-        % ismember against {'sub-XX'} never matches. Normalise BOTH sides, and
+        % ismember against {'sub-12'} never matches. Normalise BOTH sides, and
         % fail loudly if a requested exclusion removed nothing -- a silent no-op
         % here means the analysis quietly kept a subject it was told to drop.
         ex = cellstr(ex);
@@ -278,7 +278,7 @@ function [R,bandlabels,bandrange,freqs,maskinfo] = scan_dataset(DATA, folders, l
 end
 
 function s = norm_subj(x)
-% 'sub-XX' / 'subXX' / '57' -> '57'
+% 'sub-12' / 'sub12' / '12' -> '12'
     s = lower(strtrim(char(x)));
     s = regexprep(s,'^sub[-_]?','');
 end
@@ -854,7 +854,7 @@ end
 function v=getdef(s,f,d), if isfield(s,f)&&~isempty(s.(f)), v=s.(f); else, v=d; end; end
 function B = bandsource(EEG)
 % Per-channel band-power struct array (label/type/freqrange/data). Prefer
-% EEG.bands; fall back to EEG.features (some the example study exports use that field name).
+% EEG.bands; fall back to EEG.features (some exports use that field name instead).
     B=[];
     if isfield(EEG,'bands') && ~isempty(EEG.bands), B=EEG.bands;
     elseif isfield(EEG,'features') && ~isempty(EEG.features), B=EEG.features; end

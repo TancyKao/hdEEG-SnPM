@@ -369,5 +369,5 @@ question as a between-subject one, or use the signed linearised measure with `pa
 - Helfrich et al. (2018) — single-electrode group phase comparison; cluster-corrected
   circular–linear correlation.
 - Mardia (1976) — circular–linear correlation.
-- Maris & Oostenveld (2007); Nichols & Holmes (2001) — the permutation framework this tier plugs
-  into. PDFs in `Ref/`.
+- Maris & Oostenveld (2007), *J Neurosci Methods* 164(1), 177–190; Nichols & Holmes (2001),
+  *Hum Brain Mapp* 15(1), 1–25 — the permutation framework this tier plugs into.

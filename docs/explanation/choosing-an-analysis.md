@@ -71,17 +71,17 @@ fewer channels. The LMM is **script-only** (`scripts/run_lmm_analysis.m`) — no
 | Does a behavioural measure vary with phase? | `circ_corrAngLinear` |
 | Want a **directional** phase claim ("group A couples later")? | the *signed* linearised measure through `unpairedT` / `ancova` — the circular tests are non-directional |
 
-**Caveat locked from the the example study data:** `condition-a` / `condition-b` are within-subject
+**Caveat locked from the spectral-folder data layout:** `condition-a` / `condition-b` are within-subject
 (same subjects) → compare with `rmanova` / `pairedT`, **not** `anova1` (which assumes
 independent groups).
 
 ## Method grounding
 
-- **Maris & Oostenveld (2007)** — per-sensor statistic (t for two conditions, F for >2),
-  neighbour clustering, cluster-level statistic, max-cluster permutation null for FWER.
-- **Nichols & Holmes (2001)** — single-threshold maximum-statistic permutation test;
-  sign-flipping for one-sample/within.
-- **Winkler et al. (2014)** — Freedman–Lane permutation for the GLM with nuisance regressors.
-- **Stephan et al. (2021)** — the event/trial-level LMM tier.
-
-PDFs are in `Ref/`.
+- **Maris & Oostenveld (2007)**, *J Neurosci Methods* 164(1), 177–190 — per-sensor statistic
+  (t for two conditions, F for >2), neighbour clustering, cluster-level statistic, max-cluster
+  permutation null for FWER.
+- **Nichols & Holmes (2001)**, *Hum Brain Mapp* 15(1), 1–25 — single-threshold
+  maximum-statistic permutation test; sign-flipping for one-sample/within.
+- **Winkler et al. (2014)**, *NeuroImage* 92, 381–397 — Freedman–Lane permutation for the GLM
+  with nuisance regressors.
+- **Stephan et al. (2021)**, *Curr Biol* 31(24), 5487–5500 — the event/trial-level LMM tier.

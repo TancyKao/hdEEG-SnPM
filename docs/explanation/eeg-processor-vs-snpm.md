@@ -1,23 +1,19 @@
-# EEG_Processor group analysis vs. SnPM_2025 — diff summary
+# Why this tool exists alongside a PALM-based pipeline
 
-> *Understanding-oriented.* Why this tool exists alongside EEG_Processor's PALM path — a
-> design-rationale discussion, not instructions. To pick and run an analysis, see the
+> *Understanding-oriented.* Why hdEEG-SnPM exists alongside an FSL **PALM** group-analysis
+> path — a design-rationale discussion, not instructions. To pick and run an analysis, see the
 > [how-to guides](../how-to/README.md).
 
-Date: 2026-07-06
+This is a deliberately unflattering comparison, written in July 2026, of hdEEG-SnPM against
+**EEG_Processor** — a separate in-house preprocessing and feature-extraction toolbox that is
+*not* distributed with this repository. It is recorded here because the same question applies
+to anyone who already has PALM: what does a preset-driven permutation tool add over a general
+design-matrix one? The honest answer is "less than you might hope, in a specific direction".
 
-Purpose: honest comparison of EEG_Processor's built-in group-analysis module against the
-current SnPM_2025 pipeline, so we know what is genuinely new vs. what is redundant.
-
-## Correction to an earlier assumption
-
-EEG_Processor is **not** just import/preprocess/feature-extraction. It ships a full
-group-analysis module that is statistically in the same family as SnPM_2025.
-
-Location: `EEG_Processor/latest/package/funcGroupAnalysis/`
-(`GroupAnalysis_run.m`, `GroupAnalysis_plot.m`, `GroupAnalysis_htmlreport.m`) plus the
-bundled engine `EEG_Processor/latest/package/plugins/fsl_palm/` (FSL **PALM**, Winkler et al.).
-A newer copy lives in `EEG_Processor/tancy - group analysis update/GroupAnalysis_run.m`.
+EEG_Processor is not only import/preprocess/feature-extraction. It ships a full group-analysis
+module (`funcGroupAnalysis/`: `GroupAnalysis_run.m`, `GroupAnalysis_plot.m`,
+`GroupAnalysis_htmlreport.m`) built on a bundled copy of FSL **PALM** (Winkler et al.), which is
+statistically in the same family as hdEEG-SnPM.
 
 ## What EEG_Processor's group analysis does
 
@@ -42,7 +38,7 @@ power-spectrum features. For a plain t / F / regression contrast with TFCE or cl
 correction, **EEG_Processor already does it**, with a more battle-tested engine (PALM is
 peer-reviewed; SnPM reimplements the permutation math). SnPM is partly redundant there.
 
-## Where SnPM_2025 genuinely differs / adds value
+## Where hdEEG-SnPM genuinely differs / adds value
 
 1. **Audience / UX.** PALM makes the user build the design matrix + contrast vectors. SnPM is
    preset-driven: pick a named analysis, map columns, and statistic/contrast/permutation are
@@ -71,7 +67,6 @@ wired into EEG_Processor's PALM GUI. For standard t/F/regression contrasts with 
 correction, EEG_Processor's PALM path already covers it and is more validated — so maintaining a
 parallel engine is only justified by the UX and the specialized designs.
 
-## Open follow-up
-
-Enumerate the exact model types EEG_Processor's group GUI exposes (the design-builder options)
-to produce a concrete redundant-vs-unique split against the SnPM preset list.
+This comparison is a snapshot of both tools as they stood in July 2026 and has not been
+re-checked since; the exact set of models EEG_Processor's design-builder GUI exposes was never
+enumerated, so the redundant-versus-unique split above is a judgement, not an inventory.

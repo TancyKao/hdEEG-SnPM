@@ -17,7 +17,9 @@ You don't need any statistics background or your own data to follow along.
 - MATLAB with the Statistics and Machine Learning Toolbox.
 - This repository, opened with MATLAB's current folder set to the repo root. (The tool adds its
   own paths from the current folder, so this matters.)
-- The synthetic data in `test_data/synthetic_gui/`, which ships with the repo.
+- The synthetic data in `test_data/synthetic_gui/`. **It is not in the repository** — generate
+  it first by running `gen_synthetic_testdata` from the repo root, which writes that folder
+  (and a `README.md` inside it mapping every file to its analysis and GUI settings).
 
 ## Step 1 — Launch the tool
 
@@ -88,7 +90,7 @@ corrected topographic test, and confirmed it recovers a known effect.
 ## Where to go next
 
 - Try another synthetic file. The map of every file → analysis → GUI settings is in
-  [`test_data/synthetic_gui/README.md`](../../test_data/synthetic_gui/README.md). A good next
+  `test_data/synthetic_gui/README.md`, written by `gen_synthetic_testdata`. A good next
   step is **one-way ANOVA** (`glm_anova1.csv`, set Group = `group`), which introduces column
   roles.
 - To run any analysis for real, follow the how-to:

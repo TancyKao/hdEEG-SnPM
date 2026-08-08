@@ -79,10 +79,11 @@ phase. See
 
 ## References
 
-- Maris & Oostenveld (2007) — neighbour clustering and cluster-level permutation inference for
-  M/EEG; the source of the region-not-channel scope of a cluster.
-- Nichols & Holmes (2001) — max-statistic permutation, family-wise-error control.
-- Stephan et al. (2021) — the `sum(Wald) / n_channels` (mean-Wald) cluster statistic used by
-  the GLM/LMM tier.
-
-PDFs are in `Ref/`.
+- Maris E, Oostenveld R (2007). *Nonparametric statistical testing of EEG- and MEG-data.*
+  J Neurosci Methods 164(1), 177–190 — neighbour clustering and cluster-level permutation
+  inference for M/EEG; the source of the region-not-channel scope of a cluster.
+- Nichols TE, Holmes AP (2001). *Nonparametric permutation tests for functional neuroimaging.*
+  Hum Brain Mapp 15(1), 1–25 — max-statistic permutation, family-wise-error control.
+- Stephan AM et al. (2021). *Conscious experiences and high-density EEG patterns predicting
+  subjective sleep depth.* Curr Biol 31(24), 5487–5500 — the `sum(Wald) / n_channels`
+  (mean-Wald) cluster statistic used by the GLM/LMM tier.

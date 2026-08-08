@@ -7,7 +7,8 @@
 %   matlab -batch "run('scripts/run_spectral_report.m')"
 
 % ======================= CONFIG (edit me) =======================
-ROOT     = '/path/to/hdEEG-SnPM';
+ROOT     = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
+if isempty(ROOT), ROOT = pwd; end
 DATA     = fullfile(ROOT,'test_data','hdeeg_analysis_all_sub');   % folder of per-subject spectral .mat files
 OUT      = fullfile(ROOT,'test_data','hdeeg_paired_report_2026-07');
 
@@ -18,10 +19,14 @@ opts.condB            = 'Condition B';
 opts.fmin             = 0.1;     opts.fmax = 40;
 opts.add_nrem         = true;                 % add NREM = mean(N2,N3)
 opts.seed             = 20260722;             % one seed for the whole sweep
-opts.exclude_subjects = {};                   % none: sub-XX is NOT an outlier in this dataset (n=27)
-% bad channels: NaN-masked for that subject only (pairwise deletion) across all
-% bands, both conditions, all stages, and the global-PSD channel average
-opts.exclude_chan_subject = {'sub-XX','E197'; 'sub-YY','E184'};
+opts.exclude_subjects = {};                   % EDIT ME: drop whole subjects, e.g. {'sub-XX'}
+% EDIT ME: bad channels, NaN-masked for that subject only (pairwise deletion)
+% across all bands, both conditions, all stages, and the global-PSD channel
+% average. Format: {subject_id, channel_label; ...}, e.g.
+%   opts.exclude_chan_subject = {'sub-XX','E197'; 'sub-YY','E184'};
+% An entry that matches no record is a hard error, so leave it {} until you have
+% identified your own artifact channels.
+opts.exclude_chan_subject = {};
 % opts.periodogram_only = true;               % fast path: only regenerate periodograms
 % ================================================================
 

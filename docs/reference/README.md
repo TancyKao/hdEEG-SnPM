@@ -1,7 +1,7 @@
 # Reference
 
 *Information-oriented.* Look things up here; these pages describe the machinery neutrally and
-completely. They do not teach (see [tutorials](../tutorials/)) or walk you through a task (see
+completely. They do not teach (see [tutorials](../tutorials/README.md)) or walk you through a task (see
 [how-to guides](../how-to/README.md)).
 
 ## Pages
@@ -15,12 +15,13 @@ completely. They do not teach (see [tutorials](../tutorials/)) or walk you throu
 Two reference documents are colocated with the assets they describe (kept there on purpose so
 they stay in sync with the files):
 
-- **Synthetic fixtures** — [`test_data/synthetic_gui/README.md`](../../test_data/synthetic_gui/README.md).
-  Maps each synthetic file → analysis → GUI settings. Every file plants a 17-channel neighbour
-  cluster near E129 on the EGI 256 montage.
-- **Headless / NCI scripts** — [`scripts/README_scripts.md`](../../scripts/README_scripts.md).
+- **Synthetic fixtures** — `test_data/synthetic_gui/README.md`. Maps each synthetic file →
+  analysis → GUI settings. Every file plants a 17-channel neighbour cluster near E129 on the
+  EGI 256 montage. `test_data/` is git-ignored, so run `gen_synthetic_testdata` to create the
+  folder and that README.
+- **Headless / HPC scripts** — [`scripts/README_scripts.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/scripts/README_scripts.md) (on GitHub; outside this site).
   Which `run_*.m` template runs which analysis/engine, the column-role table per preset, the
-  spectral-folder-as-factor model, and NCI notes.
+  spectral-folder-as-factor model, and cluster-submission notes.
 
 ## Comparison keys (`params.comparison`)
 

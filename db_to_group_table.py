@@ -17,6 +17,11 @@ No dependency on the parameter/density CSVs (DB + XML only), so it survives the
 planned TurtleWave outlier-removal / CSV-removal. Uses only the Python stdlib.
 
 Usage:  python3 db_to_group_table.py <DATA_dir> <OUT_dir> [--group LABEL]
+
+--group is the cohort label written into subjects.csv. It defaults to 'group1',
+which is only ever correct for a single-cohort run -- pass it explicitly when you
+are building a table with more than one group, or every subject lands in the same
+level and the group contrast has nothing to test.
 """
 import os, sys, re, csv, sqlite3, glob, argparse
 import xml.etree.ElementTree as ET
@@ -73,7 +78,8 @@ def natkey(ch):  # E1,E2,...,E10,...,Cz  natural order
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('data_dir'); ap.add_argument('out_dir')
-    ap.add_argument('--group', default='group1')
+    ap.add_argument('--group', default='group1',
+                    help="cohort label written into subjects.csv (default: group1)")
     a = ap.parse_args()
     os.makedirs(a.out_dir, exist_ok=True)
 

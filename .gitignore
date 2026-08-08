@@ -103,3 +103,7 @@ Desktop.ini
 # Local Claude Code state (per-machine, not shared)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Personal one-off run scripts: contain real subject IDs and local data paths.
+# Keep these out of the public repo.
+scripts/run_spectral_report_2*.m

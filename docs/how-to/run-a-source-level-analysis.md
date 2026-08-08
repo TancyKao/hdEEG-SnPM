@@ -56,7 +56,7 @@ results_struct = core_snpm_analysis(params);
 
 For a trial-level (many-observations-per-subject) source design, use the LMM path instead:
 `comparison = 'mixedmodel'` with `channels = 'source2447'` (see
-[`scripts/run_lmm_analysis.m`](../../scripts/README_scripts.md)). The GLM presets
+[`scripts/run_lmm_analysis.m`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/scripts/README_scripts.md)). The GLM presets
 (`anova1`/`ancova`/`regression`/`rmanova`/`mixed2way`) are **not yet source-wired** — run those
 on scalp montages.
 

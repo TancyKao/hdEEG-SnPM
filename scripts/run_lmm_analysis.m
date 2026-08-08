@@ -8,7 +8,8 @@
 %   matlab -batch "run('scripts/run_lmm_analysis.m')"
 
 % ======================= CONFIG (edit me) =======================
-ROOT        = '/path/to/hdEEG-SnPM';
+ROOT        = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
+if isempty(ROOT), ROOT = pwd; end
 data_file   = fullfile(ROOT,'test_data','lmm_long.csv');   % long format: meta cols + channel cols
 output_dir  = fullfile(ROOT,'test_data','results_lmm');
 

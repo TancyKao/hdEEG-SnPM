@@ -1,0 +1,59 @@
+# GitHub Pages configuration for the hdEEG-SnPM documentation site.
+#
+# The site is built by GitHub Pages from the /docs folder of the default branch
+# (Settings -> Pages -> Source: Deploy from a branch -> main -> /docs).
+#
+# Everything here is either a GitHub Pages supported theme or a whitelisted
+# plugin; nothing needs a custom Gemfile. To preview locally:
+#   gem install github-pages
+#   jekyll build -s docs -d /tmp/_site   (or: jekyll serve -s docs)
+
+title: hdEEG-SnPM Toolbox
+description: >-
+  Permutation-based TFCE and cluster statistics for high-density EEG
+  topographies — group comparisons, correlations, GLM presets, per-channel
+  linear mixed models, and a circular (phase) tier.
+lang: en-AU
+
+# Toolbox release this site documents. Keep in step with CHANGELOG.md and the git tag.
+version: 1.0.0
+
+# jekyll-theme-primer is GitHub's own Primer CSS: the site renders markdown the
+# way github.com does, which matters here because these docs are table- and
+# code-heavy and are authored/reviewed as GitHub-rendered markdown. It is on the
+# supported-theme list, needs no plugin outside the whitelist, and has no hero
+# banner eating the top of every reference page.
+theme: jekyll-theme-primer
+
+# jekyll-relative-links and jekyll-readme-index are enabled by GitHub Pages by
+# default; they are listed for clarity and so a local build matches production.
+#   relative-links      rewrites in-repo "foo/bar.md" links to site URLs
+#   readme-index        serves README.md as the index of its directory
+#                       (this is what makes docs/README.md the site landing page)
+#   optional-front-matter treats plain .md files (no front matter) as pages
+#   seo-tag / sitemap   page titles + descriptions, and /sitemap.xml
+plugins:
+  - jekyll-relative-links
+  - jekyll-readme-index
+  - jekyll-optional-front-matter
+  - jekyll-default-layout
+  - jekyll-titles-from-headings
+  - jekyll-github-metadata
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+relative_links:
+  enabled: true
+  collections: false
+
+readme_index:
+  enabled: true
+  remove_originals: true
+  with_frontmatter: true
+
+# baseurl is deliberately NOT set: jekyll-github-metadata derives it from the
+# repository's Pages URL (/hdEEG-SnPM for a project site). Hardcoding it would
+# break the CSS if the repo is renamed or moved to a custom domain.
+
+exclude:
+  - .DS_Store

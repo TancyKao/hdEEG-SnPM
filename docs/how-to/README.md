@@ -3,13 +3,17 @@
 *Goal-oriented.* Short, direct recipes for a specific task. They assume you already know what
 you want and roughly how the tool works — if you're new, do the
 [getting-started tutorial](../tutorials/getting-started.md) first. For *why* a design is
-appropriate, see [explanation](../explanation/); for exact inputs/outputs, see the
+appropriate, see [explanation](../explanation/README.md); for exact inputs/outputs, see the
 [reference](../reference/ANALYSIS_CATALOG.md).
 
 ## Guides
 
 - **[Run an analysis in the GUI](run-an-analysis-in-the-gui.md)** — drive `SnPMAnalysisGui`
   for CSV files or a spectral folder, map column roles, and read the outputs.
+- **[Take TurtleWave detections into a group analysis](analyse-turtlewave-event-data.md)** —
+  the hand-off from [TurtleWave-hdEEG](https://github.com/TancyKao/TurtleWave-hdEEG): what it
+  writes, the `db_to_group_table.py` bridge, which analysis each event measure belongs in, and
+  the pre-v4.0 phase-inversion trap.
 - **[Run a circular (phase) analysis](run-a-circular-phase-analysis.md)** — compare preferred
   phase between two independent groups, or correlate it with a measure: the file layout including
   the required event-count files, the radians requirement, the detector zero-convention table
@@ -22,12 +26,13 @@ appropriate, see [explanation](../explanation/); for exact inputs/outputs, see t
 
 ## Task guides that live next to the code
 
-- **Run analyses headless (NCI / HPC)** — [`scripts/README_scripts.md`](../../scripts/README_scripts.md).
+- **Run analyses headless (HPC / compute cluster)** — [`scripts/README_scripts.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/scripts/README_scripts.md) (on GitHub; it lives next to the scripts, outside this site).
   Edit the `CONFIG` block of a `run_*.m` template and submit with `matlab -batch`. Covers the
   GLM/legacy runner, the LMM runner, the spectral-folder-as-factor runner (with band×stage
   sweep), the event/spectral report runners, and the `db_to_group_table.py` event-prep step.
 
 ## Open how-to gaps (not yet written)
 
-- Prepare a TurtleWave event table for the GLM presets (waiting on the importer).
+- Import TurtleWave event tables exported as CSV rather than as the Wonambi SQLite database.
+  `db_to_group_table.py` covers the database layout only; there is no MATLAB-side importer.
 - Add a new recording system to the montage registry (developer task).

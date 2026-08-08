@@ -71,4 +71,4 @@ See the [Analysis catalog](../reference/ANALYSIS_CATALOG.md) for the exact field
 
 `checkReadyToRun` is analysis-aware. Confirm: the right number of files/folders is loaded, the
 channel count matches the montage, and **every visible role** is set. `mixedmodel` is not in
-the GUI — run it with [`scripts/run_lmm_analysis.m`](../../scripts/README_scripts.md).
+the GUI — run it with [`scripts/run_lmm_analysis.m`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/scripts/README_scripts.md).

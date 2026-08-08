@@ -8,7 +8,8 @@
 %   matlab -batch "run('scripts/run_glm_report.m')"
 
 % ======================= CONFIG (edit me) =======================
-ROOT = '/path/to/hdEEG-SnPM';
+ROOT = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
+if isempty(ROOT), ROOT = pwd; end
 DATA = fullfile(ROOT,'test_data','glm_report_demo');   % subjects.csv + <stage>_<power>_<band>.csv + gmPSD_*
 OUT  = fullfile(ROOT,'test_data','glm_report_out');    % filled HTML + PNGs land here
 

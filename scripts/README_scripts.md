@@ -38,7 +38,9 @@ circular configurations under `test_data/examples/circular_*`.
   with the Python bridge first (no MATLAB, stdlib only):
 
   ```bash
-  python3 db_to_group_table.py --root <cohort_dir> --out <DATA>
+  # DATA_dir and OUT_dir are POSITIONAL. --group labels the cohort in subjects.csv;
+  # pass it explicitly whenever you have more than one group.
+  python3 db_to_group_table.py <DATA_dir> <OUT_dir> --group <label>
   # writes: subjects.csv, channels.csv, eventStat_<param>_<event>.csv
   ```
 

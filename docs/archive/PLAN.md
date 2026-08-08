@@ -160,9 +160,9 @@ killing topography figures for non-"VS" titles (repairs both new paths).
 No new engine needed for either. The **TurtleWave→analysis-table importer is deferred** to its own task
 (pending a sample CSV/SQLite); MATLAB reads CSV via `readtable` and SQLite via the `sqlite` interface.
 
-## Real dataset format (the example study, hd-EEG spectral power)
+## Real dataset format (local-sleep study, hd-EEG spectral power)
 
-Path: `…/EXAMPLE_STUDY/01_data/derivatives/eeg/hdeeg_analysis_all_sub/{condition-a,condition-b}/`.
+Path: `…/<study>/01_data/derivatives/eeg/hdeeg_analysis_all_sub/{condition-a,condition-b}/`.
 One `.mat` per **subject × condition × stage × run**, BIDS-named
 `sub-XX_condition-{a,b}_task-psg_run-N_desc-{n1,n2,n3,rem}_powerspect.mat`
 (~27 subjects/condition; 2 conditions × 4 stages).

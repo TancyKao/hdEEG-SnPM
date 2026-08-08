@@ -1,23 +1,23 @@
 # Archive — project history (not user documentation)
 
-These files are a **frozen record** of how the toolbox was built: planning notes, session
-handoffs, changelogs, and the prompts handed to design assistants. They are kept for
-provenance and to explain *why* decisions were made, but they are **not maintained** and may
-have drifted from the current source. Do not follow them as instructions.
+These files are a **frozen record** of how the toolbox was built: planning notes, changelogs,
+and the prompts handed to design assistants. They are kept for provenance and to explain *why*
+decisions were made, but they are **not maintained** and may have drifted from the current
+source. Do not follow them as instructions. For what changed in each release, see the
+[changelog](https://github.com/TancyKao/hdEEG-SnPM/blob/main/CHANGELOG.md).
 
 If you want to *use* the tool, start at the [docs index](../README.md):
 
-- **Learn it** → [tutorials](../tutorials/)
+- **Learn it** → [tutorials](../tutorials/README.md)
 - **Do a task** → [how-to guides](../how-to/README.md)
 - **Look something up** → [reference](../reference/ANALYSIS_CATALOG.md)
-- **Understand why** → [explanation](../explanation/)
+- **Understand why** → [explanation](../explanation/README.md)
 
 ## What's here
 
 | File | What it is | Superseded by |
 |---|---|---|
 | `PLAN.md` | The statistical-expansion plan + status (GLM presets, LMM path, spectral bridge), with the research-question-per-analysis and method-grounding tables. | Reference: [ANALYSIS_CATALOG](../reference/ANALYSIS_CATALOG.md). Explanation: [choosing-an-analysis](../explanation/choosing-an-analysis.md). |
-| `RECAP.md` | Session handoff note — environment notes. | The current architecture lives in the root `CLAUDE.md`. |
 | `MODIFICATIONS_SUMMARY.md` | v2.0 changelog (Pearson correlation + covariate control). **Cited line numbers have drifted from the current source** — treat as history. | — |
 | `design-prompts/` | Prompts written to hand to a design assistant while evolving the report and GUI. Design history, not user docs. | The features they describe are now live in the GUI / report engines. |
 

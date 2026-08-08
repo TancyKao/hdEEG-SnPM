@@ -16,7 +16,8 @@
 %  covariates or trial-level data -> use the CSV scripts, not this one.)
 
 % ======================= CONFIG (edit me) =======================
-ROOT = '/path/to/hdEEG-SnPM';
+ROOT = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
+if isempty(ROOT), ROOT = pwd; end
 OUT  = fullfile(ROOT,'test_data','spectral_analysis_out');
 
 % One folder per factor level; LABELS is parallel to FOLDERS.

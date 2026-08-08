@@ -19,7 +19,8 @@
 % CONFIG block for your own data.
 
 % ======================= CONFIG (edit me) =======================
-ROOT        = '/path/to/hdEEG-SnPM';
+ROOT        = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
+if isempty(ROOT), ROOT = pwd; end
 
 comparison  = 'mixed2way';     % anova1|ancova|regression|rmanova|mixed2way|pairedT|unpairedT|onesampleT|correlationP|correlationS
 DATA_MODE   = 'single';        % 'single' (one long/wide CSV) | 'join' (matrix + subjects.csv)

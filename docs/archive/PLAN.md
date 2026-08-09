@@ -105,10 +105,10 @@ recipe).
 | power × group interaction | k−1 | F | non-negative | both only |
 
 **Files:** `dependencies/snpm_lmm_fit.m`, `snpm_lmm_TFCE.m`, `snpm_lmm_cluster.m`, `snpm_lmm_permute_meta.m`;
-`core_snpm_lmm.m`; `test_lmm_snpm.m`. Input = long format (one row per trial; `lmm_meta_cols` separates
+`core_snpm_lmm.m`. Input = long format (one row per trial; `lmm_meta_cols` separates
 meta from channel columns). Needs Statistics & ML Toolbox; `parfor` over channels (start `parpool` on NCI).
 
-**Verified** (`test_lmm_snpm.m`, all tiers): planted neighbour cluster recovered (TFCE + cluster); factor
+**Verified** (all tiers): planted neighbour cluster recovered (TFCE + cluster); factor
 F-path detects a real group effect with a clean negative control; full CSV→pipeline plumbing writes
 `.mat`/`.xlsx`/HTML; `pairedT` no-regression.
 
@@ -131,10 +131,10 @@ A `transform` option (`absolute`/`log`/`rank`) applies across presets; `rank` yi
 **Files:** `dependencies/snpm_glm_stat.m` (vectorized t/F), `snpm_glm_design.m` (preset→design + post-hoc),
 `snpm_glm_permute.m` (Freedman–Lane residual permutation with exchangeability blocks), `snpm_perm_correction.m`
 (shared driver: TFCE max-null + cluster-mass in one loop, emits standard `T`/`p`/`Clusters`);
-`core_snpm_glm.m`; `test_glm_snpm.m`. User maps columns via `group_col`/`condition_col`/`subject_col`/
+`core_snpm_glm.m`. User maps columns via `group_col`/`condition_col`/`subject_col`/
 `predictor_col`/`covariate_cols`; `meta_cols` separates meta from channel columns.
 
-**Verified** (`test_glm_snpm.m`, 7 tiers): GLM t/F match `fitlm`/`anova1`/`anovan` to 1e-6; planted-cluster
+**Verified** (7 tiers): GLM t/F match `fitlm`/`anova1`/`anovan` to 1e-6; planted-cluster
 recovery per preset with clean negative controls; 3-group omnibus + post-hoc identifies the differing pair;
 Freedman–Lane keeps a true predictor effect while suppressing an age-confound cluster; `pairedT`
 no-regression. Also fixed a latent `titlename` typo in `TopoplotSignificant_single.m` that was silently
@@ -207,4 +207,4 @@ parpool;                      % LMM only (GLM needs no pool)
 [results, text] = core_snpm_analysis(params);
 ```
 `params.comparison` selects the analysis; see `core_snpm_lmm.m` / `core_snpm_glm.m` headers for the full
-parameter list per preset. Verify suites: `matlab -batch "test_lmm_snpm"` and `matlab -batch "test_glm_snpm"`.
+parameter list per preset.

@@ -44,5 +44,5 @@ is already implemented.)
   `applyDataSourceLayout`, `applyAnalysisLayout`, `updateRoleFields`, `checkReadyToRun`.
 - Verify the result headless: `matlab -batch "app=SnPMAnalysisGui; delete(app); disp ok"` and
   `matlab -batch "checkcode('SnPMAnalysisGui.m')"`. Interactive look-and-feel needs a display.
-- Test data for a live check is in `test_data/synthetic_gui/`; spectral-folder mode can point at
-  the `condition-a`/`condition-b` folders under `test_data/hdeeg_analysis_all_sub/`.
+- Test data for a live check is in `example_data/`; spectral-folder mode can point at any two
+  local BIDS spectral-power folders (one per condition).

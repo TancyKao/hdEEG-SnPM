@@ -80,7 +80,7 @@ change `core_snpm_analysis.m` or any engine; the GUI only assembles a `params` s
 
 - Excel input: when a file is `.xlsx`, the column-header read (steps 2–3) should use the chosen sheet
   (`Data Sheet` dropdown); for `.csv` the sheet is `'CSV File'`.
-- Test data to validate the redesigned GUI lives in `test_data/synthetic_gui/` (one file or file-pair per
+- Test data to validate the redesigned GUI lives in `example_data/` (one file or file-pair per
   analysis, each with a planted cluster near channel E129; see its `README.md`). After wiring, load each and
   confirm the role pickers populate from the file and Run enables correctly.
 - The current `updateRoleFields`, `ComparisonDropDownValueChanged`, and `checkReadyToRun` already encode the

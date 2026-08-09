@@ -205,9 +205,14 @@ circular domain and are refused (`core_snpm:circDatatypeNotSupported`). All thre
 non-negative omnibus quantities with a single upper tail, so `left` / `right` are refused too
 (`core_snpm:circTailNotSupported`) and the GUI Tails control is disabled.
 
-Try it on the synthetic fixtures first — run `gen_synthetic_testdata` to write them, then use
-`test_data/synthetic_gui/circ_phase_group{A,B}.csv` plus `circ_phase_counts{A,B}.csv`, radians,
-`literature_uppeak0`. See that folder's `README.md`.
+Try it on the example data first: `example_data/circ_phase_groupA.csv` and
+`circ_phase_groupB.csv` plus the two `circ_phase_counts{A,B}.csv` precision files, with
+`circ_units = 'rad'` and `circ_convention = 'literature_uppeak0'`. They plant a 46.3° mean-
+direction shift in the E129 cluster. `circ_conc_group{A,B}.csv` plant a *concentration*
+difference at the same mean direction instead — useful for seeing what Hotelling and Watson's U²
+respond to and the signed linearised measure does not, but at n = 20 + 20 it is only detected
+about a fifth of the time, so a null run on that pair is expected, not a defect. Full map:
+[`example_data/README.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/example_data/README.md).
 
 ## Read the diagnostics before the p-values
 

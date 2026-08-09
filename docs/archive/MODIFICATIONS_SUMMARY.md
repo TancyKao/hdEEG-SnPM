@@ -274,9 +274,10 @@ Potential improvements for future versions:
 ## Support
 
 For questions or issues:
-1. Check `test_data/README.md` for testing guidance
+1. Check `example_data/README.md` for the current example files and the settings each one needs
+   (the `test_data/` tree described above was never part of the public repository)
 2. Review this document for implementation details
-3. Examine example CSV files in `test_data/` folder
+3. Examine the example CSV files in `example_data/`
 4. Verify covariate file format matches specifications
 
 ## Version History

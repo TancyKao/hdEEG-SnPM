@@ -22,8 +22,9 @@ Wonambi ecosystems are where that work lives.
 
 Group inference is per-channel permutation statistics over a *cohort*. It needs the montage,
 the channel-adjacency structure, EEGLAB's `topoplot` for the maps, and MATLAB's Statistics
-toolbox for `fitlm` / `fitlme` / `anovan` — which are also the ground truth the test suite
-checks every statistic against. It has no reason to see a raw recording at all.
+toolbox for `fitlm` / `fitlme` / `anovan` — which are also the ground truth every statistic in
+this toolbox was checked against during development. It has no reason to see a raw recording at
+all.
 
 Splitting them at that seam means each half is usable on its own, and neither drags the other's
 runtime into your environment. The interface between them is a file — a plain CSV of one number

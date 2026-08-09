@@ -81,8 +81,8 @@ so the report rewrite alone is not enough.
 > - Keep the significance toggle order **Cluster · TFCE · Uncorrected** (already set).
 > - Don't regress the t-test / correlation / LMM reports — only the F branch changes layout; everything
 >   else stays.
-> - Both edited files must pass `checkcode` with no errors, and `matlab -batch "test_all"` must end in
->   `VERIFY: ALL GREEN`.
+> - Both edited files must pass `checkcode` with no errors, and the full verification suite of the
+>   time must come back green.
 > - Handle empty significant sets and groups with missing data gracefully; HTML-escape free text.
 >
 > Return the two full updated files plus a one-paragraph summary.
@@ -91,8 +91,8 @@ so the report rewrite alone is not enough.
 
 ## Verify when it returns
 - `matlab -batch "checkcode('core_snpm_glm.m'); checkcode('dependencies/generateAnalysisReport.m')"` — no errors.
-- `matlab -batch "test_all"` — `VERIFY: ALL GREEN`.
-- Regenerate an `anova1` sample (synthetic: `test_data/synthetic_gui/glm_anova1.csv`, `group_col='group'`,
+- The full verification suite of the time — all checks green.
+- Regenerate an `anova1` sample (`example_data/glm_anova1.csv`, `group_col='group'`,
   `meta_cols={'Subject','group'}`, `channels='egi'`, low perms) and open the `_report.html`: confirm one
   mean topo **per group** + the **F-map** in Topographies, and per-pair **Cluster/TFCE/Uncorrected**
   channel tables (Channel · t · p) in Post-hoc, with no broken image links.

@@ -26,10 +26,20 @@ There is **no `run_circular_analysis.m` template**. The circular (phase/angle) t
 building a `params` struct directly — see
 [Run a circular (phase) analysis](../docs/how-to/run-a-circular-phase-analysis.md), which carries
 the full struct, the required `circ_units` / `circ_convention` / precision-file inputs, and the
-detector zero-convention table. `scripts/gen_examples.m` builds worked examples for all four
-circular configurations under `test_data/examples/circular_*`.
+detector zero-convention table. Input files for all four circular configurations ship in
+[`example_data/`](../example_data/README.md) — the two `circ_phase_group{A,B}.csv` angle files
+with their `circ_phase_counts{A,B}.csv` precision files (Hotelling and Watson U²),
+`circ_conc_group{A,B}.csv` + counts (a concentration difference at the same mean direction), and
+`circ_anglinear_angles.csv` + `circ_anglinear_measure.csv` (circular–linear).
 
 ## Data prep
+
+To try a template before you have your own data, point its `CONFIG` at
+[`example_data/`](../example_data/README.md) at the repo root — one ready-made CSV (or file pair)
+per analysis, each with a 17-channel cluster planted near E129 on the EGI 256 montage, so you can
+confirm the run recovers an effect it was built to find. `run_glm_analysis.m` covers
+`glm_anova1.csv`, `glm_ancova.csv`, `glm_ancova3.csv`, `glm_regression.csv`, `glm_rmanova.csv`,
+`glm_mixed2way.csv` and the legacy pairs; `run_lmm_analysis.m` covers `lmm_long.csv`.
 
 - **Spectral** (`run_spectral_report.m`): point `DATA` at the folder of per-subject
   spectral `.mat` files; the script scans them itself.

@@ -1,5 +1,5 @@
 %% gen_examples.m  —  build test_data/examples/<analysis>/ : input CSV(s) + report
-% One folder per analysis, each holding its synthetic_gui import CSV(s) and a
+% One folder per analysis, each holding its example_data import CSV(s) and a
 % freshly generated combined HTML report (.mat/.xlsx/topo PNGs too). Mirrors the
 % GUI analyses; pairs with the Notion "SnPMAnalysisGUI-v2" docs.
 %
@@ -8,7 +8,7 @@
 
 ROOT = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
 if isempty(ROOT), ROOT = pwd; end
-SRC  = fullfile(ROOT,'test_data','synthetic_gui');
+SRC  = fullfile(ROOT,'example_data');   % ready-made inputs shipped with the repo
 DST  = fullfile(ROOT,'test_data','examples');
 addpath(genpath(ROOT));
 

@@ -216,6 +216,7 @@ head missing supports far weaker regional claims than its topoplot suggests.
 - Primary sources in the code: the comment block in `core_snpm_analysis.m` that computes the
   evaluable mask (both rules are derived there, from the same per-channel availability count),
   and the headers of `dependencies/snpm_corr_columns.m` and `dependencies/global_stat_test.m`
-  (the common-channel rule and its measured false-positive table). The rules are guarded by
-  `test_perm_invariant` (correlation), `test_lmm_invariant` (LMM tier) and
-  `test_global_common_channels` (the whole-head omnibus).
+  (the common-channel rule and its measured false-positive table). Each of the three rules —
+  correlation, the LMM tier, and the whole-head omnibus — was checked by the same invariance
+  argument used above: given the retained channel set, the result must be identical whether or
+  not the dropped cells were ever present.

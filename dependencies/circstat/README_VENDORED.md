@@ -3,8 +3,7 @@
 This folder is a **partial, unmodified copy** of the CircStat toolbox for MATLAB. It is kept in
 its own subfolder (not flattened into `dependencies/`) because CircStat ships `Contents.m`,
 `license.txt` and `readme.txt`, which would collide with repo files. No path setup is needed:
-`core_snpm_analysis.m` calls `addpath(genpath(pwd))` and `test_all.m` calls `addpath(genpath(here))`,
-and both recurse into this subfolder.
+`core_snpm_analysis.m` calls `addpath(genpath(pwd))`, which recurses into this subfolder.
 
 - **Source:** `CircStat 2012a (upstream distribution)`
 - **Version:** CircStat2012a (file dates 2014-02-12; the 2012a release)

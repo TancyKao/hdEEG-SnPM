@@ -1,8 +1,8 @@
 # Getting started: your first SnPM analysis
 
-In this tutorial we'll run a complete hd-EEG group analysis from start to finish — using the
-toolbox's own synthetic data, which has a known effect planted in it. By the end you'll have
-run a permutation test, produced a topographic significance map, and seen the tool correctly
+In this tutorial we'll run a complete hd-EEG group analysis from start to finish, using the
+example data that ships with the repository and has a known effect planted in it. By the end
+you'll have run a permutation test, produced a topographic significance map, and seen the tool
 recover a cluster it was designed to find. We'll use the graphical interface and pick the
 simplest analysis so nothing distracts from the flow.
 
@@ -17,9 +17,10 @@ You don't need any statistics background or your own data to follow along.
 - MATLAB with the Statistics and Machine Learning Toolbox.
 - This repository, opened with MATLAB's current folder set to the repo root. (The tool adds its
   own paths from the current folder, so this matters.)
-- The synthetic data in `test_data/synthetic_gui/`. **It is not in the repository** — generate
-  it first by running `gen_synthetic_testdata` from the repo root, which writes that folder
-  (and a `README.md` inside it mapping every file to its analysis and GUI settings).
+- The example data in **`example_data/`** at the repo root. It is already in the repository, so
+  there is nothing to generate or download. Its
+  [`README.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/example_data/README.md)
+  maps every file to its analysis and GUI settings.
 
 ## Step 1 — Launch the tool
 
@@ -43,10 +44,10 @@ the second file; this one keeps it.
 
 ## Step 3 — Load the two data files
 
-Load these two files from `test_data/synthetic_gui/`:
+Load these two files from `example_data/`:
 
-- **Group A** → `unpaired_groupA.csv`
-- **Group B** → `unpaired_groupB.csv`
+- **Group A** → `example_data/unpaired_groupA.csv`
+- **Group B** → `example_data/unpaired_groupB.csv`
 
 As each file loads, the tool reads its headers. Watch for a caption like **Detected: 256
 channels, 1 metadata column**. Each file's columns are `E1 … E256` — real EGI channel labels —
@@ -80,7 +81,7 @@ Open your output folder. You should see three files sharing a timestamped base n
 - `<base>_<timestamp>.mat` — the full `results_struct` if you want to inspect it in MATLAB.
 
 Look at the topographic map. **A significant cluster of channels appears around E129**, at the
-back of the head. That is exactly the effect the synthetic data was built with — a 17-channel
+back of the head. That is exactly the effect the example data was built with — a 17-channel
 neighbour cluster planted near E129, with noise everywhere else. The tool found the real effect
 and (correctly) flagged nothing in the noise.
 
@@ -89,10 +90,10 @@ corrected topographic test, and confirmed it recovers a known effect.
 
 ## Where to go next
 
-- Try another synthetic file. The map of every file → analysis → GUI settings is in
-  `test_data/synthetic_gui/README.md`, written by `gen_synthetic_testdata`. A good next
-  step is **one-way ANOVA** (`glm_anova1.csv`, set Group = `group`), which introduces column
-  roles.
+- Try another example file. The map of every file → analysis → GUI settings is in
+  [`example_data/README.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/example_data/README.md).
+  A good next step is **one-way ANOVA** (`example_data/glm_anova1.csv`, set Group = `group`),
+  which introduces column roles.
 - To run any analysis for real, follow the how-to:
   [Run an analysis in the GUI](../how-to/run-an-analysis-in-the-gui.md).
 - To pick the right analysis for your own study, read

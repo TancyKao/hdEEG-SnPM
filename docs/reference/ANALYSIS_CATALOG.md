@@ -1,12 +1,19 @@
 # Analysis catalog — the source of truth
 
 One row per analysis: what it answers, what to import, required columns/roles, the
-statistic, its test fixture, and what it outputs. Verified end-to-end by
-`matlab -batch "test_all"` (stat-correctness in `test_glm_snpm` / `test_lmm_snpm` /
-`test_legacy_snpm` / `test_source_snpm` / `test_circ_stats`; end-to-end recovery and negative
-controls for the circular tier in `test_circ_snpm`; the missing-data rules in
-`test_perm_invariant` / `test_lmm_invariant` / `test_global_common_channels`; per-analysis
-outputs + spectral + edge cases in `test_all`).
+statistic, an example file to try it on, and what it outputs.
+
+**How these analyses were checked.** During development every statistic in this catalog was
+matched numerically against a MATLAB builtin on fixed synthetic input — `ttest` / `ttest2` and
+`corr` / `partialcorr` for the legacy tier, `fitlm` / `anova1` / `anovan` for the GLM presets,
+`fitlme` for the mixed model, and independent references for the circular statistics — and each
+analysis was run end to end on data with a known planted cluster, paired with negative controls
+(a null design, and a deliberately mismatched permutation scheme, must *not* produce a cluster).
+The measured error rates quoted throughout this page come from those runs. The verification
+harness itself is internal and is not distributed, so what you can reproduce from a clone is the
+cluster-recovery half: run any file from
+[`example_data/`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/example_data/README.md) and
+confirm the planted cluster near E129 comes back.
 
 ## Input sources
 Two ways to feed any analysis:
@@ -36,23 +43,27 @@ export contract and the **placeholder-coordinate** precondition.
 
 ## Catalog
 
-| Analysis (key) | Research question | Import | Required cols / roles | Statistic (ref) | Fixture |
+Every path in the **Example data** column is relative to
+[`example_data/`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/example_data/README.md) at the
+repo root, which is in the repository — there is nothing to generate.
+
+| Analysis (key) | Research question | Import | Required cols / roles | Statistic (ref) | Example data |
 |---|---|---|---|---|---|
-| **Paired t** `pairedT` | Same people, 2 conditions differ? | 2 wide files (A, B), row-matched | — | paired `ttest` | `synthetic_gui/paired_condA,B.csv` |
-| **One-sample** `onesampleT` | Within-subject A−B ≠ 0? | 2 wide files (A, B) | — | `ttest`(A−B) | `synthetic_gui/onesample_condA,B.csv` |
-| **Unpaired t** `unpairedT` | 2 independent groups differ? | 2 wide files (A, B), **group sizes may differ** | — | `ttest2` | `synthetic_gui/unpaired_groupA,B.csv` |
-| **Correlation P** `correlationP` | Linear EEG↔measure assoc? | 2 wide files, each w/ `Subject` | Subject col | Pearson `corr` | `synthetic_gui/corr_eeg,behavior.csv` |
+| **Paired t** `pairedT` | Same people, 2 conditions differ? | 2 wide files (A, B), row-matched | — | paired `ttest` | `paired_condA.csv` + `paired_condB.csv` |
+| **One-sample** `onesampleT` | Within-subject A−B ≠ 0? | 2 wide files (A, B) | — | `ttest`(A−B) | `onesample_condA.csv` + `onesample_condB.csv`; or `onesample_change.csv` alone (single file vs 0) |
+| **Unpaired t** `unpairedT` | 2 independent groups differ? | 2 wide files (A, B), **group sizes may differ** | — | `ttest2` | `unpaired_groupA.csv` + `unpaired_groupB.csv` |
+| **Correlation P** `correlationP` | Linear EEG↔measure assoc? | 2 wide files, each w/ `Subject` | Subject col | Pearson `corr` | `corr_eeg.csv` + `corr_behavior.csv` |
 | **Correlation S** `correlationS` | Monotonic assoc (robust)? | as above | Subject col | Spearman `corr` | as above |
-| **Circular phase, 2 groups** `circ_phase_group` | Do 2 independent groups couple at a different phase? | 2 wide angle files in **radians** (**disjoint** Subject ids) **+ 2 wide event-count files** (GUI: *Event Count File*) | `circ_units`, `circ_convention`, `count1_file`, `count2_file` | covariate-adjusted Hotelling T² on (cos,sin), F(2, N−q−3) | `synthetic_gui/circ_phase_group{A,B}.csv` + `circ_phase_counts{A,B}.csv` |
-| **Circular phase, 2 groups (U²)** `circ_phase_group_u2` | As above, omnibus over the whole distribution | as above (**no whole-degree input**) | as above | Watson's U² (no covariate slot) | as above; also `synthetic_gui/circ_conc_group{A,B}.csv` + `circ_conc_counts{A,B}.csv` |
-| **Circular–linear** `circ_corrAngLinear` | Does a behavioural measure vary with phase? | 1 wide angle file + 1 measure file, **matched** Subject ids | `circ_units`, `circ_convention`, `measure_col` | circular–linear correlation (Mardia 1976), model F | `synthetic_gui/circ_anglinear_angles.csv` + `circ_anglinear_measure.csv` |
-| **One-way ANOVA** `anova1` | 3+ groups differ? | 1 file | `group_col` (≥2 lvls) | F vs `anova1` | `synthetic_gui/glm_anova1.csv` |
-| **ANCOVA** `ancova` | Groups differ adjusting covariates? | 1 file | `group_col` + `covariate_cols` | t (2 groups) / F (≥3, Freedman–Lane) | `synthetic_gui/glm_ancova.csv` (2 groups → t); `synthetic_gui/glm_ancova3.csv` (3 groups → F + pairwise post-hoc) |
-| **Regression** `regression` | Scales with a predictor? | 1 file | `predictor_col` (+ `covariate_cols`) | t on slope vs `fitlm` | `synthetic_gui/glm_regression.csv` |
-| **RM-ANOVA** `rmanova` | 3+ within conditions differ? | 1 file, long | `subject_col` + `condition_col` | F (within perm) | `synthetic_gui/glm_rmanova.csv` |
-| **Two-way mixed ANOVA** `mixed2way` | Condition effect differs between groups? | 1 file, long | `group_col` + `subject_col` + `condition_col` | F on interaction | `synthetic_gui/glm_mixed2way.csv` |
-| **Mixed model** `mixedmodel` | Trial-level effect (many obs/subject)? | 1 long file | `Subject` + DV + fixed + effect | `fitlme` t/F (Stephan 2021) | `synthetic_gui/lmm_long.csv` |
-| **Source-level t** (any wide t-test with Recording system `source2447`) | Which cortical voxels differ? | wide file(s), cols `src0001..src2447` (magnitudes) | — (same as the scalp t-test) | permutation t + TFCE + cluster-**extent**, on the source graph | `gen_synthetic_source.m` → `test_source_snpm` |
+| **Circular phase, 2 groups** `circ_phase_group` | Do 2 independent groups couple at a different phase? | 2 wide angle files in **radians** (**disjoint** Subject ids) **+ 2 wide event-count files** (GUI: *Event Count File*) | `circ_units`, `circ_convention`, `count1_file`, `count2_file` | covariate-adjusted Hotelling T² on (cos,sin), F(2, N−q−3) | `circ_phase_groupA.csv`, `circ_phase_groupB.csv` + `circ_phase_countsA.csv`, `circ_phase_countsB.csv` |
+| **Circular phase, 2 groups (U²)** `circ_phase_group_u2` | As above, omnibus over the whole distribution | as above (**no whole-degree input**) | as above | Watson's U² (no covariate slot) | as above; also `circ_conc_groupA.csv`, `circ_conc_groupB.csv` + `circ_conc_countsA.csv`, `circ_conc_countsB.csv` |
+| **Circular–linear** `circ_corrAngLinear` | Does a behavioural measure vary with phase? | 1 wide angle file + 1 measure file, **matched** Subject ids | `circ_units`, `circ_convention`, `measure_col` | circular–linear correlation (Mardia 1976), model F | `circ_anglinear_angles.csv` + `circ_anglinear_measure.csv` |
+| **One-way ANOVA** `anova1` | 3+ groups differ? | 1 file | `group_col` (≥2 lvls) | F vs `anova1` | `glm_anova1.csv` |
+| **ANCOVA** `ancova` | Groups differ adjusting covariates? | 1 file | `group_col` + `covariate_cols` | t (2 groups) / F (≥3, Freedman–Lane) | `glm_ancova.csv` (2 groups → t); `glm_ancova3.csv` (3 groups → F + pairwise post-hoc) |
+| **Regression** `regression` | Scales with a predictor? | 1 file | `predictor_col` (+ `covariate_cols`) | t on slope vs `fitlm` | `glm_regression.csv` |
+| **RM-ANOVA** `rmanova` | 3+ within conditions differ? | 1 file, long | `subject_col` + `condition_col` | F (within perm) | `glm_rmanova.csv` |
+| **Two-way mixed ANOVA** `mixed2way` | Condition effect differs between groups? | 1 file, long | `group_col` + `subject_col` + `condition_col` | F on interaction | `glm_mixed2way.csv` (2×2); `glm_mixed2way_2x3.csv` (2×3) |
+| **Mixed model** `mixedmodel` | Trial-level effect (many obs/subject)? | 1 long file | `Subject` + DV + fixed + effect | `fitlme` t/F (Stephan 2021) | `lmm_long.csv` |
+| **Source-level t** (any wide t-test with Recording system `source2447`) | Which cortical voxels differ? | wide file(s), cols `src0001..src2447` (magnitudes) | — (same as the scalp t-test) | permutation t + TFCE + cluster-**extent**, on the source graph | none ships — source input comes from your own GeoSource export (see the [how-to](../how-to/run-a-source-level-analysis.md)) |
 
 **Circular tier (`core_snpm_circ`).** Routed from `core_snpm_analysis` by an early guard, like the
 GLM and LMM tiers — the three keys above are **not** `compstring` cases and must not be added to
@@ -72,9 +83,10 @@ Permutation scheme is **Freedman–Lane on the stacked (cos,sin) response**, `fr
 relabelling) — between-subject only; there is no within-subject circular scheme yet. Cluster
 statistic is **mass**. There is **no global/omnibus test** (arithmetic channel averaging is
 meaningless for angles); a **descriptive**, explicitly no-inference circular panel is emitted
-instead. Verified by `test_circ_snpm` (recovery + null-design and permutation-scheme negative
-controls, precision-confound control, convention/inversion guards) and `test_circ_stats`
-(statistics vs independent references). Background:
+instead. This tier was checked the same way as the rest: the three statistics against independent
+references, and end-to-end planted-phase-shift recovery with null-design and
+permutation-scheme negative controls, a precision-confound control, and the
+convention/inversion guards. Background:
 [About circular statistics for phase](../explanation/circular-statistics-for-phase.md); task
 guide: [Run a circular (phase) analysis](../how-to/run-a-circular-phase-analysis.md).
 
@@ -127,7 +139,7 @@ t-tests (`snpm_cluster_analysis`). Cluster **mass** applies only to the source *
   observed statistic and its null were computed at different sample sizes. Measured family-wise
   error at 40% disjoint missingness was **0.288** against a nominal 0.05; it is now **0.050**.
   Complete-data results are bit-identical to before, so no existing complete-data analysis
-  changes. Guarded by `test_perm_invariant`.
+  changes.
 - **`per_channel_n` changed meaning.** It is now computed **after** the mask: a retained channel
   reports the full analysed n, an excluded channel reports 0. That is the n actually used in the
   statistic, but it is not the old pairwise count — if you are comparing output from before and
@@ -154,10 +166,10 @@ t-tests (`snpm_cluster_analysis`). Cluster **mass** applies only to the source *
   0.112, and a paired test with *different* regions missing in the two conditions ran at
   **1.000**; under the rule all configurations return to 0.047–0.053. The reported `n_channels` /
   `channels_kept` say what the average was taken over. No-op for the correlation path (its
-  complete-column mask already makes the two sets identical) and no-op on complete data. Guarded
-  by `test_global_common_channels`, which asserts the property the old code violated rather than a
-  golden number: given the retained set, the global statistic is bit-identical whether or not the
-  dropped cells were ever dropped. When no channel is common to both arms the statistic is
+  complete-column mask already makes the two sets identical) and no-op on complete data. The
+  property that was checked is the one the old code violated, rather than a golden number: given
+  the retained set, the global statistic is bit-identical whether or not the dropped cells were
+  ever dropped. When no channel is common to both arms the statistic is
   **NaN with a `global_stat_test:noCommonChannel` warning**, not a number — the channel-wise maps
   are unaffected.
 - **Repeated-measures guard.** The between-subject GLM presets (`anova1`, `ancova`,
@@ -193,7 +205,8 @@ sig_uncorr, sig_TFCE, in_sig_cluster, cluster_id, cluster_p`) plus the same tabl
 `sigVoxels` sheet in the `.xlsx`; `results_struct.is_source` is set true. **Coordinates are
 PLACEHOLDER** (graph-Laplacian layout in `source2447_coords.mat`) until the real GeoSource MNI
 export is dropped in — the statistics, significance flags and cluster membership are exact; only
-the `X/Y/Z` columns are placeholder. `test_source_snpm` asserts stats/flags/membership only.
+the `X/Y/Z` columns are placeholder, and the source path was checked on stats, flags and cluster
+membership only, never on the coordinates.
 
 **Reading the cluster output:** the GLM/LMM presets score a cluster by **mean Wald**
 (`sum(Wald)/n_channels`, height-weighted) while the legacy t-tests score by **extent** (size),
@@ -211,17 +224,21 @@ LMM-vs-GLM cost decision) are discussed in the explanation
 [Choosing an analysis: design, missing data, and cost](../explanation/choosing-an-analysis.md).
 That page also carries the sleep-question → preset cheat-sheet and the method-grounding references.
 
-## Known gaps (flagged by the tests)
+## Known gaps
 - **No within-subject circular scheme.** The circular tier is between-subject only: the
   permutation relabels whole subjects. Two angle files containing the *same* subjects is a
   within-subject design and is not yet supported — use the signed linearised measure with
   `pairedT`/`rmanova` instead.
-- **Event-bridge group recovery (~25%)**: `test_event_group` is a known XFAIL — its
-  `planted_truth` channel indices don't match the analysed 178-subset (a fixture issue; the
-  core `anova1` engine is correct per `test_glm_snpm`). Revisit with the TurtleWave importer.
+- **The TurtleWave event bridge has no end-to-end check.** The `db_to_group_table.py` →
+  `anova1` route is not covered by an end-to-end recovery check: the only such check ever built
+  used channel indices that did not line up with the analysed 178-channel subset, so it never
+  demonstrated anything. The `anova1` engine underneath it is checked (against MATLAB's
+  `anova1`), but the *bridge* — that the exported table's channel columns land where you think
+  they do on the montage — is not. Verify the column ordering yourself against
+  `hdeeg_scalpchannels` before trusting an event-bridge topography.
 - **Source coordinates are PLACEHOLDER**: `source2447_coords.mat` is a deterministic graph-
   Laplacian layout, **not real MNI space**. The permutation statistics, significance flags and
-  cluster membership are exact and validated (`test_source_snpm`), but the `X/Y/Z` columns in
+  cluster membership are exact and were checked directly, but the `X/Y/Z` columns in
   `_sigvoxels.csv` are placeholder until the real GeoSource MNI export (2447 rows: `label,X,Y,Z`
   in graph-node order) replaces the asset via `build_source2447_coords`. Report **regional**, not
   per-voxel, results — sLORETA leakage / low spatial resolution and volumetric adjacency that

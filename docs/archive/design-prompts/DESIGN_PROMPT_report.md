@@ -73,8 +73,8 @@ polished style, adapted to one comparison.
 
 ## Verify when it returns (do this before relying on it)
 - `matlab -batch "checkcode('dependencies/generateAnalysisReport.m')"` — no errors.
-- `matlab -batch "test_all"` — `VERIFY: ALL GREEN` (the `outputs-asserted` check confirms each analysis
-  still writes `<base>_report.html`).
+- The full verification suite of the time — all checks green (its output-file check confirms each
+  analysis still writes `<base>_report.html`).
 - Regenerate a sample (run a `unpairedT` + an `anova1` to a folder) and open the two `_report.html`
   files: confirm the **Uncorrected/TFCE/Cluster** toggle, the channel + p-value tables, and the
   F-map + post-hoc for the ANOVA. The page should have **no** stage/band/power selectors.

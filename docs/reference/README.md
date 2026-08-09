@@ -8,17 +8,17 @@ completely. They do not teach (see [tutorials](../tutorials/README.md)) or walk 
 
 - **[Analysis catalog](ANALYSIS_CATALOG.md)** — the source of truth. One row per analysis:
   research question, what to import, required columns/roles, the statistic and its reference,
-  its test fixture, and what it outputs. The backbone of this quadrant.
+  its example-data file, and what it outputs. The backbone of this quadrant.
 
-## Reference that lives next to the code it describes
+## Reference that lives next to the files it describes
 
 Two reference documents are colocated with the assets they describe (kept there on purpose so
 they stay in sync with the files):
 
-- **Synthetic fixtures** — `test_data/synthetic_gui/README.md`. Maps each synthetic file →
-  analysis → GUI settings. Every file plants a 17-channel neighbour cluster near E129 on the
-  EGI 256 montage. `test_data/` is git-ignored, so run `gen_synthetic_testdata` to create the
-  folder and that README.
+- **Example data** — [`example_data/README.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/example_data/README.md)
+  (on GitHub; outside this site). Maps each example file → analysis → GUI settings. Every file
+  plants a 17-channel neighbour cluster near E129 on the EGI 256 montage. The folder is in the
+  repository — nothing needs generating.
 - **Headless / HPC scripts** — [`scripts/README_scripts.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/scripts/README_scripts.md) (on GitHub; outside this site).
   Which `run_*.m` template runs which analysis/engine, the column-role table per preset, the
   spectral-folder-as-factor model, and cluster-submission notes.
@@ -58,7 +58,7 @@ snpm_perm_correction(real_stat, real_p, perm_stat_fn, neighbors, E, H, alpha, ..
 
 `dh` is positioned **after** `evaluable`, so **to set `dh` while leaving all channels evaluable,
 pass `[]` for `evaluable`**. The Watson U² path (`core_snpm_circ`) is the only caller that sets
-it, at `dh = 0.005`; every t- and F-scale caller omits it. Pinned by `test_circ_snpm` T2.
+it, at `dh = 0.005`; every t- and F-scale caller omits it.
 
 `params.tail` ∈ `both` / `left` / `right` for the legacy t-tests and correlations. The GLM
 and LMM presets pick statistic, contrast and permutation scheme automatically from the design.

@@ -54,7 +54,9 @@ peer-reviewed; SnPM reimplements the permutation math). SnPM is partly redundant
 
 ## Where EEG_Processor is arguably better
 
-- PALM is peer-reviewed and heavily validated; SnPM must earn trust through its own test suite.
+- PALM is peer-reviewed and heavily validated by a large user base. This toolbox rests on its own
+  internal validation against MATLAB's builtins, which is neither peer-reviewed nor distributed
+  with the code, so you are taking more on trust here than you are with PALM.
 - Integrated: preprocess + analyze in one app, one BIDS tree, no file bridging.
 - General design-matrix builder can express arbitrary models (multi-level exchangeability,
   variance groups, synchronized permutation across contrasts) beyond SnPM's preset menu.

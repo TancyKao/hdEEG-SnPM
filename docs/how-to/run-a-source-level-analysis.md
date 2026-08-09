@@ -107,9 +107,22 @@ Keep node order == graph node order; `snpm_assert_source` enforces `src0001..src
 sequence and checks the coordinate labels agree. After the swap the `X/Y/Z` columns in
 `_sigvoxels.csv` are real MNI.
 
-## Verify
+## Check your own run
 
-`matlab -batch "test_source_snpm"` — graph sanity + assert guards, planted-cluster recovery
-(TFCE + cluster-extent), pure-null and scheme-mismatch negative controls, per-voxel t vs MATLAB
-`ttest`, and the magnitude guard. See the [analysis catalog](../reference/ANALYSIS_CATALOG.md)
-for the full source-space input/output contract.
+No example source file ships with the repository — source input is a site-specific GeoSource
+export — so check the run against your own data:
+
+- The console reports how many of the 2447 columns were matched and accepted; it should be all
+  of them. `snpm_assert_source` throws rather than silently reordering, so a run that starts has
+  already agreed that columns, graph nodes and coordinates are the same voxels in the same order.
+- Confirm your export is non-negative band-power magnitude, not signed current density: the
+  `absolute` group t-test rejects negative input with `snpm:source:signedMagnitude`.
+- Read `_sigvoxels.csv`, not a topoplot — no scalp PNGs are produced on this path — and treat
+  `X/Y/Z` as placeholder unless you have swapped in the real MNI coordinates above.
+
+For the record, the source path was checked during development on synthetic data with a planted
+voxel cluster: graph sanity and the assert guards, cluster recovery under TFCE and
+cluster-extent, pure-null and permutation-scheme-mismatch negative controls, per-voxel t against
+MATLAB's `ttest`, and the magnitude guard. See the
+[analysis catalog](../reference/ANALYSIS_CATALOG.md) for the full source-space input/output
+contract.

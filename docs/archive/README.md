@@ -3,8 +3,8 @@
 These files are a **frozen record** of how the toolbox was built: planning notes, changelogs,
 and the prompts handed to design assistants. They are kept for provenance and to explain *why*
 decisions were made, but they are **not maintained** and may have drifted from the current
-source. Do not follow them as instructions. For what changed in each release, see the
-[changelog](https://github.com/TancyKao/hdEEG-SnPM/blob/main/CHANGELOG.md).
+source. Do not follow them as instructions. Releases are tagged in the repository; see the
+[release history](https://github.com/TancyKao/hdEEG-SnPM/releases).
 
 If you want to *use* the tool, start at the [docs index](../README.md):
 

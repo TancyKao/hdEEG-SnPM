@@ -1,8 +1,7 @@
 # Documentation
 
 **Version 1.0.0** · MATLAB toolbox for permutation-based (TFCE and cluster) statistics on
-high-density EEG topographies · [source on GitHub](https://github.com/TancyKao/hdEEG-SnPM) ·
-[changelog](https://github.com/TancyKao/hdEEG-SnPM/blob/main/CHANGELOG.md)
+high-density EEG topographies · [source on GitHub](https://github.com/TancyKao/hdEEG-SnPM)
 
 This documentation is organised with the [Diátaxis](https://diataxis.fr) framework: four kinds
 of material, each serving a different need. Pick by what you're trying to do right now.
@@ -57,8 +56,8 @@ Background reading; the *why* behind the design.
 
 Planning notes, the v2.0 changelog, and design-assistant prompts are kept in
 [`archive/`](archive/README.md) for provenance. They are **frozen history**, not maintained
-user documentation — don't follow them as instructions. For what changed in each release, see
-the [changelog](https://github.com/TancyKao/hdEEG-SnPM/blob/main/CHANGELOG.md).
+user documentation — don't follow them as instructions. Releases are tagged in the repository;
+see the [release history](https://github.com/TancyKao/hdEEG-SnPM/releases).
 
 ## Two READMEs live outside `docs/`
 
@@ -71,5 +70,4 @@ links below go to the files on GitHub:
 - `test_data/synthetic_gui/README.md` — the synthetic fixtures (reference). `test_data/` is
   git-ignored, so this one only exists after you run `gen_synthetic_testdata`, which writes it.
 
-The project architecture and conventions live in the repository's
-[`CLAUDE.md`](https://github.com/TancyKao/hdEEG-SnPM/blob/main/CLAUDE.md).
+The reference section below is the source of truth for how each analysis is wired.

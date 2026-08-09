@@ -28,7 +28,7 @@ function [F, p, df1, df2, extra] = snpm_circ_hotelling(A, g, Cnuis, opts)
 % At q = 0 (no covariates) this reduces exactly to the classical unadjusted
 % two-sample form, T2 = (n1 n2 / N) d' S^-1 d with S the pooled covariance on
 % nu = N - 2 df, and F = T2 (N - 3) / (2 (N - 2)) on F(2, N - 3). That
-% identity is asserted to machine precision in test_circ_stats.
+% identity was validated to machine precision against the classical T^2.
 %
 % INPUTS
 %   A     : nSubj x nCh angles in RADIANS. NaN = missing at that channel.
@@ -37,7 +37,7 @@ function [F, p, df1, df2, extra] = snpm_circ_hotelling(A, g, Cnuis, opts)
 %           contrast is (second level) - (first level), where the levels are
 %           taken in sorted/category order; extra.levels records which is
 %           which. The statistic is invariant to that choice (see the group
-%           symmetry check in test_circ_stats), so it only affects labelling.
+%           group-symmetry check), so it only affects labelling.
 %   Cnuis : nSubj x q numeric nuisance covariates, or [] (default). Must NOT
 %           contain an intercept column — one is added. Rows with NaN in
 %           Cnuis are dropped at every channel.

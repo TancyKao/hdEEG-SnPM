@@ -64,7 +64,7 @@ function [Y, info, Ttab] = snpm_circ_linearise(A, measure, opts)
 % scored against a null built from the other channels only, and its corrected
 % p is not a corrected p at all. Dropping the whole column makes the channel
 % NaN on both sides, which is the honest and correct outcome. This behaviour
-% is asserted against the Freedman-Lane path in test_circ_stats.
+% was validated against the Freedman-Lane path.
 %
 % INPUTS
 %   A       : nSubj x nCh angles. RADIANS by default; set opts.units='deg'

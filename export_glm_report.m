@@ -13,7 +13,7 @@ function export_glm_report(DATA, OUT, opts)
 %   The preset's contrast type (from snpm_glm_design) chooses t vs F, so ANCOVA
 %   reuses the ANOVA (3+ group) or t (2-group) report with no template of its own.
 %
-%   DATA : folder from gen_synthetic_spectral_glm.m
+%   DATA : folder of per-subject spectral .mat files
 %            subjects.csv  (Subject + group/group2/predictor/covariate columns)
 %            <stage>_<power>_<band>.csv  (Subject + E1..E256)
 %            gmPSD_<stage>_<power>.csv   (Subject + f_<hz>)   [periodogram]

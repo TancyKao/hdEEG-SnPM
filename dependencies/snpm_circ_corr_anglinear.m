@@ -17,7 +17,7 @@ function [F, p, df1, df2, rho, extra] = snpm_circ_corr_anglinear(y, A, Cnuis, op
 % CircStat's circ_corrcl returns rho with rho^2 exactly equal to the R^2 of y
 % regressed on [1, cos a, sin a]. So the covariate-free F here is precisely
 % the model F of that regression, and rho is recovered as sqrt(R^2). Both
-% identities are asserted to 1e-10 in test_circ_stats.
+% identities were validated to 1e-10 against independent references.
 %
 % rho IS DESCRIPTIVE ONLY, and is reported for the raw (covariate-free) fit
 % so that it matches what circ_corrcl would return. Two properties to state

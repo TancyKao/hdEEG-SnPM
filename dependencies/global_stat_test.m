@@ -47,7 +47,7 @@ function [G] = global_stat_test(data_x, data_y, alpha,comparison,tail,ncov)
 % matrices and a retained one is finite in every row. The intersection computed
 % here is therefore exactly the retained set, and averaging over it is bitwise
 % identical to the previous mean(...,'omitnan') -- adding an exact zero in the
-% omitnan accumulation is exact. Pinned by test_global_common_channels (C5).
+% omitnan accumulation is exact, so the rule is a no-op for that path.
 %
 % FINITE, NOT MERELY NON-NaN: datatype 'logscale' turns a zero-power cell into
 % log10(0) = -Inf, which passes ~isnan and would drag the whole average to -Inf.

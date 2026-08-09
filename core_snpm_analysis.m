@@ -923,7 +923,7 @@ function [results_struct, results_text] = core_snpm_analysis(params)
         % analysis silently switched estimator as soon as a covariate was added.
         % Rank-then-residualize IS what partialcorr(x,y,Z,'Type','Spearman')
         % computes, so the map is now checkable against a builtin to machine
-        % precision. Pinned by test_perm_invariant T9 (map == partialcorr to
+        % precision. Validated against partialcorr (map == partialcorr to
         % 1e-12) and T10 (the same equality end-to-end through this function),
         % and by the estimator note printed in T5.
         %
@@ -1168,7 +1168,7 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     %                         channel, 0 on every excluded one. The name is kept
     %                         (rather than renamed to n_analysed) because it is
     %                         the published field: func_genSnpmTable's
-    %                         'effectiveN' sheet, test_perm_invariant's
+    %                         'effectiveN' sheet, the effective-N
     %                         excluded==0 / retained==n assertion, and
     %                         core_snpm_circ all speak it.
     %   .n_available          PRE-mask matched pairs per channel: the genuinely

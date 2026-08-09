@@ -10,15 +10,15 @@
 % ======================= CONFIG (edit me) =======================
 ROOT        = fileparts(fileparts(mfilename('fullpath')));   % scripts/ -> repo root
 if isempty(ROOT), ROOT = pwd; end
-data_file   = fullfile(ROOT,'test_data','lmm_long.csv');   % long format: meta cols + channel cols
-output_dir  = fullfile(ROOT,'test_data','results_lmm');
+data_file   = fullfile(ROOT,'example_data','lmm_long.csv'); % long format: meta cols + channel cols
+output_dir  = fullfile(ROOT,'results_lmm');
 
 channels    = '178 channels';   % '164 channels' | '178 channels'
 datatype    = 'absolute';       % absolute|logscale|normalize
 permutations= 100;
 tail        = 'both';           % both|right|left
 
-% model spec (per-channel value enters as POWER; see test_lmm_snpm.m)
+% model spec (the per-channel value enters the formula as POWER)
 lmm_dv          = 'sleepDepth';     % dependent variable column (behaviour), OR 'POWER' if modelling power
 lmm_fixed       = 'POWER*group';          % fixed-effect terms, e.g. 'POWER' or 'group*POWER + age'
 lmm_random      = '(1|Subject)';    % random-effect spec

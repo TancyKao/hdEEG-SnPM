@@ -23,7 +23,7 @@ function TFCEdata = ClusterEnhancement(unenhanced_data,sparse_channel_adjacency_
 % auto-detect and not a flag, so existing callers get the saving without a
 % signature change.
 %
-% Pinned by test_cluster_enhancement_identity.m (isequaln against goldens
+% Validated by isequaln against stored golden maps (
 % captured before the 2026-08 edit).
 
 %%default

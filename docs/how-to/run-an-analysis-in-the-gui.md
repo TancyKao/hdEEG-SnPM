@@ -29,9 +29,23 @@ Use the **Data source** toggle:
 2. Load your table(s). For the single-file GLM presets (`anova1` / `ancova` / `regression` /
    `rmanova` / `mixed2way`) only **Data File** shows — Data 2 is hidden. For the legacy
    two-file tests, load **Data 1** and **Data 2** (condition A/B, group A/B, measure 1/2, or
-   angles A/B, per the analysis).
-3. On load, the GUI auto-detects columns: `^E\d+$` / `Cz` are treated as channels, everything
-   else as metadata. Check the **Detected: N channels, M metadata columns** caption.
+   angles A/B, per the analysis). For the **correlations**, Data 2 may be either a second
+   subjects × channels file or just a `Subject` column plus **one** behavioural measure column
+   (e.g. a reaction time) — the single value is broadcast across Data 1's channels. A file with
+   several unrecognised columns is matched to Data 1 **by position** if the widths agree
+   (with a caveat banner in the report) and refused otherwise, so keep a behavioural file to one
+   measure column. For an EEG-vs-behaviour run keep **Data Type = `absolute`**, as the GUI
+   hint says: under `normalize` each subject's EEG row is z-scored across channels and sums to
+   zero, so the single-score r-map is forced to balance positive against negative channels and
+   a global association cannot show; the run warns, marks the results text `CAVEAT:` and puts an
+   amber **Data Type caveat** banner in the report (see the
+   [catalog](../reference/ANALYSIS_CATALOG.md)). For **any** two-file comparison, Data 1 must be
+   `Subject` plus channel columns only — a metadata column there shifts the channel pairing and
+   the run refuses with `snpm:correlation:channelOrderMismatch` naming the column.
+3. On load, the GUI auto-detects columns with the same classifier the engine uses
+   (`snpm_detect_behavior_table`): a column is a channel if its name matches `^E\d+$` or `Cz`
+   (case-insensitive) **or** is a label of any recording system in `snpm_montage_registry`;
+   everything else is metadata. Check the **Detected: N channels, M metadata columns** caption.
 4. Set the **Recording system** to match your channel labels — `E1..E256` / `Cz` → EGI 256
    (HydroCel); `Fp1..` → Compumedics 257. The channel count must match the montage.
 5. Map the **column roles** the analysis needs (only the required pickers are shown):

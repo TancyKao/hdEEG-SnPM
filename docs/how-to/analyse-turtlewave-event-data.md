@@ -80,7 +80,10 @@ ordinary linear measure. It feeds:
 | group × condition | `mixed2way` |
 
 Run these from the GUI, or headless with `run_glm_analysis.m`, which joins one
-`eventStat_*.csv` to `subjects.csv` on `Subject`.
+`eventStat_*.csv` to `subjects.csv` on `Subject`. For `correlationP`/`correlationS`, Data 2
+can be just a `Subject` column plus **one** behavioural measure column (a reaction time, a
+memory score) — the value is broadcast across the channels; no need to copy it into a fake
+channels table.
 
 **Event level** — one row per detected event, with subject, group and covariates repeated down
 the rows. That is repeated-measures data and belongs in the per-channel linear mixed model,

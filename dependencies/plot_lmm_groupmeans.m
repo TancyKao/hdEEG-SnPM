@@ -23,7 +23,7 @@ function levels = plot_lmm_groupmeans(y, group, ylab, out_png)
         levels{g} = lev2str(glev, g);
     end
 
-    fig = figure('Position', [50 50 560 440], 'Color', 'w', 'PaperPositionMode', 'auto');
+    fig = figure('Position', [50 50 560 440], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
     cl = onCleanup(@() close(fig)); %#ok<NASGU>
     bar(1:nG, mu, 0.6, 'FaceColor', [0.12 0.43 0.55], 'EdgeColor', 'none'); hold on;
     errorbar(1:nG, mu, se, 'k', 'LineStyle', 'none', 'LineWidth', 1.2, 'CapSize', 10);

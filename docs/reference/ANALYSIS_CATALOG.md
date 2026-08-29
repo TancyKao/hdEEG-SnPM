@@ -52,7 +52,7 @@ repo root, which is in the repository — there is nothing to generate.
 | **Paired t** `pairedT` | Same people, 2 conditions differ? | 2 wide files (A, B), row-matched | — | paired `ttest` | `paired_condA.csv` + `paired_condB.csv` |
 | **One-sample** `onesampleT` | Within-subject A−B ≠ 0? | 2 wide files (A, B) | — | `ttest`(A−B) | `onesample_condA.csv` + `onesample_condB.csv`; or `onesample_change.csv` alone (single file vs 0) |
 | **Unpaired t** `unpairedT` | 2 independent groups differ? | 2 wide files (A, B), **group sizes may differ** | — | `ttest2` | `unpaired_groupA.csv` + `unpaired_groupB.csv` |
-| **Correlation P** `correlationP` | Linear EEG↔measure assoc? | 2 wide files, each w/ `Subject` | Subject col | Pearson `corr` | `corr_eeg.csv` + `corr_behavior.csv` |
+| **Correlation P** `correlationP` | Linear EEG↔measure assoc? | 2 files: Data 1 wide w/ `Subject`; Data 2 either wide (channel *i* vs channel *i*) **or** `Subject` + ONE behavioural column (broadcast across Data 1's channels) | Subject col | Pearson `corr` | `corr_eeg.csv` + `corr_behavior.csv` (wide) or + `corr_behavior_single.csv` (single behavioural column) |
 | **Correlation S** `correlationS` | Monotonic assoc (robust)? | as above | Subject col | Spearman `corr` | as above |
 | **Circular phase, 2 groups** `circ_phase_group` | Do 2 independent groups couple at a different phase? | 2 wide angle files in **radians** (**disjoint** Subject ids) **+ 2 wide event-count files** (GUI: *Event Count File*) | `circ_units`, `circ_convention`, `count1_file`, `count2_file` | covariate-adjusted Hotelling T² on (cos,sin), F(2, N−q−3) | `circ_phase_groupA.csv`, `circ_phase_groupB.csv` + `circ_phase_countsA.csv`, `circ_phase_countsB.csv` |
 | **Circular phase, 2 groups (U²)** `circ_phase_group_u2` | As above, omnibus over the whole distribution | as above (**no whole-degree input**) | as above | Watson's U² (no covariate slot) | as above; also `circ_conc_groupA.csv`, `circ_conc_groupB.csv` + `circ_conc_countsA.csv`, `circ_conc_countsB.csv` |
@@ -106,6 +106,81 @@ yet source-wired** — run those on scalp montages. TFCE is the primary correcti
 statistic on the source **t-test** path is cluster **extent** (size), the same as the scalp
 t-tests (`snpm_cluster_analysis`). Cluster **mass** applies only to the source **LMM** path
 (`core_snpm_lmm`, mean-Wald).
+
+**Data 1 / Data 2 headers for every two-file legacy comparison** (`pairedT`, `unpairedT`,
+two-file `onesampleT`, `correlationP`, `correlationS`). Channel selection is matched on
+**Data 1's header** and the same column positions are applied to Data 2, so Data 1 must be
+`Subject` plus channel columns **only** — a metadata column in one file and not the other
+shifts every channel position. The width and order guards below therefore run for **all** of
+these comparisons (they used to run only for the correlations); one-sample-vs-zero (no Data 2)
+skips them. A single-measure Data 2 (`Subject` + one score) under a **t-test** is refused
+(`snpm:data2:behaviorNotSupported`): one value per subject can only be broadcast for a
+correlation.
+
+**Data 2 for the correlations (`correlationP`/`correlationS`).** Data 2's shape is classified
+from its column **names** alone (`snpm_detect_behavior_table`, shared by the engine and the GUI;
+the ID column is the **first** column whose name contains `subject`, and only that one — so a
+measure named `SubjectiveSleepiness` next to `Subject` is data, not a second ID). How the file
+was matched is recorded in **`results_struct.data2_matched`**, one of three modes:
+
+- **`label`** — *montage table*: a clear majority of the data columns are recognised channel
+  labels (`E1..`, `Cz`, or a registry label). Channel *i* of Data 1 is correlated with channel
+  *i* of Data 2, matched **by label**. Two montage files of the same width whose channel
+  columns are not the same labels in the same order error out
+  (`snpm:correlation:channelOrderMismatch`, listing the first disagreeing positions, with a
+  `LIKELY CAUSE` clause naming any non-channel column Data 1 carries): channel selection is
+  matched on Data 1's header and the same column positions are applied to Data 2, so a
+  silently mis-ordered Data 2 would produce a wrong map with nothing in the output to show it.
+  Remove the metadata column from Data 1 (a covariate belongs in the covariate file) or
+  re-export Data 2 in Data 1's column order. The id keeps its `correlation:` prefix for
+  back-compatibility although it now fires for the t-tests too.
+- **`behavior`** — *behavioural table*: a `Subject` column plus exactly **one** non-channel
+  measure column (a reaction time, a memory score). The value is broadcast across Data 1's
+  channels after channel setup, so the map is `corr(EEG(:,ch), measure)` per channel; with
+  covariates it equals `partialcorr` (`'Type','Spearman'` for `correlationS`).
+- **`positional`** — *unrecognised column names* (a renamed or lowercased montage export such as
+  `e1..e256` or `E1_density..`, or a behavioural file with a stray extra column). If the
+  data-column count **equals** Data 1's, the table is matched to Data 1 **by position** — the
+  pre-existing behaviour — with a warning (`snpm:correlation:unrecognisedData2Columns`), an
+  amber caveat banner in the HTML report and a results-text note: the run cannot verify that
+  column *i* really is the same channel in both files. If the count **differs**, the run errors
+  (`snpm:correlation:widthMismatch`) naming the columns actually found and describing both
+  accepted formats. (The former `snpm:behavior:multipleColumns` error is **retired** — the
+  ambiguous several-unrecognised-columns case is resolved by width, not thrown.)
+
+Behaviour-mode contract details: a non-numeric measure column errors
+(`snpm:behavior:nonNumeric`); a zero-variance measure errors (`snpm:behavior:constant`); a
+subject with a **missing** measure value is dropped whole with a warning
+(`snpm:behaviorNaNRows`) and counted in `results_struct.subject_matching.behavior_nan_removed`
+— see [Missing data](../explanation/missing-data-and-excluded-channels.md). The measure's
+column name becomes the reported "Data 2" name (`results_struct.behavior_col`) and part of the
+output filenames; note MATLAB's `readtable` normalises non-identifier headers, so a column
+exported as `MRRT (ms)` is read — and reported — as `MRRT_ms_`. In behaviour mode the
+`datatype` transform applies to the EEG only (a per-subject across-channel transform is
+undefined on a single value; choosing `normalize` in behaviour mode additionally raises
+`snpm:behavior:normalizeBroadcast` and surfaces the caveat in three places — a
+`results_struct.normalize_broadcast_caveat` field (present only when it applies), a
+`CAVEAT: ...` line in `results_text`, and an amber **Data Type caveat** banner in the HTML
+report — for the reason given next), and the Condition-B topography
+is omitted from the report (`results_struct.hide_condition_b`). A Data 2 with no data column at
+all (an ID column only, or an unreadable header) errors at classification
+(`snpm:behavior:noDataColumns`). Only the **first** column whose name contains `subject` is
+stripped as the ID from each file; any other non-numeric column that survives (a second text
+ID such as `SubjectID`) errors `snpm:nonNumericDataColumn`, naming the column.
+
+**Use `datatype = 'absolute'` for EEG-vs-behaviour runs.** Under `'normalize'` each subject's
+EEG row is z-scored across channels and therefore sums to zero — and because the behavioural
+value is the *same* number at every channel, it follows algebraically that the resulting r-map
+must satisfy Σ<sub>c</sub> r<sub>c</sub>·sd<sub>c</sub> = 0: positive correlations somewhere force
+compensating negative ones elsewhere, so a genuinely **global** EEG–behaviour association can
+never appear as a uniformly-signed map (measured on random data: mean r ≈ −0.005 while
+mean |r| ≈ 0.24). Type-I control is intact — this costs power and interpretability, not
+validity, and it is specific to the broadcast format (a two-montage-file correlation has no such
+constraint). Relatedly, for **any** correlation run under `'normalize'` the whole-head global
+omnibus is analytically zero (the channel-averaged z-scored signal is 0 by construction), so
+the run flags it as not interpretable: `results_struct.global_not_interpretable`, warning
+`snpm:globalNotInterpretable`, and an amber note on the global card — read the channel-wise
+maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head number.
 
 ## Permutation p-values and sampling
 

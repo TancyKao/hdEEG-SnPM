@@ -70,7 +70,10 @@ function [fig, G] = plot_global_spectrum(root, opts)
     fmask = freqs <= fmax;
     f = freqs(fmask);
 
-    fig = figure('Color','w','Position',[60 60 720 420]); hold on;
+    % Created hidden so a batch/headless sweep never pops a window. This
+    % helper returns the handle, so it is made visible again at the end when
+    % no savepath was given (i.e. the caller is working interactively).
+    fig = figure('Color','w','Position',[60 60 720 420],'Visible','off'); hold on;
     colors = lines(max(acc.Count,1));
     gnames = keys(acc); G = struct('name',{},'freqs',{},'mean',{},'sem',{},'nsubj',{});
     h = [];
@@ -102,6 +105,8 @@ function [fig, G] = plot_global_spectrum(root, opts)
         fn = fullfile(opts.savepath, 'global_spectrum.png');
         print(fig, fn, '-dpng', '-r150');
         fprintf('Saved %s\n', fn);
+    else
+        set(fig, 'Visible', 'on');   % interactive use: no file requested
     end
 end
 

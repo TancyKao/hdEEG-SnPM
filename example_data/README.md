@@ -40,6 +40,23 @@ interaction) in one HTML report, each with its own permutation scheme.
 | One-sample (legacy A-B vs 0) | `onesample_condA.csv` | `onesample_condB.csv` |
 | Unpaired t-test | `unpaired_groupA.csv` | `unpaired_groupB.csv` |
 | Correlation (Pearson/Spearman) | `corr_eeg.csv` | `corr_behavior.csv` |
+| Correlation, behavioural single column | `corr_eeg.csv` | `corr_behavior_single.csv` (Subject + `MRRT`) |
+
+For a correlation, Data 2 may be EITHER a second subjects x channels montage file (channel i vs
+channel i) OR a Subject column plus ONE behavioural measure column, which is broadcast across
+Data 1's channels. `corr_behavior_single.csv`'s `MRRT` tracks the MEAN of the planted cluster
+(r ~ 0.97 with the cluster average), but one value per subject cannot correlate strongly with 17
+independent channels at once (per-channel ceiling 1/sqrt(17) ~ 0.24). What actually happens at
+2000 permutations: no TFCE- or cluster-corrected channel, about ten uncorrected channels at
+|r| ~ 0.4-0.5 scattered across the head, and a global correlation of r ~ 0.07, p ~ .7, because
+the omnibus averages all 177 analysed channels while the signal sits in 17 of them. This pair
+therefore demonstrates the plumbing of the broadcast route and the specificity of the correction
+(the noise channels are not promoted), not recovery of the planted cluster; use `corr_behavior.csv`
+(wide, channel i vs channel i) to see the cluster recovered. A subject with a missing behavioural value is dropped whole, with a
+warning (`snpm:behaviorNaNRows`) and a count in the outputs. Keep **Data Type = `absolute`**
+for EEG-vs-behaviour runs: under `normalize` each subject's EEG row is z-scored across channels
+and sums to zero, so the broadcast r-map is forced to balance positive against negative
+channels and a global association cannot show as a uniformly-signed map.
 
 ## Circular (phase / angle) analyses
 

@@ -66,6 +66,8 @@ function generateAnalysisReport(results_struct, params, base_filename, outputSna
     write_masthead(fid, results_struct, params, base_filename, statName, nperm);
     write_legend(fid, statName);
     write_excluded(fid, results_struct);
+    write_data2_matching(fid, results_struct);
+    write_normalize_broadcast(fid, results_struct);
     write_topographies(fid, results_struct, base_filename, statName);
     write_significance(fid, results_struct, base_filename, statSym, nperm, ...
         uncorrsigch, correctTFCEsigch, SnPMsigch);
@@ -234,19 +236,35 @@ function s = methods_line(rs, params, statName, nperm)
     elseif has(comp,'circ'),       phrase = 'Circular permutation';
     end
 
-    % tail
-    tail = 'two-tailed';
-    if isfield(params,'tail') && ~isempty(params.tail) && ischar(params.tail)
-        if ~strcmpi(params.tail,'both'), tail = 'one-tailed'; end
+    % TAIL. Only the legacy t-test / correlation paths have one. An F statistic
+    % (GLM omnibus, RM-ANOVA, interaction, LMM factor effect) and every circular
+    % statistic are non-negative omnibus quantities with no sidedness, so the
+    % tail wording is omitted for them rather than guessed; the GLM's 1-row t
+    % contrasts are evaluated two-sided (|t| against a max-|t| null in
+    % snpm_perm_correction) and read 'two-tailed'.
+    %
+    % params.tail is VALIDATED against the three real tail keywords rather than
+    % trusted, because core_snpm_glm used to park the contrast type ('t'/'F')
+    % in it purely to give this line something to print -- 'F' is not 'both',
+    % so every GLM report claimed "one-tailed". The overload is gone, but an
+    % older results .mat re-rendered through this function can still carry it.
+    tail = '';
+    if ~any(strcmp(statName, {'F', 'circ'}))
+        tail = 'two-tailed';
+        if isfield(params,'tail') && ~isempty(params.tail) && ischar(params.tail) ...
+                && any(strcmpi(params.tail, {'left','right'}))
+            tail = 'one-tailed';
+        end
     end
+    if isempty(tail), tail_clause = ''; else, tail_clause = [tail ', ']; end
     % data type
     dt = '';
     if isfield(params,'datatype') && ~isempty(params.datatype) && ischar(params.datatype)
         dt = [' of the ' esc(params.datatype) ' data'];
     end
 
-    s = sprintf('%s <b>%s</b>%s, tested channel by channel. <b>%s permutations</b>, %s, family-wise corrected with <b>TFCE</b> and <b>cluster-based</b> methods at <b>&alpha; = .05</b>.', ...
-        phrase, statword, dt, fmt_int(nperm), tail);
+    s = sprintf('%s <b>%s</b>%s, tested channel by channel. <b>%s permutations</b>, %sfamily-wise corrected with <b>TFCE</b> and <b>cluster-based</b> methods at <b>&alpha; = .05</b>.', ...
+        phrase, statword, dt, fmt_int(nperm), tail_clause);
 
     nc = n_clause(rs);
     if ~isempty(nc), s = [s ' &nbsp;<b>' nc '</b>.']; end
@@ -301,6 +319,65 @@ function write_excluded(fid, rs)
         esc(reason_txt));
     fprintf(fid, '  <div class="grp"><span class="k">Channels</span><span style="font-family:var(--mono);font-size:11.5px">%s</span></div>\n', ...
         esc(strjoin(labs(:)', ', ')));
+    fprintf(fid, '</div>\n');
+end
+
+% =========================================================================
+% HOW DATA 2 WAS MATCHED TO DATA 1'S CHANNELS (correlation only)
+%
+% 'positional' is a caveat on every number in the report -- Data 2's column
+% names were not recognised channel labels, so the pairing was taken on trust.
+% It is raised as a console warning too, but a headless scripts/ run throws its
+% console away, so it has to be visible in the artefact a reader keeps.
+% 'behavior' is stated for orientation (no channel-to-channel pairing exists);
+% the verified 'label' case says nothing, to keep the report quiet.
+% =========================================================================
+function write_data2_matching(fid, rs)
+    if ~isfield(rs, 'data2_matched') || isempty(rs.data2_matched), return; end
+    switch char(rs.data2_matched)
+        case 'positional'
+            fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
+            fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">' ...
+                'Data 2 matched by POSITION</span><span>Data 2''s column names are not ' ...
+                'recognised channel labels, so channel <i>i</i> of Data 1 was paired with ' ...
+                'Data 2''s <i>i</i>-th data column <b>on trust</b> &mdash; the pairing could ' ...
+                'not be checked.</span></div>\n']);
+            fprintf(fid, ['  <div class="grp"><span>If the two files do not list their channels ' ...
+                'in the same order, every value in this report is mis-paired. Re-export Data 2 ' ...
+                'with the recording system''s labels (E1, Cz, ...) to have the pairing verified ' ...
+                'by name.</span></div>\n']);
+            fprintf(fid, '</div>\n');
+        case 'behavior'
+            lab = 'a single behavioural measure';
+            if isfield(rs, 'behavior_col') && ~isempty(rs.behavior_col)
+                lab = sprintf('the behavioural measure <b>%s</b>', esc(rs.behavior_col));
+            end
+            fprintf(fid, '<div class="legend">\n');
+            fprintf(fid, ['  <div class="grp"><span class="k">Data 2</span><span>%s &mdash; one ' ...
+                'value per subject, correlated against every channel of Data 1. There is no ' ...
+                'channel-to-channel pairing in this analysis.</span></div>\n'], lab);
+            fprintf(fid, '</div>\n');
+    end
+end
+
+% =========================================================================
+% DATA TYPE 'normalize' + A BROADCAST BEHAVIOURAL SCORE
+%
+% Not a preference note. Per-subject z-scoring across channels forces each
+% subject's channels to average zero, which forces the sd-weighted sum of the
+% r-map to zero: a uniformly signed EEG-behaviour association is arithmetically
+% excluded, and the symmetric +/- map that results is the constraint, not a
+% finding. Raised as a console warning too (snpm:behavior:normalizeBroadcast),
+% but a headless scripts/ run throws its console away, so it has to be in the
+% artefact the reader keeps. Absent on every other run -- isfield-guarded.
+% =========================================================================
+function write_normalize_broadcast(fid, rs)
+    if ~isfield(rs, 'normalize_broadcast_caveat') || isempty(rs.normalize_broadcast_caveat)
+        return;
+    end
+    fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
+    fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">' ...
+        'Data Type caveat</span><span>%s</span></div>\n'], esc(char(rs.normalize_broadcast_caveat)));
     fprintf(fid, '</div>\n');
 end
 
@@ -371,8 +448,25 @@ function write_topographies(fid, rs, base, statName)
     fprintf(fid, '<section class="section">\n  <div class="head"><h2>Topographies</h2><span class="sub">Group / condition means and the statistic map</span></div>\n');
     fprintf(fid, '  <div class="topo-grid">\n');
     if hideB
-        write_fig_card(fid, [d1 '_topo.png'], 'Condition mean');
-        write_fig_card(fid, [base '_topo.png'], 'Effect (t vs 0)');
+        % Two different analyses hide condition B and they must not share one
+        % caption: a one-sample test against zero (the B map IS zero) and a
+        % correlation against a single behavioural score per subject (the B map
+        % is that score repeated at every channel, a flat disc). Captioning the
+        % latter "Effect (t vs 0)" would name a statistic the run never
+        % computed -- the map is r.
+        if strcmp(statName, 'r')
+            meanCap = 'Mean topography';
+            effCap  = 'r-map';
+            if isfield(rs, 'behavior_col') && ~isempty(rs.behavior_col)
+                meanCap = 'Mean topography &mdash; EEG';
+                effCap  = sprintf('r-map &mdash; EEG vs %s', esc(rs.behavior_col));
+            end
+        else
+            meanCap = 'Condition mean';
+            effCap  = 'Effect (t vs 0)';
+        end
+        write_fig_card(fid, [d1 '_topo.png'], meanCap);
+        write_fig_card(fid, [base '_topo.png'], effCap);
     else
         write_fig_card(fid, [d1 '_topo.png'], 'Mean topography &mdash; A');
         write_fig_card(fid, [d2 '_topo.png'], 'Mean topography &mdash; B');
@@ -742,8 +836,29 @@ function write_global(fid, rs, statName, nperm)
         note = 'Computed on the mean across all good channels &mdash; a single whole-head test, complementary to the channel-wise maps above.';
     end
 
+    % A global the engine has declared uninterpretable (correlation +
+    % datatype 'normalize': the channel average of a per-subject z-scored row is
+    % analytically zero, so the statistic is rounding noise) must not be shown
+    % as a headline number with no caveat. Say so first, in the amber style used
+    % for the other validity banners, and grey the card's note.
+    bad_global = isfield(rs, 'global_not_interpretable') && rs.global_not_interpretable;
+    if bad_global
+        gnote = ['The channel-averaged signal is analytically zero under this transform, so ' ...
+            'the value below is floating-point noise rather than a whole-head result.'];
+        if isfield(rs, 'global_note') && ~isempty(rs.global_note)
+            gnote = char(rs.global_note);
+        end
+        note = ['<b>Not interpretable.</b> ' esc(gnote)];
+        pcls = '';   % never paint a noise p-value as significant
+    end
+
     fprintf(fid, '<section class="section">\n');
     fprintf(fid, '  <div class="head"><h2>Global test</h2><span class="sub">Channel-averaged statistic</span></div>\n');
+    if bad_global
+        fprintf(fid, ['  <div class="legend" style="border-color:var(--amber);background:#fdf8ee">' ...
+            '<div class="grp"><span class="k" style="color:var(--amber)">Global test not ' ...
+            'interpretable</span><span>%s</span></div></div>\n'], esc(gnote));
+    end
     fprintf(fid, '  <div class="global-card">\n');
     fprintf(fid, '    <div class="gstat"><div class="gk">%s</div><div class="gv">%s</div></div>\n', slab, sval);
     fprintf(fid, '    <div class="gsep"></div>\n');

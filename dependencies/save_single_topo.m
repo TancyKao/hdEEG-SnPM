@@ -15,7 +15,7 @@ function save_single_topo(data, chanlocs, title_str, out_png, cmap, clim)
     if isempty(clim), maplim = 'minmax'; else, maplim = clim; end
     plot_settings = {'headrad', 0.6, 'style', 'map', 'electrodes', 'on', ...
         'maplimits', maplim, 'whitebk', 'on'};
-    fig = figure('Position', [50 50 450 450], 'Color', 'w', 'PaperPositionMode', 'auto');
+    fig = figure('Position', [50 50 450 450], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
     cl = onCleanup(@() close(fig)); %#ok<NASGU>
     topoplot(data, chanlocs, plot_settings{:});
     if ischar(cmap) || iscell(cmap) || isnumeric(cmap)

@@ -17,7 +17,7 @@ function used = plot_lmm_scatter(x, y, group, xlab, ylab, out_png)
     x = x(ok); y = y(ok);
     used = numel(x);
 
-    fig = figure('Position', [50 50 640 460], 'Color', 'w', 'PaperPositionMode', 'auto');
+    fig = figure('Position', [50 50 640 460], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
     cl = onCleanup(@() close(fig)); %#ok<NASGU>
     hold on;
     if isempty(group)

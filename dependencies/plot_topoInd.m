@@ -35,7 +35,7 @@ function create_topo_plot(data, chanlocs, title_name, filepath, cmap_input, clim
     % title_name (which sets the filename). Used so the effect map can read e.g.
     % "Correlation r-map" instead of the "A minus B" difference wording.
     if nargin < 9, display_title = ''; end
-    fig = figure('Position', [50 50 450 450], 'Color', 'w', 'PaperPositionMode', 'auto');
+    fig = figure('Position', [50 50 450 450], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
     
     topoplot(data, chanlocs, plot_settings{:});
     

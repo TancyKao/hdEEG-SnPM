@@ -109,7 +109,7 @@ function h = create_significance_plot(topodata, sigch_unP, sigch_corrected, chan
     end
 
     % Create figure
-    fig = figure('Position', [20 50 500 500], 'Color', 'w', 'PaperPositionMode', 'auto');
+    fig = figure('Position', [20 50 500 500], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
     
     % Add legend text
     add_legend_text();

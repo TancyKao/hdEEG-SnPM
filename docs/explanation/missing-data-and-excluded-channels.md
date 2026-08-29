@@ -131,6 +131,26 @@ The correlation path is unaffected in practice: its complete-column mask has alr
 channel sets identical by the time the omnibus runs. The reports state how many channels the
 average was taken over, which is the number to check if a global p and a topography disagree.
 
+One separate case is flagged rather than averaged: a correlation run with `datatype =
+'normalize'` z-scores each subject across channels, which makes the channel-averaged signal
+analytically zero — the global statistic would be floating-point noise, not a whole-head
+correlation. The run marks it as such (`results_struct.global_not_interpretable`, warning
+`snpm:globalNotInterpretable`, an amber note on the global card); the channel-wise maps are
+unaffected.
+
+## A missing behavioural value removes the subject, not a channel
+
+The correlation analyses also accept Data 2 as a single behavioural score per subject (a
+`Subject` column plus one measure column), which is broadcast across every channel of Data 1.
+Under the complete-column rule a broadcast `NaN` would make *every* channel incomplete at once —
+one missing reaction time would silently empty the whole analysis. So a subject with a missing
+behavioural value is instead dropped whole, before anything else happens: the run warns
+(`snpm:behaviorNaNRows`) naming the subjects, counts them in
+`results_struct.subject_matching.behavior_nan_removed`, and states the drop in the results text.
+The remaining subjects are analysed on every channel that is complete for *them*. As with
+excluded channels, the removal is never silent — if the analysed n in the report is smaller than
+the number of rows in your behavioural file, this is where the difference went.
+
 ## What you will see in your outputs
 
 A channel never leaves an analysis silently, whichever rule dropped it. When anything is

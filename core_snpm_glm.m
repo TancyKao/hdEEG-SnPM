@@ -331,11 +331,16 @@ function [results_struct, results_text] = core_snpm_glm(params)
             posthoc_results(ph).label, numel(posthoc_results(ph).correctTFCEsigch)); %#ok<AGROW>
     end
 
-    % generateAnalysisReport reads params.tail (display only); GLM presets
-    % have no tail, so provide a descriptive value.
-    if ~isfield(params, 'tail') || isempty(params.tail)
-        params.tail = D.contrast_type;
-    end
+    % params.tail is NOT set here. A GLM preset has no tail: an F contrast is a
+    % non-negative omnibus statistic with no sidedness, and the 1-row t
+    % contrasts are evaluated two-sided (|t| against a max-|t| null, see
+    % snpm_perm_correction). This block used to park the contrast type ('t'/'F')
+    % in params.tail purely to give generateAnalysisReport something to print,
+    % which made the masthead of every GLM report read "one-tailed" -- the
+    % report tests anything other than 'both' as one-sided. The contrast type
+    % travels in its own field, results_struct.glm.contrast_type (set above and
+    % read by stat_info), and the report now derives the tail wording from the
+    % statistic instead of from an overloaded params.tail.
     try
         generateAnalysisReport(results_struct, params, base_filename, outputSname, uncorrsigch, correctTFCEsigch, SnPMsigch);
         results_text{end+1} = ['Report saved to: ' outputSname '_report.html'];
@@ -466,7 +471,7 @@ function save_single_topo(data, chanlocs, title_str, out_png, cmap, clim)
     if isempty(clim), maplim = 'minmax'; else, maplim = clim; end
     plot_settings = {'headrad', 0.6, 'style', 'map', 'electrodes', 'on', ...
         'maplimits', maplim, 'whitebk', 'on'};
-    fig = figure('Position', [50 50 450 450], 'Color', 'w', 'PaperPositionMode', 'auto');
+    fig = figure('Position', [50 50 450 450], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
     cl = onCleanup(@() close(fig)); %#ok<NASGU>
     topoplot(data, chanlocs, plot_settings{:});
     if ischar(cmap) || iscell(cmap) || isnumeric(cmap)
@@ -636,7 +641,9 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
 
     results_text = mixed2way_text(effects, data_file, preset, nperm, size(power,1), outputSname);
 
-    if ~isfield(params, 'tail') || isempty(params.tail), params.tail = 'F'; end
+    % No params.tail for mixed2way either -- see the note in the single-effect
+    % path above. The three effects are reported with their own contrast types
+    % in results_struct.effects(k).contrast_type.
     try
         generateAnalysisReport(results_struct, params, base_filename, outputSname, ...
             eX.uncorrsigch, eX.correctTFCEsigch, eX.SnPMsigch);

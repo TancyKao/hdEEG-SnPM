@@ -58,7 +58,7 @@ function [out_png, used_channels] = plot_interaction_lines(power, meta, group_co
     condLabels = cell(1, nC); for c = 1:nC, condLabels{c} = lev2str(clev, c); end
     groupLabels = cell(1, nG); for g = 1:nG, groupLabels{g} = lev2str(glev, g); end
 
-    fig = figure('Position', [50 50 560 420], 'Color', 'w', 'PaperPositionMode', 'auto');
+    fig = figure('Position', [50 50 560 420], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
     cl = onCleanup(@() close(fig)); %#ok<NASGU>
     colors = lines(max(nG, 1));
     x = 1:nC;

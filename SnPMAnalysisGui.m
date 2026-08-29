@@ -140,8 +140,22 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         last_results = ''  % Store last results for PDF export
         lastComparison = 'pairedT'  % last real (non-header) comparison key selected
         RoleRows = {}  % {key, labelHandle, fieldHandle} for show/hide of GLM column-role fields
-        DetectedNChan = 0  % channel columns detected in the last loaded file (for montage validation)
-        DetectedChanNames = {}  % channel column NAMES detected (for label-presence validation)
+        % Header-detection state, kept PER SLOT. The primary file (Data 1, or
+        % the first spectral folder) owns the montage validation and the role
+        % pickers; Data 2 carries its own counts. They used to share one pair of
+        % properties, so loading Data 2 overwrote what Data 1 had detected and
+        % the montage check then validated the wrong file -- or, for a Data 2
+        % holding no channel columns at all, silently stopped validating.
+        DetectedNChan = 0  % channel columns in the PRIMARY file (montage validation)
+        DetectedChanNames = {}  % channel column NAMES in the PRIMARY file (label-presence validation)
+        DetectCaption1 = ''  % "Detected: ..." caption text for the primary file
+        DetectedNChan2 = 0  % channel columns in the Data 2 file (0 = none, e.g. a behavioural table)
+        % snpm_detect_behavior_table results per slot: .kind montage|behavior|
+        % unknown, .channel_cols, .data_cols (every non-ID column, ID = the
+        % FIRST 'subject' column only), .col_name. [] until a file is read;
+        % always go through normalizeDetect() rather than touching them raw.
+        DetectB1 = []
+        DetectB2 = []
         SpectralFolder = ''  % selected BIDS spectral folder (spectral mode)
         SubjectsCsv = ''  % optional subject-metadata CSV joined on Subject (spectral mode)
         FullComparisonItems = {}  % saved ComparisonDropDown Items/ItemsData to restore when leaving spectral mode
@@ -216,15 +230,16 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         % Re-detect columns when the Excel sheet changes
         function Data1SheetChanged(app, ~)
             if ~isempty(app.data1_file)
-                detectAndFill(app, app.data1_file, app.Data1SheetDropDown.Value, true);
-                app.NChanAngle1 = app.DetectedNChan;
+                [~, n] = detectAndFill(app, app.data1_file, app.Data1SheetDropDown.Value, true);
+                app.NChanAngle1 = n;
                 checkReadyToRun(app);
             end
         end
         function Data2SheetChanged(app, ~)
             if ~isempty(app.data2_file)
-                detectAndFill(app, app.data2_file, app.Data2SheetDropDown.Value, false);
-                app.NChanAngle2 = app.DetectedNChan;
+                [~, n, ~, B] = detectAndFill(app, app.data2_file, app.Data2SheetDropDown.Value, false);
+                setData2Detection(app, n, B);
+                app.NChanAngle2 = n;
                 checkReadyToRun(app);
             end
         end
@@ -314,8 +329,9 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 app.SpecStageListBox.Items = info.stages;  app.SpecStageListBox.Value = info.stages(1);
                 app.DetectedNChan     = numel(info.chanlabels);
                 app.DetectedChanNames = info.chanlabels;
-                app.DetectCaptionLabel.Text = sprintf('Detected: %d channels, %d bands, %d stages', ...
+                app.DetectCaption1    = sprintf('Detected: %d channels, %d bands, %d stages', ...
                     numel(info.chanlabels), numel(info.bands), numel(info.stages));
+                app.DetectCaptionLabel.Text = app.DetectCaption1;
             end
             [~, base] = fileparts(d);
             app.SpecFolderTable.Data = [app.SpecFolderTable.Data; {d, base}];
@@ -558,33 +574,111 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             app.DetectCaptionLabel.Text = '';
             app.DetectedNChan = 0;
             app.DetectedChanNames = {};
+            app.DetectB1 = [];
+            app.DetectCaption1 = '';
+            clearData2Detection(app);
         end
 
-        % Read a file's headers, classify channel vs metadata columns, fill the UI
-        function meta = detectAndFill(app, file, sheet, isPrimary)
-            meta = {};
+        % Forget everything detected in the Data 2 slot.
+        function clearData2Detection(app)
+            app.DetectedNChan2 = 0;
+            app.DetectB2 = [];
+        end
+
+        % Record what detectAndFill found in the Data 2 slot (see the property
+        % block: Data 2 must not overwrite the primary file's detection).
+        function setData2Detection(app, nchan, B)
+            app.DetectedNChan2 = nchan;
+            app.DetectB2 = B;
+        end
+
+        % True when Data 2's columns line up with the ones core_snpm_analysis
+        % will actually read out of it. snpm_setup_channels matches column
+        % positions on DATA 1's header and applies those same positions to
+        % Data 2 (snpm_setup_channels.m:49-65) -- it never reads Data 2's own
+        % names. This mirrors the engine's channelOrderMismatch guard exactly
+        % (the Data 2 alignment block, core_snpm_analysis.m:245-456; the order
+        % guard itself at :326-425): the same data-column lists (ID column
+        % = the FIRST 'subject' match only), the same expected labels (the
+        % montage's LOADED chanlocs, registry labels only as a fallback), the
+        % same short-file padding, and strcmpi -- a pure case difference
+        % ('e1' vs 'E1') is not a mis-pairing and must not block a run the
+        % engine accepts. The engine runs that block for EVERY two-file legacy
+        % analysis, not just the correlations, so this helper is used for the
+        % t-tests too.
+        function tf = data2ColumnsAlign(app)
+            tf = true;
+            B1 = normalizeDetect(app.DetectB1);
+            B2 = normalizeDetect(app.DetectB2);
+            c1 = B1.data_cols; c2 = B2.data_cols;
+            if isempty(c1) || isempty(c2), return; end
+            pos = find(ismember(c1, montageOrderLabels(app.ChannelsDropDown.Value)));
+            if isempty(pos), return; end          % nothing selected: not our error
+            c2p = repmat({''}, 1, max(pos));      % pad: a short file mismatches, never errors
+            n_avail = min(numel(c2), max(pos));
+            c2p(1:n_avail) = c2(1:n_avail);
+            tf = all(strcmpi(c1(pos), c2p(pos)));
+        end
+
+        % Read a file's headers and classify channel vs metadata columns.
+        % Returns the split for the caller's slot; the shared detection state
+        % (montage validation) and the role pickers are written ONLY for the
+        % primary file, so a Data 2 / event-count pick cannot clobber them.
+        %   META  non-channel column names   NCHAN number of channel columns
+        %   CHANS channel column names       B     the classifier result
+        function [meta, nchan, chans, B] = detectAndFill(app, file, sheet, isPrimary)
+            % Read the header EXACTLY as the engine will. core_snpm_analysis
+            % loads both tables with a plain readtable (core_snpm_analysis.m:116
+            % and :136), whose default 'modify' naming rule rewrites any header
+            % that is not a valid MATLAB identifier -- 'MRRT (ms)' becomes
+            % 'MRRT_ms_'. detectImportOptions defaults to that same rule, so
+            % NOT asking for 'preserve' is what keeps these names identical to
+            % readtable's (verified equal for CSV and .xlsx). Asking for
+            % 'preserve' broke three things at once: the classifier judged a
+            % rewritten header against its raw spelling, data2ColumnsAlign
+            % compared Data 1's raw names with labels the engine sees modified,
+            % and every role name this function writes into the role pickers
+            % (and MetaColsField) went to the engine in a spelling readtable
+            % had already changed, so the column could not be found.
             try
                 if strcmp(sheet, 'CSV File')
-                    o = detectImportOptions(file, 'VariableNamingRule','preserve');
+                    o = detectImportOptions(file);
                 else
-                    o = detectImportOptions(file, 'Sheet', sheet, 'VariableNamingRule','preserve');
+                    o = detectImportOptions(file, 'Sheet', sheet);
                 end
                 vn = o.VariableNames;
             catch
                 vn = {};
             end
-            % A column is a channel if its name is an EGI E-number, or is in any
-            % recording system's label set (so Compumedics names like Fp1 count too).
-            reg = snpm_montage_registry();
-            allLabels = [reg.labels];
-            ischan = cellfun(@(s) ~isempty(regexp(s,'^E\d+$','once')) || strcmpi(s,'Cz'), vn) ...
-                     | ismember(vn, allLabels);
-            chans = vn(ischan);
-            meta  = vn(~ischan);
-            app.DetectedNChan = numel(chans);
-            app.DetectedChanNames = chans;
-            app.DetectCaptionLabel.Text = sprintf('Detected: %d channels, %d metadata columns', numel(chans), numel(meta));
+            % Classification is delegated to the shared helper
+            % dependencies/snpm_detect_behavior_table.m -- the same function the
+            % engine uses to decide what a correlation Data 2 is -- so given the
+            % same column names (see above) the GUI's idea of "this is a
+            % channel", of which column is the ID, and of
+            % montage-vs-behaviour-vs-unknown cannot drift from the core's.
+            try
+                B = snpm_detect_behavior_table(vn);
+            catch ME
+                % snpm:behavior:noDataColumns is the only error the helper can
+                % raise on a well-formed cellstr (multipleColumns is RETIRED --
+                % the ambiguous case now comes back as kind 'unknown'). It means
+                % an unreadable header or a file holding nothing but an ID
+                % column. A file pick must not throw: keep the message and let
+                % the readiness gate report it where it matters.
+                if ~strcmp(ME.identifier, 'snpm:behavior:noDataColumns')
+                    rethrow(ME);
+                end
+                B = normalizeDetect([]);
+                B.error_message = ME.message;
+            end
+            chans = B.channel_cols;
+            meta  = vn(~ismember(vn, chans));
+            nchan = numel(chans);
             if isPrimary
+                app.DetectedNChan = nchan;
+                app.DetectedChanNames = chans;
+                app.DetectB1 = B;
+                app.DetectCaption1 = sprintf('Detected: %d channels, %d metadata columns', nchan, numel(meta));
                 app.MetaColsField.Value = strjoin(meta, ',');
                 fillRoleDropdown(app.GroupColField,     meta, firstMatch(meta,'group'));
                 fillRoleDropdown(app.PredictorColField, meta, '');
@@ -624,8 +718,8 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                     app.StatusLabel.Text = 'Data 1 CSV file loaded successfully';
                 end
 
-                detectAndFill(app, app.data1_file, app.Data1SheetDropDown.Value, true);
-                app.NChanAngle1 = app.DetectedNChan;
+                [~, n] = detectAndFill(app, app.data1_file, app.Data1SheetDropDown.Value, true);
+                app.NChanAngle1 = n;
                 checkReadyToRun(app);
             end
         end
@@ -659,8 +753,9 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                     app.StatusLabel.Text = 'Data 2 CSV file loaded successfully';
                 end
 
-                detectAndFill(app, app.data2_file, app.Data2SheetDropDown.Value, false);
-                app.NChanAngle2 = app.DetectedNChan;
+                [~, n, ~, B] = detectAndFill(app, app.data2_file, app.Data2SheetDropDown.Value, false);
+                setData2Detection(app, n, B);
+                app.NChanAngle2 = n;
                 checkReadyToRun(app);
             end
         end
@@ -677,15 +772,15 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
         function Count1SheetChanged(app, ~)
             if ~isempty(app.count1_file)
-                detectAndFill(app, app.count1_file, app.Count1SheetDropDown.Value, false);
-                app.NChanCount1 = app.DetectedNChan;
+                [~, n] = detectAndFill(app, app.count1_file, app.Count1SheetDropDown.Value, false);
+                app.NChanCount1 = n;
                 checkReadyToRun(app);
             end
         end
         function Count2SheetChanged(app, ~)
             if ~isempty(app.count2_file)
-                detectAndFill(app, app.count2_file, app.Count2SheetDropDown.Value, false);
-                app.NChanCount2 = app.DetectedNChan;
+                [~, n] = detectAndFill(app, app.count2_file, app.Count2SheetDropDown.Value, false);
+                app.NChanCount2 = n;
                 checkReadyToRun(app);
             end
         end
@@ -720,8 +815,8 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             end
             if which == 1, app.count1_file = full; else, app.count2_file = full; end
             lb.Text = file;
-            detectAndFill(app, full, dd.Value, false);
-            if which == 1, app.NChanCount1 = app.DetectedNChan; else, app.NChanCount2 = app.DetectedNChan; end
+            [~, n] = detectAndFill(app, full, dd.Value, false);
+            if which == 1, app.NChanCount1 = n; else, app.NChanCount2 = n; end
             app.StatusLabel.Text = sprintf('Group %c event-count file loaded', 'A' + which - 1);
             checkReadyToRun(app);
         end
@@ -1129,7 +1224,13 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             % Output folder
             if isempty(app.output_path), missing{end+1} = 'Choose an output folder'; end
 
-            % File must contain channels of the selected recording system
+            % The PRIMARY file must contain channels of the selected recording
+            % system. Keyed on the primary slot only: Data 2 may legitimately
+            % hold no channels at all (a correlation against one behavioural
+            % score), and an event-count file is checked against its angle file
+            % above, not against the montage.
+            capLines = {};
+            if ~isempty(app.DetectCaption1), capLines{end+1} = app.DetectCaption1; end
             if app.DetectedNChan > 0
                 m = snpm_montage_registry(app.ChannelsDropDown.Value);
                 present = nnz(ismember(m.labels, app.DetectedChanNames));
@@ -1137,9 +1238,143 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                     missing{end+1} = sprintf('No %s channels found in the file (expected labels like %s)', ...
                         m.display, m.labels{min(2,numel(m.labels))});
                 else
-                    app.DetectCaptionLabel.Text = sprintf('Detected: %d channels  (matches %d of %d %s channels)', ...
+                    capLines{1} = sprintf('Detected: %d channels  (matches %d of %d %s channels)', ...
                         app.DetectedNChan, present, numel(m.labels), m.display);
                 end
+            end
+
+            % Data 2 has three recognised shapes, so it gets its own check.
+            % This block mirrors the engine's Data 2 alignment block branch for
+            % branch (core_snpm_analysis.m:245-456) -- what the engine accepts,
+            % warns about and refuses -- so the checklist never blocks a run the
+            % engine would happily do, nor waves through one it would kill after
+            % the user clicked Run. It switches on the SHARED classifier's
+            % .kind, not on a guess of its own:
+            %   'behavior'  Subject + ONE measure column: one value per subject,
+            %               broadcast across Data 1's channels. CORRELATION ONLY
+            %               -- a t-test compares two channel maps, so there is
+            %               nothing for one score per subject to pair with and
+            %               the engine refuses it (snpm:data2:behaviorNotSupported,
+            %               core_snpm_analysis.m:272-283).
+            %   'montage'   names recognised as channel labels: matched BY NAME.
+            %               Same channel count, then same channels in the same
+            %               order (see data2ColumnsAlign).
+            %   'unknown'   too few names recognised to match by name -- what a
+            %               lowercased ('e1') or suffixed ('E1_density') montage
+            %               export looks like. The engine matches it BY POSITION
+            %               and warns, so an equal data-column count is ALLOWED
+            %               here with an unverified-pairing caption; only a
+            %               different count is an error.
+            %   'none'      headers unreadable, or nothing but an ID column.
+            %
+            % The engine guards EVERY two-file legacy analysis this way, not
+            % just the correlations: the block is gated on ~onesample_vs_zero
+            % (core_snpm_analysis.m:245), which is true for pairedT, unpairedT,
+            % both correlations, and a onesampleT that was given a Data 2. So
+            % the gate here is the same set, keyed on a Data 2 actually being
+            % loaded -- app.data2_file is passed to the engine unconditionally,
+            % so a file left over from a previous analysis is guarded too,
+            % exactly as the engine would guard it. Before this, a mis-ordered
+            % pairedT pair showed ready and only failed after Run.
+            if ~spec && ismember(key, {'correlationP','correlationS','pairedT','unpairedT','onesampleT'}) ...
+                    && ~isempty(app.data2_file)
+                isCorr = ismember(key, {'correlationP','correlationS'});
+                if twoFile
+                    lab2 = strtrim(erase(app.Data2FileTitleLabel.Text, ':'));
+                else
+                    % onesampleT hides the Data 2 picker but nothing clears
+                    % app.data2_file, and it is still handed to the engine --
+                    % which then runs the legacy paired-difference-vs-0 path on
+                    % it instead of the vs-zero path. Naming the hidden picker
+                    % would send the user looking for a control that is not on
+                    % screen, so name the situation and the way out.
+                    lab2 = ['second data file left over from a previous analysis ' ...
+                            '(press Reset to clear it)'];
+                end
+                % The behavioural format is a CORRELATION format. Offering it
+                % as a fix for a t-test width mismatch would send the user
+                % straight into snpm:data2:behaviorNotSupported.
+                if isCorr
+                    bothFormats = ['export both files on the same montage, or give Data 2 just a ' ...
+                                   'Subject column and ONE behavioural measure column'];
+                else
+                    bothFormats = 'export both files on the same montage, one column per channel.';
+                end
+                B1 = normalizeDetect(app.DetectB1);
+                B2 = normalizeDetect(app.DetectB2);
+                n1_chan = numel(B1.channel_cols); n1_data = numel(B1.data_cols);
+                n2_chan = numel(B2.channel_cols); n2_data = numel(B2.data_cols);
+                switch B2.kind
+                    case 'behavior'
+                        if isCorr
+                            capLines{end+1} = sprintf(['Behavioral measure: %s (1 value per subject, ' ...
+                                'compared against every channel of Data 1)'], B2.col_name);
+                        else
+                            % One score per subject can only be broadcast across
+                            % channels for a correlation. This analysis compares
+                            % two channel maps, so there is nothing to pair it
+                            % with; the engine refuses the run outright
+                            % (snpm:data2:behaviorNotSupported).
+                            missing{end+1} = sprintf(['%s is a Subject column plus ONE measure ' ...
+                                'column (''%s''). A single score per subject is only valid for a ' ...
+                                'correlation ' char(8212) ' this analysis compares two channel ' ...
+                                'maps, so Data 2 needs one column per channel. Export Data 2 on ' ...
+                                'the same montage as Data 1, or change the analysis to ' ...
+                                'Correlation (Pearson) or Correlation (Spearman).'], ...
+                                lab2, B2.col_name);
+                        end
+
+                    case 'montage'
+                        if n1_chan > 0 && n1_chan ~= n2_chan
+                            missing{end+1} = sprintf(['%s has %d channel columns but Data 1 has %d ' ...
+                                char(8212) ' the two files are paired channel by channel (channel i ' ...
+                                'of Data 1 with channel i of Data 2), so %s'], ...
+                                lab2, n2_chan, n1_chan, bothFormats);
+                        elseif n1_chan > 0 && n2_chan > 0 && ~data2ColumnsAlign(app)
+                            % Same COUNT is not same CHANNELS. Channel selection
+                            % is matched on Data 1's header and the same column
+                            % positions are applied to Data 2, so a different
+                            % order means channel i is compared against some
+                            % other channel and the whole map is wrong with
+                            % nothing in the output to show it. The engine raises
+                            % snpm:correlation:channelOrderMismatch (kept under
+                            % that identifier, but raised for every two-file
+                            % legacy analysis) for headless runs; this is the
+                            % interactive half of that guard.
+                            missing{end+1} = sprintf(['%s has the same number of channels as Data 1 ' ...
+                                'but not in the same order ' char(8212) ' the two files are read ' ...
+                                'position by position, so channel i of Data 1 would be paired with ' ...
+                                'a different channel of Data 2 and the whole map would be wrong ' ...
+                                'with nothing in the output to show it. Re-export Data 2 with its ' ...
+                                'columns in Data 1''s order.'], lab2);
+                        else
+                            capLines{end+1} = sprintf('Data 2: %d channel columns, matched by name', n2_chan);
+                        end
+
+                    case 'unknown'
+                        if n1_data > 0 && n1_data ~= n2_data
+                            missing{end+1} = sprintf(['%s has %d data columns but Data 1 has %d, and ' ...
+                                'Data 2''s columns are not recognised channel labels so they cannot ' ...
+                                'be matched by name either ' char(8212) ' %s'], ...
+                                lab2, n2_data, n1_data, bothFormats);
+                        else
+                            capLines{end+1} = ['Data 2 matched by position (column names not ' ...
+                                'recognised ' char(8212) ' unverified pairing). Check both files ' ...
+                                'list their channels in the same order.'];
+                        end
+
+                    otherwise   % 'none': unreadable, or an ID column and nothing else
+                        if ~isempty(B2.error_message)
+                            missing{end+1} = B2.error_message;
+                        else
+                            missing{end+1} = sprintf('Could not read the columns of the %s', lab2);
+                        end
+                end
+            end
+            if isempty(capLines)
+                app.DetectCaptionLabel.Text = '';
+            else
+                app.DetectCaptionLabel.Text = capLines;   % one line per loaded slot
             end
 
             % Source-space montage is scalp-only for the GLM presets (no source
@@ -1912,6 +2147,10 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             end
             if isempty(file)   % clearing an input
                 dd.Items = {}; lb.Text = 'No file selected'; n = 0;
+                switch slot
+                    case 'data1', initRolePickers(app);   % also drops the primary detection
+                    case 'data2', clearData2Detection(app);
+                end
             else
                 if isempty(sheet)
                     if endsWith(file, {'.xlsx','.xls'})
@@ -1922,8 +2161,8 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 end
                 dd.Items = {sheet}; dd.Value = sheet;
                 [~, b, e] = fileparts(file); lb.Text = [b e];
-                detectAndFill(app, file, sheet, strcmp(slot,'data1'));
-                n = app.DetectedNChan;
+                [~, n, ~, B] = detectAndFill(app, file, sheet, strcmp(slot,'data1'));
+                if strcmp(slot, 'data2'), setData2Detection(app, n, B); end
             end
             switch slot
                 case 'data1',  app.data1_file  = file; app.NChanAngle1 = n;
@@ -1961,6 +2200,13 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 'circPanelVisible',char(app.CircPanel.Visible), ...
                 'circOffsetEnable',char(app.CircOffsetField.Enable), ...
                 'hint',            app.HintLabel.Text, ...
+                'detectCaption',   {cellstr(app.DetectCaptionLabel.Text)}, ...
+                'metaCols',        app.MetaColsField.Value, ...
+                'chanNames',       {app.DetectedChanNames}, ...
+                'nChan1',          app.DetectedNChan, ...
+                'nChan2',          app.DetectedNChan2, ...
+                'kind1',           normalizeDetect(app.DetectB1).kind, ...
+                'kind2',           normalizeDetect(app.DetectB2).kind, ...
                 'runEnable',       char(app.RunAnalysisButton.Enable), ...
                 'validationTitle', app.ValidationPanel.Title, ...
                 'validation',      {cellstr(app.ValidationLabel.Text)});
@@ -2064,9 +2310,21 @@ function [l1, l2, hint, c1, c2] = analysis_labels(key)
         case 'unpairedT'
             l1='Group A File:'; l2='Group B File:'; hint='Two independent groups. Load the group A and B files.';
         case 'correlationP'
-            l1='Measure 1 File (e.g. EEG):'; l2='Measure 2 File (e.g. behaviour):'; hint='Linear correlation across subjects, channel by channel. Both files need a Subject column.';
+            l1='Measure 1 File (e.g. EEG):'; l2='Measure 2 File (e.g. behaviour):';
+            hint=['Linear correlation across subjects. Both files need a Subject column. ' ...
+                  'Measure 2 is either a full channels file (correlated channel by channel) ' ...
+                  'or a single behavioural column ' char(8212) ' e.g. Subject,MRRT, one value ' ...
+                  'per subject, compared against every channel. With a single score, leave ' ...
+                  'Data Type on absolute: normalize re-scales each subject''s channels to ' ...
+                  'average zero, which forces as many positive as negative channels.'];
         case 'correlationS'
-            l1='Measure 1 File (e.g. EEG):'; l2='Measure 2 File (e.g. behaviour):'; hint='Rank correlation (robust to outliers). Both files need a Subject column.';
+            l1='Measure 1 File (e.g. EEG):'; l2='Measure 2 File (e.g. behaviour):';
+            hint=['Rank correlation (robust to outliers). Both files need a Subject column. ' ...
+                  'Measure 2 is either a full channels file (correlated channel by channel) ' ...
+                  'or a single behavioural column ' char(8212) ' e.g. Subject,MRRT, one value ' ...
+                  'per subject, compared against every channel. With a single score, leave ' ...
+                  'Data Type on absolute: normalize re-scales each subject''s channels to ' ...
+                  'average zero, which forces as many positive as negative channels.'];
         case {'circ_phase_group','circ_phase_group_u2'}
             % Wording is deliberately group-explicit. The retired labels said
             % "Load both condition files", which invited the single worst
@@ -2093,6 +2351,41 @@ function [l1, l2, hint, c1, c2] = analysis_labels(key)
         otherwise
             l1='Data 1 File:'; l2='Data 2 File:'; hint='';
     end
+end
+
+function B = normalizeDetect(stored)
+% A snpm_detect_behavior_table result that is always safe to read. Slots that
+% have never been filled, and files whose headers could not be read at all,
+% come back as kind 'none' with empty lists rather than [] -- so no caller has
+% to test isempty before looking at .kind or .data_cols.
+    if isstruct(stored) && isfield(stored, 'kind')
+        B = stored;
+        if ~isfield(B, 'error_message'), B.error_message = ''; end
+        return;
+    end
+    B = struct('kind', 'none', 'is_behavior', false, 'col_name', '', ...
+               'channel_cols', {{}}, 'nonchannel_cols', {{}}, 'data_cols', {{}}, ...
+               'subject_cols', {{}}, 'channel_fraction', 0, 'error_message', '');
+end
+
+function labels = montageOrderLabels(key)
+% The channel labels the engine will actually match Data 1's columns against:
+% the montage's LOADED chanlocs, exactly as core_snpm_analysis does for its
+% order guard, with the registry's own list as the documented fallback. Cached
+% per recording system because the readiness gate runs on every widget change
+% and this would otherwise hit the disk each time.
+    persistent CACHE
+    if isempty(CACHE), CACHE = struct(); end
+    fld = matlab.lang.makeValidName(char(key));
+    if isfield(CACHE, fld), labels = CACHE.(fld); return; end
+    m = snpm_montage_registry(key);
+    try
+        cl = load(m.chanloc_file);
+        labels = {cl.(m.chanloc_var).labels};
+    catch
+        labels = m.labels;
+    end
+    CACHE.(fld) = labels;
 end
 
 function fillRoleDropdown(dd, meta, def)

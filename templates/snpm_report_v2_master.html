@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SnPM Report v2 &mdash; Two-way mixed ANOVA (2&times;3)</title>
+<style>
+:root{--ink:#1b2733;--ink-2:#445261;--muted:#7c8a98;--line:#e3e9ef;--line-2:#eef2f6;--bg:#f5f7f9;--panel:#ffffff;--accent:#1f6f8b;--accent-soft:#e8f1f4;--sig:#1f8a5b;--sig-soft:#e7f4ec;--warm:#c2543a;--cool:#2f6db0;--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--serif:Charter,"Iowan Old Style",Georgia,"Times New Roman",serif}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1100px;margin:0 auto;padding:40px 32px 96px}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.masthead{display:flex;justify-content:space-between;align-items:flex-start;gap:32px;flex-wrap:wrap;padding-bottom:26px;border-bottom:1px solid var(--line)}
+.masthead h1{font-family:var(--serif);font-weight:600;font-size:29px;line-height:1.2;letter-spacing:-.01em;margin:9px 0 11px;max-width:760px}
+.methods{color:var(--ink-2);font-size:13.5px;max-width:820px;margin:0}.methods b{color:var(--ink);font-weight:600}
+.actions{display:flex;gap:8px;flex-shrink:0}
+.btn{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:border-color .15s,color .15s;text-decoration:none}
+.btn:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}.btn svg{width:14px;height:14px}
+
+/* ---- sticky per-effect summary strip ---- */
+.strip{position:sticky;top:0;z-index:20;background:rgba(245,247,249,.94);backdrop-filter:blur(6px);margin:0 -32px;padding:10px 32px;border-bottom:1px solid var(--line);display:flex;gap:10px;flex-wrap:wrap}
+.chipfx{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 14px;font-size:12px;color:var(--ink-2);text-decoration:none;transition:border-color .15s;box-shadow:0 1px 2px rgba(20,40,60,.04)}
+.chipfx:hover{border-color:var(--accent);text-decoration:none}
+.chipfx .lamp{width:9px;height:9px;border-radius:50%;flex:none}
+.lamp.sig{background:var(--sig)}.lamp.ns{background:#c3ccd4}
+.chipfx .nm{font-weight:650;color:var(--ink)}
+.chipfx .cts{font-family:var(--mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.chipfx .gp{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.chipfx .gp.p-sig{color:var(--sig);font-weight:700}
+
+.section{margin-top:40px}
+.section>.head{display:flex;align-items:baseline;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+.section>.head h2{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0}
+.section>.head .sub{font-size:12.5px;color:var(--muted)}
+
+/* ---- model card ---- */
+.model-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(20,40,60,.04);overflow:hidden}
+.formula{padding:22px 26px;border-bottom:1px solid var(--line-2);background:linear-gradient(180deg,#fbfdfe,#fff)}
+.formula .fk{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;display:block;margin-bottom:9px}
+.formula code{font-family:var(--mono);font-size:19px;color:var(--ink);font-weight:500}
+.formula code .v{color:var(--accent)}.formula code .r{color:var(--warm)}
+.specs{display:grid;grid-template-columns:repeat(2,1fr)}
+@media(max-width:680px){.specs{grid-template-columns:1fr}}
+.specs .row{display:flex;justify-content:space-between;gap:16px;padding:11px 26px;border-bottom:1px solid var(--line-2);font-size:13.5px}
+.specs .row:nth-child(odd){border-right:1px solid var(--line-2)}
+.specs .k{color:var(--ink-2)}
+.specs .val{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);font-weight:500;text-align:right}
+.specs .val.tag{font-family:var(--sans);font-weight:600}
+
+/* ---- legend ---- */
+.legend{display:flex;flex-wrap:wrap;gap:12px 26px;align-items:center;padding:14px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;font-size:12.5px;color:var(--ink-2)}
+.legend .grp{display:flex;align-items:center;gap:9px}.legend .grp .k{font-weight:600;color:var(--ink)}
+.tmapbar{width:120px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}
+.legend .sep{width:1px;height:26px;background:var(--line)}
+.legend .dd{width:10px;height:10px;border-radius:50%;flex:none}
+.cnum{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-family:var(--mono);font-size:10px;font-weight:700;flex:none}
+
+/* ---- figures ---- */
+.fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(20,40,60,.04)}
+.fig>.cap{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line-2)}
+.fig>.cap .t{font-size:13px;font-weight:650}.fig>.cap .f{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.slot{position:relative;margin:0;background:#f1f5f7;aspect-ratio:1/1}
+.slot.wide{aspect-ratio:16/10}
+.slot img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;display:block}
+.slot img.err{display:none}.slot img.err + .ph{display:flex}
+.slot .ph{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#9fb0bd;text-align:center;padding:12px}
+.slot .ph .nd{font-size:12px;font-weight:600;color:#8b9aa7}
+.slot .ph .fn{font-family:var(--mono);font-size:9px;color:#a7b6c2;word-break:break-all;max-width:92%}
+.map-note{padding:9px 16px;border-top:1px solid var(--line-2);font-size:11px;color:var(--muted);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.map-note .dl{display:inline-flex;align-items:center;gap:6px}
+.map-note .dd{width:9px;height:9px;border-radius:50%;border:1px solid rgba(0,0,0,.25);flex:none}
+
+/* ---- descriptive means grid ---- */
+.cellgrid{display:grid;grid-template-columns:56px repeat(3,1fr);gap:8px;align-items:center;padding:18px}
+.cellgrid .ch{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);font-weight:650;text-align:center}
+.cellgrid .rh{font-size:12px;font-weight:650;color:var(--ink-2);text-align:right;padding-right:6px}
+.cellgrid .slot{border-radius:6px;overflow:hidden}
+.desc-flex{display:grid;grid-template-columns:1.4fr 1fr;gap:22px;align-items:start}
+@media(max-width:900px){.desc-flex{grid-template-columns:1fr}}
+
+/* ---- effect sections (collapsible) ---- */
+.effect{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(20,40,60,.04);margin-top:26px;overflow:hidden;scroll-margin-top:70px}
+.effect>.ehead{display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;user-select:none}
+.effect>.ehead:hover{background:#fbfdfe}
+.effect>.ehead .chev{width:20px;height:20px;flex:none;color:var(--muted);transition:transform .2s}
+.effect.open>.ehead .chev{transform:rotate(90deg)}
+.effect>.ehead h2{font-family:var(--serif);font-size:18px;font-weight:600;margin:0}
+.effect>.ehead .esub{font-size:12px;color:var(--muted)}
+.effect>.ehead .lamp{width:9px;height:9px;border-radius:50%;flex:none;margin-left:auto}
+.effect>.ehead .ecount{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.effect>.ebody{display:none;padding:6px 20px 24px;border-top:1px solid var(--line-2)}
+.effect.open>.ebody{display:block}
+.blk{margin-top:20px}
+.blk>.bh{font-size:12px;font-weight:650;color:var(--ink-2);margin-bottom:10px;letter-spacing:.02em}
+.effect-map{max-width:380px}
+
+/* ---- segmented toggles ---- */
+.seg{display:inline-flex;background:var(--line-2);border-radius:9px;padding:4px;gap:3px;flex-wrap:wrap}
+.seg button{font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);background:transparent;border:0;border-radius:6px;padding:8px 16px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:8px}
+.seg button.on{background:var(--panel);color:var(--accent);box-shadow:0 1px 2px rgba(20,40,60,.1)}
+.seg button .ct{font-family:var(--mono);font-size:11px;font-weight:600;color:#fff;background:var(--muted);border-radius:20px;padding:1px 8px;min-width:22px;text-align:center}
+.seg button.on .ct{background:var(--accent)}.seg button .ct.none{background:var(--line);color:var(--muted)}
+.vpanel{margin-top:18px}
+.vbody{display:grid;grid-template-columns:340px 1fr;gap:20px;align-items:start}
+@media(max-width:860px){.vbody{grid-template-columns:1fr}}
+
+/* ---- tables ---- */
+.tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.tablewrap .thead-note{padding:11px 16px;border-bottom:1px solid var(--line-2);font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.tablewrap .thead-note b{color:var(--ink)}
+table.sum{border-collapse:collapse;width:100%;font-size:13.5px}
+table.sum th,table.sum td{padding:8px 16px;text-align:right;border-bottom:1px solid var(--line-2)}
+table.sum th:first-child,table.sum td:first-child{text-align:left}
+table.sum thead th{font-size:11px;letter-spacing:.03em;color:var(--ink-2);font-weight:650;background:#fafcfd}
+table.sum tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink-2)}
+table.sum tbody td.band{font-family:var(--sans);color:var(--ink);font-weight:600;display:flex;align-items:center;gap:8px}
+table.sum tbody tr:last-child td{border-bottom:0}
+table.sum .p-sig{color:var(--sig);font-weight:700}table.sum .stat-v{color:var(--ink);font-weight:600}
+.dotkey{width:9px;height:9px;border-radius:50%;flex:none}
+.dotkey.unc{background:#1b2733}.dotkey.cor{background:#fff;border:1px solid var(--ink-2)}
+tr.sign-row td{background:#f3f6f9;color:var(--ink-2);font-family:var(--sans);font-weight:650;font-size:11px;text-align:left;letter-spacing:.06em;text-transform:uppercase}
+tr.sign-row td .sgn{font-family:var(--mono);text-transform:none;letter-spacing:0}
+tr.grp-row td{background:var(--accent-soft);color:var(--accent);font-family:var(--sans);font-weight:650;font-size:12px;text-align:left}
+tr.grp-row td .cp{font-family:var(--mono);font-weight:600;color:var(--ink-2);margin-left:8px}
+tr.grp-row td .cnum{margin-right:8px;vertical-align:-3px}
+tr.xrow{display:none}.tablewrap.expanded tr.xrow{display:table-row}
+.morebtn{display:block;width:100%;font:inherit;font-size:12px;font-weight:600;color:var(--accent);background:#fbfdfe;border:0;border-top:1px solid var(--line-2);padding:10px;cursor:pointer}
+.morebtn:hover{background:var(--accent-soft)}
+.empty-note{padding:26px 18px;text-align:center;color:var(--muted);font-size:13px}
+.empty-note b{color:var(--ink-2)}
+
+/* ---- post-hoc tabs ---- */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tabs button{font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);background:transparent;border:0;border-bottom:2px solid transparent;padding:9px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:-1px}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.tabs button .ct{font-family:var(--mono);font-size:10.5px;font-weight:600;color:#fff;background:var(--muted);border-radius:20px;padding:1px 7px}
+.tabs button.on .ct{background:var(--accent)}.tabs button .ct.none{background:var(--line);color:var(--muted)}
+.tabpanel{margin-top:18px}
+
+/* ---- global test ---- */
+.global-card{display:flex;align-items:stretch;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;flex-wrap:wrap;box-shadow:0 1px 2px rgba(20,40,60,.04)}
+.gstat{padding:20px 26px;display:flex;flex-direction:column;gap:6px;min-width:140px}
+.gstat .gk{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.gstat .gv{font-family:var(--mono);font-size:24px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1.1}
+.gstat .gp{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.gstat .gp.p-sig{color:var(--sig);font-weight:700}
+.gsep{width:1px;background:var(--line)}
+.gnote{margin-left:auto;align-self:center;padding:18px 26px;font-size:12.5px;color:var(--ink-2);max-width:340px}.gnote b{color:var(--ink)}
+.foot{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+@media(max-width:820px){.wrap{padding:28px 18px 72px}.masthead h1{font-size:24px}.strip{margin:0 -18px;padding:10px 18px}}
+
+/* ---- print ---- */
+@media print{
+  body{background:#fff}.wrap{max-width:none;padding:0}
+  .actions,.seg,.morebtn,.tabs{display:none !important}
+  .strip{position:static;background:#fff;margin:0;padding:10px 0}
+  .effect>.ebody{display:block !important}
+  .effect>.ehead .chev{display:none}
+  .vpanel{display:block !important;margin-top:16px;page-break-inside:avoid}
+  .vpanel::before{content:attr(data-view-name);display:block;font-weight:700;font-size:12px;color:var(--accent);margin-bottom:8px}
+  .tabpanel{display:block !important;margin-top:16px;page-break-inside:avoid}
+  .tabpanel::before{content:attr(data-tab-name);display:block;font-weight:700;font-size:12px;color:var(--accent);margin-bottom:8px}
+  tr.xrow{display:none !important}
+  .fig,.tablewrap,.model-card,.global-card,.legend,.effect{box-shadow:none;break-inside:avoid}
+  .section{break-inside:avoid}
+}
+</style>
+<script>
+function showView(fx,w){
+  var v=["clu","tfce","unc"];
+  for(var i=0;i<v.length;i++){
+    var p=document.getElementById("panel_"+fx+"_"+v[i]); if(p)p.style.display=(v[i]===w)?"block":"none";
+    var b=document.getElementById("btn_"+fx+"_"+v[i]);   if(b)b.className=(v[i]===w)?"on":"";
+  }
+}
+function showTab(grp,w,names){
+  for(var i=0;i<names.length;i++){
+    var p=document.getElementById("tab_"+grp+"_"+names[i]); if(p)p.style.display=(names[i]===w)?"block":"none";
+    var b=document.getElementById("tbtn_"+grp+"_"+names[i]); if(b)b.className=(names[i]===w)?"on":"";
+  }
+}
+function toggleFx(id){document.getElementById(id).classList.toggle("open");}
+function expandTable(btn){
+  var tw=btn.closest(".tablewrap"); tw.classList.add("expanded"); btn.style.display="none";
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div>
+    <span class="eyebrow">SnPM Topographic Statistics</span>
+    <h1>Two-way mixed ANOVA &mdash; group &times; condition</h1>
+    <p class="methods">Per-channel <b>two-way mixed ANOVA</b> (group between-subjects, condition within-subject). <b>500 permutations</b> per effect, family-wise corrected with <b>TFCE</b> and <b>cluster-based</b> methods at <b>&alpha; = .05</b>.</p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="glm_mixed2way_2x3_report.csv" download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Results CSV</a>
+    <button class="btn" onclick="window.print()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>Print / PDF</button>
+  </div>
+</header>
+
+<!-- ==== sticky per-effect summary strip ==== -->
+<nav class="strip">
+  <a class="chipfx" href="#fx-group"><span class="lamp sig"></span><span class="nm">Group</span><span class="cts">Clu 17 &middot; TFCE 14 &middot; Unc 24</span><span class="gp p-sig">t = 4.9 &middot; p = .002</span></a>
+  <a class="chipfx" href="#fx-cond"><span class="lamp sig"></span><span class="nm">Condition</span><span class="cts">Clu 16 &middot; TFCE 15 &middot; Unc 22</span><span class="gp p-sig">F = 11.2 &middot; p &lt; .001</span></a>
+  <a class="chipfx" href="#fx-inter"><span class="lamp ns"></span><span class="nm">Interaction</span><span class="cts">Clu 0 &middot; TFCE 0 &middot; Unc 3</span><span class="gp">F = 1.8 &middot; p = .17</span></a>
+  <a class="chipfx" href="#global"><span class="nm">Global test</span></a>
+</nav>
+
+<!-- ==== model card ==== -->
+<section class="section">
+  <div class="head"><h2>Model</h2><span class="sub">The design fitted at every channel</span></div>
+  <div class="model-card">
+    <div class="formula"><span class="fk">Fitted per channel</span>
+      <code><span class="v">POWER</span> ~ <span class="r">group</span> &times; <span class="r">condition</span> + Error(Subject)</code>
+    </div>
+    <div class="specs">
+      <div class="row"><span class="k">Design</span><span class="val tag">2 &times; 3 mixed</span></div>
+      <div class="row"><span class="k">Between-subjects factor</span><span class="val tag">group &mdash; HC, PT</span></div>
+      <div class="row"><span class="k">Within-subject factor</span><span class="val tag">condition &mdash; pre, mid, post</span></div>
+      <div class="row"><span class="k">Subjects</span><span class="val">20 (HC 10 &middot; PT 10)</span></div>
+      <div class="row"><span class="k">Data type</span><span class="val tag">absolute power</span></div>
+      <div class="row"><span class="k">Montage</span><span class="val tag">EGI 256 (HydroCel)</span></div>
+      <div class="row"><span class="k">Permutations &middot; &alpha;</span><span class="val">500 &middot; .05</span></div>
+      <div class="row"><span class="k">Correction</span><span class="val tag">TFCE + cluster</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ==== legend ==== -->
+<section class="section">
+  <div class="head"><h2>Legend</h2><span class="sub">Statistics, colour scales &amp; markers</span></div>
+  <div class="legend">
+    <div class="grp"><span class="k">Signed t</span><span class="tmapbar" style="background:linear-gradient(90deg,#2f6db0,#eef2f6 50%,#c2543a)"></span><span style="color:var(--cool)">&minus;</span><span style="color:var(--warm)">+</span></div>
+    <span class="sep"></span>
+    <div class="grp"><span class="k">Omnibus F</span><span class="tmapbar" style="background:linear-gradient(90deg,#f3f6f8,#f4b63a 45%,#c2543a 78%,#7a1f10)"></span><span style="color:var(--muted)">low</span><span style="color:var(--warm)">high</span></div>
+    <span class="sep"></span>
+    <div class="grp"><span class="k">Channel dots</span><span style="display:inline-flex;align-items:center;gap:6px"><span class="dd" style="background:#1b2733"></span>uncorrected</span><span style="display:inline-flex;align-items:center;gap:6px"><span class="dd" style="background:#fff;border:1px solid var(--ink-2)"></span>corrected</span></div>
+    <span class="sep"></span>
+    <div class="grp"><span class="k">Cluster number</span><span class="cnum">1</span><span>at cluster centroid, matches table</span></div>
+  </div>
+</section>
+
+<!-- ==== descriptive means ==== -->
+<section class="section">
+  <div class="head"><h2>Descriptive means</h2><span class="sub">Group &times; condition cell means and the interaction plot</span></div>
+  <div class="desc-flex">
+    <div class="fig">
+      <div class="cap"><span class="t">Cell mean topographies</span><span class="f">…_cell_&lt;group&gt;_&lt;cond&gt;.png</span></div>
+      <div class="cellgrid">
+        <span></span><span class="ch">pre</span><span class="ch">mid</span><span class="ch">post</span>
+        <span class="rh">HC</span>
+        <figure class="slot"><img src="m23_cell_HC_pre.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_cell_HC_pre.png</span></figcaption></figure>
+        <figure class="slot"><img src="m23_cell_HC_mid.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_cell_HC_mid.png</span></figcaption></figure>
+        <figure class="slot"><img src="m23_cell_HC_post.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_cell_HC_post.png</span></figcaption></figure>
+        <span class="rh">PT</span>
+        <figure class="slot"><img src="m23_cell_PT_pre.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_cell_PT_pre.png</span></figcaption></figure>
+        <figure class="slot"><img src="m23_cell_PT_mid.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_cell_PT_mid.png</span></figcaption></figure>
+        <figure class="slot"><img src="m23_cell_PT_post.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_cell_PT_post.png</span></figcaption></figure>
+      </div>
+    </div>
+    <div class="fig">
+      <div class="cap"><span class="t">Interaction plot</span><span class="f">m23_interaction_lines.png</span></div>
+      <figure class="slot wide"><img src="m23_interaction_lines.png" alt="interaction line plot" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_interaction_lines.png</span></figcaption></figure>
+      <div class="map-note">Channel-averaged POWER per cell, mean &plusmn; SE; one line per group.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= GROUP MAIN EFFECT (t, significant, expanded) ================= -->
+<section class="effect open" id="fx-group">
+  <div class="ehead" onclick="toggleFx('fx-group')">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg>
+    <h2>Group main effect</h2><span class="esub">signed t &middot; between-subjects permutation</span>
+    <span class="lamp sig"></span><span class="ecount">Clu 17 &middot; TFCE 14 &middot; Unc 24</span>
+  </div>
+  <div class="ebody">
+    <div class="blk">
+      <div class="bh">Effect map</div>
+      <div class="effect-map">
+        <div class="fig">
+          <div class="cap"><span class="t">Effect map (t) &mdash; HC vs PT</span><span class="f">m23_group_tmap.png</span></div>
+          <figure class="slot"><img src="m23_group_tmap.png" alt="group t map" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_group_tmap.png</span></figcaption></figure>
+          <div class="map-note"><span class="dl"><span class="dd" style="background:#2f6db0"></span>t &lt; 0</span><span class="dl"><span class="dd" style="background:#c2543a"></span>t &gt; 0</span><span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span><span class="dl"><span class="dd" style="background:#fff"></span>corrected</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="blk">
+      <div class="bh">Significant channels</div>
+      <div class="seg">
+        <button id="btn_g_clu" class="on" onclick="showView('g','clu')">Cluster <span class="ct">17</span></button>
+        <button id="btn_g_tfce" onclick="showView('g','tfce')">TFCE <span class="ct">14</span></button>
+        <button id="btn_g_unc" onclick="showView('g','unc')">Uncorrected <span class="ct">24</span></button>
+      </div>
+      <div id="panel_g_clu" class="vpanel" data-view-name="Cluster-corrected">
+        <div class="vbody">
+          <div class="fig">
+            <div class="cap"><span class="t">Cluster significance map</span><span class="f">m23_group_cluster.png</span></div>
+            <figure class="slot"><img src="m23_group_cluster.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_group_cluster.png</span></figcaption></figure>
+            <div class="map-note"><span class="dl"><span class="cnum" style="width:14px;height:14px;font-size:9px">1</span>cluster number at centroid</span><span class="dl"><span class="dd" style="background:#fff"></span>cluster-corrected</span></div>
+          </div>
+          <div class="tablewrap">
+            <div class="thead-note"><span><b>17</b> channels in <b>2</b> significant clusters</span><span>positive and negative clusters listed separately</span></div>
+            <table class="sum"><thead><tr><th>Channel</th><th>t</th><th>cluster p</th></tr></thead><tbody>
+              <tr class="sign-row"><td colspan="3">Positive clusters <span class="sgn">(t &gt; 0)</span></td></tr>
+              <tr class="grp-row"><td colspan="3"><span class="cnum">1</span>Cluster 1<span class="cp">p = .004 &middot; 12 ch</span></td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E129</td><td class="stat-v">5.84</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E128</td><td class="stat-v">5.41</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E130</td><td class="stat-v">5.17</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E119</td><td class="stat-v">4.92</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E127</td><td class="stat-v">4.70</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E141</td><td class="stat-v">4.55</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E100</td><td class="stat-v">4.38</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E140</td><td class="stat-v">4.21</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E101</td><td class="stat-v">4.05</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E152</td><td class="stat-v">3.90</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E153</td><td class="stat-v">3.77</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E110</td><td class="stat-v">3.62</td><td class="p-sig">.004</td></tr>
+              <tr class="sign-row"><td colspan="3">Negative clusters <span class="sgn">(t &lt; 0)</span></td></tr>
+              <tr class="grp-row"><td colspan="3"><span class="cnum">2</span>Cluster 2<span class="cp">p = .031 &middot; 5 ch</span></td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E47</td><td class="stat-v">&minus;4.12</td><td class="p-sig">.031</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E46</td><td class="stat-v">&minus;3.88</td><td class="p-sig">.031</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E39</td><td class="stat-v">&minus;3.61</td><td class="p-sig">.031</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E38</td><td class="stat-v">&minus;3.40</td><td class="p-sig">.031</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E32</td><td class="stat-v">&minus;3.22</td><td class="p-sig">.031</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+      <div id="panel_g_tfce" class="vpanel" data-view-name="TFCE-corrected" style="display:none">
+        <div class="vbody">
+          <div class="fig">
+            <div class="cap"><span class="t">TFCE significance map</span><span class="f">m23_group_tfce.png</span></div>
+            <figure class="slot"><img src="m23_group_tfce.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_group_tfce.png</span></figcaption></figure>
+            <div class="map-note"><span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span><span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span></div>
+          </div>
+          <div class="tablewrap">
+            <div class="thead-note"><span><b>14</b> TFCE-corrected significant channels</span><span>sorted by ascending p</span></div>
+            <table class="sum"><thead><tr><th>Channel</th><th>t</th><th>p</th></tr></thead><tbody>
+              <tr><td class="band"><span class="dotkey cor"></span>E129</td><td class="stat-v">5.84</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E128</td><td class="stat-v">5.41</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E130</td><td class="stat-v">5.17</td><td class="p-sig">.006</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E119</td><td class="stat-v">4.92</td><td class="p-sig">.008</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E127</td><td class="stat-v">4.70</td><td class="p-sig">.010</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E141</td><td class="stat-v">4.55</td><td class="p-sig">.014</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E100</td><td class="stat-v">4.38</td><td class="p-sig">.018</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E140</td><td class="stat-v">4.21</td><td class="p-sig">.022</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E101</td><td class="stat-v">4.05</td><td class="p-sig">.026</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E152</td><td class="stat-v">3.90</td><td class="p-sig">.031</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E153</td><td class="stat-v">3.77</td><td class="p-sig">.035</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E47</td><td class="stat-v">&minus;4.12</td><td class="p-sig">.038</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E46</td><td class="stat-v">&minus;3.88</td><td class="p-sig">.043</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E110</td><td class="stat-v">3.62</td><td class="p-sig">.048</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+      <div id="panel_g_unc" class="vpanel" data-view-name="Uncorrected" style="display:none">
+        <div class="tablewrap">
+          <div class="thead-note"><span><b>24</b> uncorrected significant channels</span><span>sorted by ascending p &middot; full list in the results CSV</span></div>
+          <table class="sum"><thead><tr><th>Channel</th><th>t</th><th>p</th></tr></thead><tbody>
+            <tr><td class="band"><span class="dotkey unc"></span>E129</td><td class="stat-v">5.84</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E128</td><td class="stat-v">5.41</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E130</td><td class="stat-v">5.17</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E119</td><td class="stat-v">4.92</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E127</td><td class="stat-v">4.70</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E141</td><td class="stat-v">4.55</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E100</td><td class="stat-v">4.38</td><td class="p-sig">.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E47</td><td class="stat-v">&minus;4.12</td><td class="p-sig">.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E140</td><td class="stat-v">4.21</td><td class="p-sig">.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E101</td><td class="stat-v">4.05</td><td class="p-sig">.002</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E152</td><td class="stat-v">3.90</td><td class="p-sig">.002</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E46</td><td class="stat-v">&minus;3.88</td><td class="p-sig">.003</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E153</td><td class="stat-v">3.77</td><td class="p-sig">.004</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E110</td><td class="stat-v">3.62</td><td class="p-sig">.005</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E39</td><td class="stat-v">&minus;3.61</td><td class="p-sig">.005</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E38</td><td class="stat-v">&minus;3.40</td><td class="p-sig">.007</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E131</td><td class="stat-v">3.35</td><td class="p-sig">.008</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E32</td><td class="stat-v">&minus;3.22</td><td class="p-sig">.010</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E142</td><td class="stat-v">3.10</td><td class="p-sig">.013</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E90</td><td class="stat-v">2.95</td><td class="p-sig">.017</td></tr>
+            <tr class="xrow"><td class="band"><span class="dotkey unc"></span>E154</td><td class="stat-v">2.71</td><td class="p-sig">.024</td></tr>
+            <tr class="xrow"><td class="band"><span class="dotkey unc"></span>E182</td><td class="stat-v">2.44</td><td class="p-sig">.033</td></tr>
+            <tr class="xrow"><td class="band"><span class="dotkey unc"></span>E197</td><td class="stat-v">&minus;2.21</td><td class="p-sig">.041</td></tr>
+            <tr class="xrow"><td class="band"><span class="dotkey unc"></span>E170</td><td class="stat-v">&minus;2.05</td><td class="p-sig">.048</td></tr>
+          </tbody></table>
+          <button class="morebtn" onclick="expandTable(this)">Show all 24 channels</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CONDITION MAIN EFFECT (F, significant, expanded, post-hoc tabs) ================= -->
+<section class="effect open" id="fx-cond">
+  <div class="ehead" onclick="toggleFx('fx-cond')">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg>
+    <h2>Condition main effect</h2><span class="esub">omnibus F &middot; within-subject permutation</span>
+    <span class="lamp sig"></span><span class="ecount">Clu 16 &middot; TFCE 15 &middot; Unc 22</span>
+  </div>
+  <div class="ebody">
+    <div class="blk">
+      <div class="bh">Effect map</div>
+      <div class="effect-map">
+        <div class="fig">
+          <div class="cap"><span class="t">Effect map (F) &mdash; pre / mid / post</span><span class="f">m23_condition_Fmap.png</span></div>
+          <figure class="slot"><img src="m23_condition_Fmap.png" alt="condition F map" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_condition_Fmap.png</span></figcaption></figure>
+          <div class="map-note"><span class="dl"><span class="dd" style="background:#f4b63a"></span>low F</span><span class="dl"><span class="dd" style="background:#7a1f10"></span>high F</span><span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span><span class="dl"><span class="dd" style="background:#fff"></span>corrected</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="blk">
+      <div class="bh">Significant channels</div>
+      <div class="seg">
+        <button id="btn_c_clu" class="on" onclick="showView('c','clu')">Cluster <span class="ct">16</span></button>
+        <button id="btn_c_tfce" onclick="showView('c','tfce')">TFCE <span class="ct">15</span></button>
+        <button id="btn_c_unc" onclick="showView('c','unc')">Uncorrected <span class="ct">22</span></button>
+      </div>
+      <div id="panel_c_clu" class="vpanel" data-view-name="Cluster-corrected">
+        <div class="vbody">
+          <div class="fig">
+            <div class="cap"><span class="t">Cluster significance map</span><span class="f">m23_condition_cluster.png</span></div>
+            <figure class="slot"><img src="m23_condition_cluster.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_condition_cluster.png</span></figcaption></figure>
+            <div class="map-note"><span class="dl"><span class="cnum" style="width:14px;height:14px;font-size:9px">1</span>cluster number at centroid</span><span class="dl"><span class="dd" style="background:#fff"></span>cluster-corrected</span></div>
+          </div>
+          <div class="tablewrap">
+            <div class="thead-note"><span><b>16</b> channels in <b>1</b> significant cluster</span><span>grouped by cluster, ascending cluster p</span></div>
+            <table class="sum"><thead><tr><th>Channel</th><th>F</th><th>cluster p</th></tr></thead><tbody>
+              <tr class="grp-row"><td colspan="3"><span class="cnum">1</span>Cluster 1<span class="cp">p = .002 &middot; 16 ch</span></td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E75</td><td class="stat-v">18.42</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E70</td><td class="stat-v">16.90</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E83</td><td class="stat-v">15.77</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E74</td><td class="stat-v">14.98</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E82</td><td class="stat-v">14.11</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E71</td><td class="stat-v">13.56</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E76</td><td class="stat-v">12.87</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E84</td><td class="stat-v">12.02</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E69</td><td class="stat-v">11.40</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E89</td><td class="stat-v">10.85</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E62</td><td class="stat-v">10.31</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E88</td><td class="stat-v">9.76</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E90</td><td class="stat-v">9.15</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E61</td><td class="stat-v">8.64</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E85</td><td class="stat-v">8.02</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E66</td><td class="stat-v">7.55</td><td class="p-sig">.002</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+      <div id="panel_c_tfce" class="vpanel" data-view-name="TFCE-corrected" style="display:none">
+        <div class="vbody">
+          <div class="fig">
+            <div class="cap"><span class="t">TFCE significance map</span><span class="f">m23_condition_tfce.png</span></div>
+            <figure class="slot"><img src="m23_condition_tfce.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_condition_tfce.png</span></figcaption></figure>
+            <div class="map-note"><span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span><span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span></div>
+          </div>
+          <div class="tablewrap">
+            <div class="thead-note"><span><b>15</b> TFCE-corrected significant channels</span><span>sorted by ascending p</span></div>
+            <table class="sum"><thead><tr><th>Channel</th><th>F</th><th>p</th></tr></thead><tbody>
+              <tr><td class="band"><span class="dotkey cor"></span>E75</td><td class="stat-v">18.42</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E70</td><td class="stat-v">16.90</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E83</td><td class="stat-v">15.77</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E74</td><td class="stat-v">14.98</td><td class="p-sig">.006</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E82</td><td class="stat-v">14.11</td><td class="p-sig">.008</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E71</td><td class="stat-v">13.56</td><td class="p-sig">.010</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E76</td><td class="stat-v">12.87</td><td class="p-sig">.012</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E84</td><td class="stat-v">12.02</td><td class="p-sig">.016</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E69</td><td class="stat-v">11.40</td><td class="p-sig">.020</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E89</td><td class="stat-v">10.85</td><td class="p-sig">.024</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E62</td><td class="stat-v">10.31</td><td class="p-sig">.029</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E88</td><td class="stat-v">9.76</td><td class="p-sig">.033</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E90</td><td class="stat-v">9.15</td><td class="p-sig">.038</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E61</td><td class="stat-v">8.64</td><td class="p-sig">.043</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E85</td><td class="stat-v">8.02</td><td class="p-sig">.049</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+      <div id="panel_c_unc" class="vpanel" data-view-name="Uncorrected" style="display:none">
+        <div class="tablewrap">
+          <div class="thead-note"><span><b>22</b> uncorrected significant channels</span><span>sorted by ascending p &middot; full list in the results CSV</span></div>
+          <table class="sum"><thead><tr><th>Channel</th><th>F</th><th>p</th></tr></thead><tbody>
+            <tr><td class="band"><span class="dotkey unc"></span>E75</td><td class="stat-v">18.42</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E70</td><td class="stat-v">16.90</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E83</td><td class="stat-v">15.77</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E74</td><td class="stat-v">14.98</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E82</td><td class="stat-v">14.11</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E71</td><td class="stat-v">13.56</td><td class="p-sig">&lt;.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E76</td><td class="stat-v">12.87</td><td class="p-sig">.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E84</td><td class="stat-v">12.02</td><td class="p-sig">.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E69</td><td class="stat-v">11.40</td><td class="p-sig">.001</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E89</td><td class="stat-v">10.85</td><td class="p-sig">.002</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E62</td><td class="stat-v">10.31</td><td class="p-sig">.002</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E88</td><td class="stat-v">9.76</td><td class="p-sig">.003</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E90</td><td class="stat-v">9.15</td><td class="p-sig">.004</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E61</td><td class="stat-v">8.64</td><td class="p-sig">.005</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E85</td><td class="stat-v">8.02</td><td class="p-sig">.007</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E66</td><td class="stat-v">7.55</td><td class="p-sig">.009</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E72</td><td class="stat-v">6.84</td><td class="p-sig">.013</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E65</td><td class="stat-v">6.21</td><td class="p-sig">.018</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E77</td><td class="stat-v">5.66</td><td class="p-sig">.024</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E92</td><td class="stat-v">5.10</td><td class="p-sig">.031</td></tr>
+            <tr class="xrow"><td class="band"><span class="dotkey unc"></span>E60</td><td class="stat-v">4.62</td><td class="p-sig">.039</td></tr>
+            <tr class="xrow"><td class="band"><span class="dotkey unc"></span>E96</td><td class="stat-v">4.28</td><td class="p-sig">.047</td></tr>
+          </tbody></table>
+          <button class="morebtn" onclick="expandTable(this)">Show all 22 channels</button>
+        </div>
+      </div>
+    </div>
+    <div class="blk">
+      <div class="bh">Post-hoc pairwise contrasts &mdash; signed t per comparison</div>
+      <div class="tabs">
+        <button id="tbtn_ph_preMid" class="on" onclick="showTab('ph','preMid',['preMid','prePost','midPost'])">pre vs mid <span class="ct">6</span></button>
+        <button id="tbtn_ph_prePost" onclick="showTab('ph','prePost',['preMid','prePost','midPost'])">pre vs post <span class="ct">14</span></button>
+        <button id="tbtn_ph_midPost" onclick="showTab('ph','midPost',['preMid','prePost','midPost'])">mid vs post <span class="ct none">0</span></button>
+      </div>
+      <div id="tab_ph_preMid" class="tabpanel" data-tab-name="Post-hoc: pre vs mid">
+        <div class="vbody">
+          <div class="fig">
+            <div class="cap"><span class="t">pre vs mid &mdash; TFCE map</span><span class="f">m23_ph_preVsMid_tfce.png</span></div>
+            <figure class="slot"><img src="m23_ph_preVsMid_tfce.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_ph_preVsMid_tfce.png</span></figcaption></figure>
+            <div class="map-note"><span class="dl"><span class="dd" style="background:#2f6db0"></span>t &lt; 0</span><span class="dl"><span class="dd" style="background:#c2543a"></span>t &gt; 0</span><span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span></div>
+          </div>
+          <div class="tablewrap">
+            <div class="thead-note"><span><b>6</b> TFCE-corrected significant channels</span><span>Bonferroni-adjusted across 3 comparisons</span></div>
+            <table class="sum"><thead><tr><th>Channel</th><th>t</th><th>p</th></tr></thead><tbody>
+              <tr><td class="band"><span class="dotkey cor"></span>E75</td><td class="stat-v">4.31</td><td class="p-sig">.008</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E70</td><td class="stat-v">3.95</td><td class="p-sig">.012</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E83</td><td class="stat-v">3.72</td><td class="p-sig">.018</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E74</td><td class="stat-v">3.44</td><td class="p-sig">.026</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E82</td><td class="stat-v">3.19</td><td class="p-sig">.035</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E71</td><td class="stat-v">2.98</td><td class="p-sig">.044</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+      <div id="tab_ph_prePost" class="tabpanel" data-tab-name="Post-hoc: pre vs post" style="display:none">
+        <div class="vbody">
+          <div class="fig">
+            <div class="cap"><span class="t">pre vs post &mdash; TFCE map</span><span class="f">m23_ph_preVsPost_tfce.png</span></div>
+            <figure class="slot"><img src="m23_ph_preVsPost_tfce.png" alt="" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_ph_preVsPost_tfce.png</span></figcaption></figure>
+            <div class="map-note"><span class="dl"><span class="dd" style="background:#2f6db0"></span>t &lt; 0</span><span class="dl"><span class="dd" style="background:#c2543a"></span>t &gt; 0</span><span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span></div>
+          </div>
+          <div class="tablewrap">
+            <div class="thead-note"><span><b>14</b> TFCE-corrected significant channels</span><span>Bonferroni-adjusted across 3 comparisons</span></div>
+            <table class="sum"><thead><tr><th>Channel</th><th>t</th><th>p</th></tr></thead><tbody>
+              <tr><td class="band"><span class="dotkey cor"></span>E75</td><td class="stat-v">5.92</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E70</td><td class="stat-v">5.55</td><td class="p-sig">.002</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E83</td><td class="stat-v">5.24</td><td class="p-sig">.004</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E74</td><td class="stat-v">4.98</td><td class="p-sig">.006</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E82</td><td class="stat-v">4.71</td><td class="p-sig">.008</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E71</td><td class="stat-v">4.50</td><td class="p-sig">.010</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E76</td><td class="stat-v">4.28</td><td class="p-sig">.014</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E84</td><td class="stat-v">4.02</td><td class="p-sig">.018</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E69</td><td class="stat-v">3.81</td><td class="p-sig">.022</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E89</td><td class="stat-v">3.60</td><td class="p-sig">.027</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E62</td><td class="stat-v">3.42</td><td class="p-sig">.032</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E88</td><td class="stat-v">3.25</td><td class="p-sig">.038</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E90</td><td class="stat-v">3.08</td><td class="p-sig">.043</td></tr>
+              <tr><td class="band"><span class="dotkey cor"></span>E61</td><td class="stat-v">2.94</td><td class="p-sig">.048</td></tr>
+            </tbody></table>
+          </div>
+        </div>
+      </div>
+      <div id="tab_ph_midPost" class="tabpanel" data-tab-name="Post-hoc: mid vs post" style="display:none">
+        <div class="tablewrap">
+          <div class="empty-note"><b>No significant channels</b> for mid vs post after TFCE correction (smallest p = .11). Uncorrected results are in the CSV.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= INTERACTION (F, not significant, collapsed) ================= -->
+<section class="effect" id="fx-inter">
+  <div class="ehead" onclick="toggleFx('fx-inter')">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 6 6 6-6 6"/></svg>
+    <h2>Interaction (group &times; condition)</h2><span class="esub">omnibus F &middot; within-subject permutation</span>
+    <span class="lamp ns"></span><span class="ecount">Clu 0 &middot; TFCE 0 &middot; Unc 3</span>
+  </div>
+  <div class="ebody">
+    <div class="blk">
+      <div class="bh">Effect map</div>
+      <div class="effect-map">
+        <div class="fig">
+          <div class="cap"><span class="t">Effect map (F) &mdash; interaction</span><span class="f">m23_interaction_Fmap.png</span></div>
+          <figure class="slot"><img src="m23_interaction_Fmap.png" alt="interaction F map" onerror="this.classList.add('err')"><figcaption class="ph"><span class="nd">No data</span><span class="fn">m23_interaction_Fmap.png</span></figcaption></figure>
+          <div class="map-note"><span class="dl"><span class="dd" style="background:#f4b63a"></span>low F</span><span class="dl"><span class="dd" style="background:#7a1f10"></span>high F</span><span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="blk">
+      <div class="bh">Significant channels</div>
+      <div class="seg">
+        <button id="btn_i_clu" class="on" onclick="showView('i','clu')">Cluster <span class="ct none">0</span></button>
+        <button id="btn_i_tfce" onclick="showView('i','tfce')">TFCE <span class="ct none">0</span></button>
+        <button id="btn_i_unc" onclick="showView('i','unc')">Uncorrected <span class="ct">3</span></button>
+      </div>
+      <div id="panel_i_clu" class="vpanel" data-view-name="Cluster-corrected">
+        <div class="tablewrap">
+          <div class="empty-note"><b>No significant clusters</b> for the interaction (smallest cluster p = .23). The effect map above shows the uncorrected F pattern.</div>
+        </div>
+      </div>
+      <div id="panel_i_tfce" class="vpanel" data-view-name="TFCE-corrected" style="display:none">
+        <div class="tablewrap">
+          <div class="empty-note"><b>No TFCE-corrected significant channels</b> (smallest p = .19).</div>
+        </div>
+      </div>
+      <div id="panel_i_unc" class="vpanel" data-view-name="Uncorrected" style="display:none">
+        <div class="tablewrap">
+          <div class="thead-note"><span><b>3</b> uncorrected significant channels</span><span>interpret with caution &mdash; not corrected</span></div>
+          <table class="sum"><thead><tr><th>Channel</th><th>F</th><th>p</th></tr></thead><tbody>
+            <tr><td class="band"><span class="dotkey unc"></span>E45</td><td class="stat-v">4.88</td><td class="p-sig">.021</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E51</td><td class="stat-v">4.31</td><td class="p-sig">.034</td></tr>
+            <tr><td class="band"><span class="dotkey unc"></span>E58</td><td class="stat-v">3.96</td><td class="p-sig">.047</td></tr>
+          </tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==== global test ==== -->
+<section class="section" id="global" style="scroll-margin-top:70px">
+  <div class="head"><h2>Global test</h2><span class="sub">Whole-head mixed ANOVA on the channel-averaged signal</span></div>
+  <div class="global-card">
+    <div class="gstat"><span class="gk">Group</span><span class="gv">t = 4.9</span><span class="gp p-sig">p = .002</span></div>
+    <div class="gsep"></div>
+    <div class="gstat"><span class="gk">Condition</span><span class="gv">F = 11.2</span><span class="gp p-sig">p &lt; .001</span></div>
+    <div class="gsep"></div>
+    <div class="gstat"><span class="gk">Interaction</span><span class="gv">F = 1.8</span><span class="gp">p = .17</span></div>
+    <div class="gnote">One whole-head mixed ANOVA on the <b>channel-averaged</b> signal &mdash; the omnibus answer before any per-channel localisation.</div>
+  </div>
+</section>
+
+<footer class="foot">
+  <span>Self-contained report &mdash; keep the PNG images in the same folder as this HTML.</span>
+  <span>Generated 29-Aug-2026</span>
+</footer>
+
+</div>
+</body>
+</html>

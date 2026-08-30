@@ -1611,7 +1611,12 @@ function [results_struct, results_text] = core_snpm_analysis(params)
 
     % plot t-map or corr-map
     try
-        TopoplotSignificant_single(T.real_T,uncorrsigch,correctTFCEsigch,SnPMsigch,chanlocs,...
+        % Clusters (not the flat SnPMsigch) so the Cluster PNG carries the same
+        % cluster NUMBERS the HTML table lists (snpm_order_clusters), and the
+        % RUN'S alpha alongside them so both numberings key off one value. The
+        % cell around Clusters keeps struct() from expanding the struct array.
+        TopoplotSignificant_single(T.real_T,uncorrsigch,correctTFCEsigch,...
+            struct('Clusters',{Clusters},'alpha',alpha),chanlocs,...
             insidegoodch,params.comparison, savepath,base_filename, select_mode);
     catch ME
         warning(ME.identifier, 'Could not generate significance topology plots: %s', ME.message);
@@ -1638,6 +1643,10 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     results_struct.uncorrsigch = uncorrsigch;
     results_struct.correctTFCEsigch = correctTFCEsigch;
     results_struct.SnPMsigch = SnPMsigch;
+    % The significance level the maps, clusters and TFCE sets above were built
+    % at. Published so the report numbers its clusters with the SAME threshold
+    % the run used, rather than a second hard-coded .05 that could drift.
+    results_struct.alpha = alpha;
     results_struct.chanlocs = chanlocs;
     % Effective N -- the two columns described above the mask, wired to the
     % output contract here. They are absent entirely from the GLM/LMM structs and
@@ -1719,6 +1728,131 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     timestamp = datestr(now, 'yyyymmdd_HHMMSS');
     %figtitle = [params.comparison '_' params.tail '_' timestamp];
     outputSname = fullfile(params.output_path, [base_filename, '_' timestamp]);
+
+    % ------------------------------------------------------------------
+    % CORRELATION DESCRIPTIVE: the scatter behind the map.
+    %
+    % The r-map says WHERE; a reader still has to see WHAT was correlated, and
+    % a topography cannot show a nonlinearity, one subject driving the effect,
+    % or a bimodal split. So: the signal averaged over the channels the analysis
+    % actually localised -- cluster-significant, else TFCE-significant, else
+    % every evaluable channel, the same fallback the LMM and mixed2way
+    % descriptives use -- against the second variable, one point per subject.
+    %
+    % The matrices plotted are data_x / data_y AS TESTED: post transform and
+    % post covariate residualization, so a partial correlation's scatter shows
+    % the residuals whose correlation the map reports rather than raw values.
+    % The axis labels say which. Descriptive only: no statistic is drawn from
+    % it, and the fit line is least squares on whatever is plotted.
+    %
+    % Written here (not in the plotting block above) because the filename has to
+    % carry the run's timestamp, and skipped for source space, where the run
+    % deliberately emits no images at all.
+    if contains(params.comparison, 'correlation') && ~is_source
+        try
+            sch = SnPMsigch; setname = 'the cluster-significant channels';
+            if isempty(sch)
+                sch = correctTFCEsigch; setname = 'the TFCE-significant channels';
+            end
+            if isempty(sch)
+                if isempty(evaluable), sch = 1:size(data_x, 2); else, sch = find(evaluable); end
+                setname = 'all evaluable channels';
+            end
+            sch = unique(double(sch(:)'));
+            xv = mean(data_x(:, sch), 2, 'omitnan');
+            yv = mean(data_y(:, sch), 2, 'omitnan');
+            xlab = sprintf('EEG - mean of %d channel(s)', numel(sch));
+            if behavior_mode
+                % data_y is the behavioural score broadcast across the montage,
+                % so its channel mean IS that score (residualized when
+                % covariates are in play).
+                ylab = behavior_col;
+            else
+                ylab = sprintf('%s - mean of %d channel(s)', data2_basename, numel(sch));
+            end
+
+            % SPEARMAN IS A RANK CORRELATION, SO THE SCATTER IS ON RANKS.
+            %
+            % The map for 'correlationS' is a correlation of RANKS at every
+            % channel. Plotting raw values under it, with a least-squares line
+            % through them, draws a relation the report never tested: the line's
+            % slope is the Pearson fit, and a monotone-but-curved association --
+            % the case Spearman exists for -- shows as a poor linear fit next to
+            % a strong reported rho. So both axes are ranked here.
+            %
+            % Two routes reach this point with 'correlationS':
+            %   * with covariates, the partial-Spearman block above has ALREADY
+            %     ranked data_x/data_y (tiedrank) and then residualized them, so
+            %     what is plotted is the rank residual whose linear correlation
+            %     the map reports -- rank again and the picture would no longer
+            %     be the tested quantity;
+            %   * without covariates the matrices are still raw (the engines
+            %     rank internally), so the channel means are ranked here.
+            % Either way the axes say 'rank of', and the report caption names
+            % Spearman (results_struct.descriptive.scatter_is_rank).
+            %
+            % 'residualized' is the condition under which residualization
+            % ACTUALLY ran (the same test as the partial-correlation block
+            % above): use_covariates alone can be true with an empty covariate
+            % matrix, in which case nothing was partialled out and the
+            % '(covariate residual)' label would be a false statement about the
+            % plotted values.
+            residualized = use_covariates && ~isempty(covariates);
+            is_rank = strcmp(params.comparison, 'correlationS');
+            if is_rank
+                if ~residualized
+                    xv = tiedrank(xv);
+                    yv = tiedrank(yv);
+                end
+                xlab = ['rank of ' xlab];
+                ylab = ['rank of ' ylab];
+            end
+            if residualized
+                xlab = [xlab ' (covariate residual)'];
+                ylab = [ylab ' (covariate residual)'];
+            end
+
+            % DEGENERATE AXIS -> NO SCATTER, rather than a misleading one.
+            % datatype 'normalize' z-scores each subject ACROSS channels, so the
+            % channel mean of a subject's row is analytically zero; averaged
+            % over every evaluable channel the x axis is then rounding noise
+            % (~1e-17) with no spread. A least-squares line through it is
+            % rank-deficient -- polyfit warns 'badly conditioned' -- and its
+            % slope is numerical junk. The figure is skipped and
+            % descriptive.scatter_png is left unset. (Averaged over a small
+            % significant subset the channel mean does carry spread, and the
+            % scatter is still drawn -- hence the test is on the values, not on
+            % the datatype string.)
+            %
+            % The reason is PUBLISHED, not just printed to the console:
+            % descriptive.scatter_skipped_reason is rendered by the report in the
+            % descriptive card where the scatter would have been. Without it the
+            % card silently shows only the mean topographies, and a reader of the
+            % HTML alone cannot tell a suppressed figure from a missing one. It
+            % covers the montage-vs-montage case too, which the
+            % normalize_broadcast_caveat notice does not -- that notice only
+            % fires when Data 2 is a single broadcast behavioural score.
+            if scatter_axis_degenerate(xv) || scatter_axis_degenerate(yv)
+                skip_reason = sprintf(['Correlation scatter skipped: at least one axis ' ...
+                    'has no usable spread over the %d plotted channel(s) (Data Type ' ...
+                    '''%s''). A least-squares line through it would be numerical noise, ' ...
+                    'so no scatter is drawn. The map and its statistics are unaffected.'], ...
+                    numel(sch), params.datatype);
+                fprintf('%s\n', skip_reason);
+                results_struct.descriptive.scatter_skipped_reason = skip_reason;
+            else
+                spng = [outputSname '_scatter.png'];
+                plot_lmm_scatter(xv, yv, [], xlab, ylab, spng);
+                [~, sfn, sext] = fileparts(spng);
+                results_struct.descriptive.scatter_png = [sfn sext];
+                results_struct.descriptive.scatter_channels = sch;
+                results_struct.descriptive.scatter_channel_set = setname;
+                results_struct.descriptive.scatter_is_rank = is_rank;
+            end
+        catch ME
+            warning(ME.identifier, 'Could not generate correlation scatter: %s', ME.message);
+        end
+    end
 
     save([outputSname '.mat'], 'results_struct');
     
@@ -2075,3 +2209,25 @@ end
 
 
 
+
+function tf = scatter_axis_degenerate(v)
+%SCATTER_AXIS_DEGENERATE  True when a scatter axis carries no usable spread.
+%
+% Used to decide whether the correlation descriptive scatter is worth drawing.
+% Two ways an axis becomes useless:
+%   * fewer than 3 finite points -- a "relationship" through 2 points is a line
+%     by construction;
+%   * a spread that is rounding noise relative to the values themselves. The
+%     case that forces this: datatype 'normalize' makes each subject's channel
+%     mean analytically zero, so the EEG axis is ~1e-17 across every subject.
+%     polyfit on it is rank-deficient (the 'badly conditioned' warning) and the
+%     line it returns is meaningless.
+% The test is RELATIVE (std against the value scale, floored at 1) so it fires
+% on numerically-zero spread and never on genuinely small-but-real variation.
+    v = double(v(:));
+    v = v(isfinite(v));
+    tf = true;
+    if numel(v) < 3, return; end
+    scale = max(1, max(abs(v)));
+    tf = std(v) <= 1e-9 * scale;
+end

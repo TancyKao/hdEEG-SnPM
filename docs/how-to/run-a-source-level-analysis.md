@@ -68,8 +68,11 @@ run writes **zero** scalp PNGs) and emit a significant-voxel list instead:
 - `<base>_<timestamp>_sigvoxels.csv` — one row per voxel: `idx, label, X, Y, Z, stat, p, pTFCE,
   sig_uncorr, sig_TFCE, in_sig_cluster, cluster_id, cluster_p`. The same table is also a
   `sigVoxels` sheet in the `.xlsx`.
-- `<base>_<timestamp>.mat` / `.xlsx` / `_report.html` as for every analysis;
-  `results_struct.is_source` is `true`.
+- `<base>_<timestamp>.mat` / `.xlsx` / `_report.html` / `_report.csv` as for every analysis;
+  `results_struct.is_source` is `true`. In the HTML report every image slot shows the grey
+  "No data" placeholder (there are no scalp PNGs to show) and the model card says so; the
+  summary strip, the Cluster / TFCE / Uncorrected tables and the Global test card are filled
+  as usual.
 
 **TFCE is the primary correction.** The cluster statistic on the source **t-test** path is
 cluster **extent** (size) — the same extent-based FWE correction the scalp t-tests use, since the

@@ -1,6 +1,23 @@
 function h = TopoplotSignificant_single(topodata, sigch_unP, sigch_correctedTFCE, clusters, chanlocs, insidegoodch, comparison, filepath, titletext, select_mode)
     % Plot topographical maps with significance markers for TFCE and Cluster corrections
 
+    % CLUSTERS (4th argument) takes any of three forms:
+    %   * struct('Clusters', {Clusters}, 'alpha', alpha) -- the PREFERRED form,
+    %     used by every core. It carries the run's own significance level, so
+    %     the clusters numbered here are exactly the clusters the HTML table
+    %     numbers even if a run ever uses an alpha other than .05. (The cell
+    %     around Clusters is required: struct() would otherwise expand the
+    %     struct ARRAY into a struct array of wrappers.)
+    %   * the Clusters STRUCT ARRAY (.channels/.p) straight from the engine --
+    %     same behaviour at the default alpha = 0.05;
+    %   * a flat vector of already-selected channel indices (legacy callers) --
+    %     dots only, no numbers.
+    % In the first two forms the cluster-corrected channels are flattened out
+    % for the white dots AND each significant cluster gets its number drawn at
+    % its centroid, using the SAME ordering the HTML cluster table uses
+    % (dependencies/snpm_order_clusters.m), so "Cluster 2" in the table is the
+    % "2" on the map. Only the Cluster image is numbered; TFCE is unchanged.
+
     % select_mode ('label'|'positional') chooses the significance-marker index space:
     %   'label'      -> markers use already-filtered sequential channel indices
     %   'positional' -> markers are full-montage indices intersected with insidegoodch
@@ -9,13 +26,44 @@ function h = TopoplotSignificant_single(topodata, sigch_unP, sigch_correctedTFCE
     is_178_channels = strcmp(select_mode, 'label');
     % Configuration for different plot types
     plot_configs = get_plot_configurations(comparison, 'data1', 'data2');
-    
+
+    [cluster_ch, cluster_groups] = resolve_clusters(clusters, topodata);
+
     % Create both plots
     create_significance_plot(topodata, sigch_unP, sigch_correctedTFCE, chanlocs, insidegoodch, ...
-                           filepath, titletext, plot_configs, 'TFCE',is_178_channels);
+                           filepath, titletext, plot_configs, 'TFCE',is_178_channels, {});
     
-    h = create_significance_plot(topodata, sigch_unP, clusters, chanlocs, insidegoodch, ...
-                               filepath, titletext, plot_configs, 'Cluster',is_178_channels);
+    h = create_significance_plot(topodata, sigch_unP, cluster_ch, chanlocs, insidegoodch, ...
+                               filepath, titletext, plot_configs, 'Cluster',is_178_channels, cluster_groups);
+end
+
+function [flat, groups] = resolve_clusters(clusters, topodata)
+% Flat channel vector for the white dots + one channel group per NUMBERED
+% cluster (empty when the caller passed the legacy flat vector).
+%
+% ALPHA travels with the clusters in the wrapper form so the numbering here and
+% the numbering in generateAnalysisReport are driven by one value; the bare
+% struct-array and flat-vector forms fall back to the documented default.
+    groups = {};
+    alpha = 0.05;
+    if isstruct(clusters) && isscalar(clusters) && isfield(clusters, 'Clusters')
+        if isfield(clusters, 'alpha') && ~isempty(clusters.alpha)
+            alpha = double(clusters.alpha(1));
+        end
+        clusters = clusters.Clusters;
+    end
+    if isstruct(clusters)
+        order = snpm_order_clusters(clusters, topodata, alpha);
+        flat = [];
+        for j = 1:numel(order)
+            ch = double(clusters(order(j)).channels(:)');
+            groups{end+1} = ch; %#ok<AGROW>
+            flat = [flat, ch];  %#ok<AGROW>
+        end
+        flat = unique(flat);
+    else
+        flat = clusters;
+    end
 end
 
 % function is_178_channels = detect_channel_system(topodata, chanlocs)
@@ -27,7 +75,22 @@ end
 function configs = get_plot_configurations(comparison, dat1, dat2)
     % Define plot configurations for different comparison types
     configs = struct();
-    
+
+    % Correlation maps carry a correlation coefficient, which is bounded by
+    % [-1 1] BY DEFINITION. The colour limit must be that bound and not the
+    % data/surface range: topoplot's spline interpolation overshoots between
+    % electrodes, so an 'auto' scale reports limits like 1.2 -- an r value that
+    % cannot exist. This matches the r-map written by plot_topoInd, which is
+    % already called with clim_diff = [-1 1] from core_snpm_analysis. Covers
+    % correlationP and correlationS (partial correlation is reported under the
+    % same keys), so it is a guard rather than a switch case.
+    if contains(comparison, 'correlation')
+        configs.colormap = 'jet';
+        configs.clim = [-1, 1];
+        configs.colorlabel = 'warm: positive corr';
+        return;
+    end
+
     switch comparison
         case {'pairedT', 'unpairedT'}
             configs.colormap = 'jet';
@@ -55,11 +118,6 @@ function configs = get_plot_configurations(comparison, dat1, dat2)
             configs.colormap = 'hot';
             configs.clim = 'auto';
             configs.colorlabel = 'circular-linear F';
-
-        case 'correlationS'
-            configs.colormap = 'jet';
-            configs.clim = [-1, 1];
-            configs.colorlabel = 'warm: positive corr';
 
         case 'mixedmodel'
             % LMM statistic is signed t (continuous effect) or F (factor,
@@ -96,7 +154,7 @@ function configs = get_plot_configurations(comparison, dat1, dat2)
 end
 
 function h = create_significance_plot(topodata, sigch_unP, sigch_corrected, chanlocs, ...
-    insidegoodch, filepath, titletext, configs, correction_type, is_178_channels)
+    insidegoodch, filepath, titletext, configs, correction_type, is_178_channels, cluster_groups)
     % Create individual significance plot
 
     % Resolve a symmetric colour scale for signed statistics (clim = 'sym'):
@@ -125,6 +183,9 @@ function h = create_significance_plot(topodata, sigch_unP, sigch_corrected, chan
     
     % Add significance markers
     add_significance_markers(electrodes, sigch_unP, sigch_corrected, chanlocs, insidegoodch, topodata, is_178_channels);
+
+    % Cluster numbers at each cluster's centroid (Cluster image only).
+    add_cluster_numbers(electrodes, cluster_groups, insidegoodch, is_178_channels);
 
     % Save figure
     save_figure(fig, filepath, titletext, correction_type);
@@ -236,6 +297,51 @@ function add_markers_164_channels(electrodes, sigch_unP, sigch_corrected, inside
         if ~isempty(chi3)
             plot_markers(electrodes, chi3, [1 1 1], [1 1 1]);
         end
+    end
+end
+
+function add_cluster_numbers(electrodes, cluster_groups, insidegoodch, is_178_channels)
+% One numbered disc per significant cluster, at the centroid of the cluster's
+% electrodes IN PLOT COORDINATES (electrodes.x/.y, the same index space
+% plot_markers uses), so the number sits on the blob it labels. The numbering
+% is snpm_order_clusters' -- identical to the HTML table's.
+%
+% The positional path carries the SAME electrode-count guard as
+% add_markers_164_channels: when the drawn electrodes and insidegoodch have
+% different lengths the intersect below indexes a different montage, so the
+% dots are suppressed there -- and a number without its dots would point at the
+% wrong scalp position while looking authoritative. Numbers are never drawn
+% where dots are not.
+    if isempty(cluster_groups), return; end
+    if ~is_178_channels && length(electrodes.x) ~= length(insidegoodch)
+        return;     % marker path already warned; do not draw unanchored numbers
+    end
+    accent = [31 111 139] / 255;    % --accent #1f6f8b, the report's cluster-number colour
+    hold on;
+    for j = 1:numel(cluster_groups)
+        ei = map_to_electrodes(cluster_groups{j}, insidegoodch, is_178_channels, numel(electrodes.x));
+        if isempty(ei), continue; end
+        cx = mean(electrodes.x(ei));
+        cy = mean(electrodes.y(ei));
+        % Disc area 110 pt^2 (~10.5 pt across) against the 60 pt^2 significance
+        % dots: large enough to carry a legible bold digit, small enough that it
+        % no longer swallows the dot it sits on.
+        scatter(cx, cy, 110, [1 1 1], 'filled', 'MarkerEdgeColor', accent, 'LineWidth', 1.5);
+        text(cx, cy, sprintf('%d', j), 'FontName', 'Courier', 'FontSize', 8, ...
+            'FontWeight', 'bold', 'Color', accent, ...
+            'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle');
+    end
+end
+
+function ei = map_to_electrodes(idx, insidegoodch, is_178_channels, nElec)
+% Channel indices -> electrode positions, mirroring the two marker paths above.
+    idx = double(idx(:)');
+    if is_178_channels
+        ei = idx(idx > 0 & idx <= nElec);
+    else
+        [~, ei] = intersect(insidegoodch, idx);
+        ei = reshape(ei, 1, []);
+        ei = ei(ei > 0 & ei <= nElec);
     end
 end
 

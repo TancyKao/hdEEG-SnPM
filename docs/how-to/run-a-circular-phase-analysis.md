@@ -239,8 +239,12 @@ Same output set as every other analysis, written to `output_path`:
   `results_struct.circ_descriptive` (per-group mean direction, circular SD, Rayleigh — **labelled
   no-inference**).
 - `<base>_<timestamp>.xlsx` — the significant-channel table, plus an **`excludedChannels`** sheet.
-- `<base>_<timestamp>_report.html` — the combined report, with the applied rotation in the header
-  and an excluded-channel banner.
+- `<base>_<timestamp>_report.html` — the report, with the applied rotation in the model card
+  and the excluded channels in the amber notice block under it. Its single effect section has
+  the **Cluster / TFCE / Uncorrected** toggle; the cluster table is grouped per cluster and the
+  cluster numbers are drawn on the Cluster PNG. In place of the Global test card it prints a
+  note saying why there is none (next paragraph). The **Results CSV** button opens the sibling
+  `<base>_<timestamp>_report.csv`.
 - Topoplots.
 
 **There is no global/omnibus test card**, deliberately: averaging angles arithmetically across

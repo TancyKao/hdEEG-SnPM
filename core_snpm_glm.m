@@ -171,7 +171,12 @@ function [results_struct, results_text] = core_snpm_glm(params)
     outputSname = fullfile(params.output_path, [base_filename, '_', timestamp]);
 
     try
-        TopoplotSignificant_single(T.real_T, uncorrsigch, correctTFCEsigch, SnPMsigch, ...
+        % Clusters, not the flat SnPMsigch: the plotter numbers the clusters on
+        % the Cluster image with the same order the report table uses. The run's
+        % alpha rides along in the wrapper so both numberings key off one value;
+        % the cell stops struct() expanding the struct array.
+        TopoplotSignificant_single(T.real_T, uncorrsigch, correctTFCEsigch, ...
+            struct('Clusters',{Clusters},'alpha',alpha), ...
             chanlocs, insidegoodch, preset, params.output_path, base_filename, select_mode);
     catch ME
         warning(ME.identifier, 'Could not generate significance topology plots: %s', ME.message);
@@ -266,7 +271,8 @@ function [results_struct, results_text] = core_snpm_glm(params)
         try
             TopoplotSignificant_single(posthoc_results(ph).T.real_T, ...
                 posthoc_results(ph).uncorrsigch, posthoc_results(ph).correctTFCEsigch, ...
-                posthoc_results(ph).SnPMsigch, chanlocs, insidegoodch, 'posthocT', ...
+                struct('Clusters',{posthoc_results(ph).Clusters},'alpha',alpha), ...
+                chanlocs, insidegoodch, 'posthocT', ...
                 params.output_path, map_base, select_mode);
             posthoc_results(ph).map_base = map_base;
         catch ME
@@ -281,6 +287,10 @@ function [results_struct, results_text] = core_snpm_glm(params)
     results_struct.uncorrsigch = uncorrsigch;
     results_struct.correctTFCEsigch = correctTFCEsigch;
     results_struct.SnPMsigch = SnPMsigch;
+    % The significance level the maps, clusters and TFCE sets above were built
+    % at. Published so the report numbers its clusters with the SAME threshold
+    % the run used, rather than a second hard-coded .05 that could drift.
+    results_struct.alpha = alpha;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = posthoc_results;
     results_struct.excluded_channels = excluded_channels;
@@ -296,6 +306,14 @@ function [results_struct, results_text] = core_snpm_glm(params)
     results_struct.glm.effect_map_only = effect_map_only;  % regression -> single map
     results_struct.glm.perm_type = D.perm_type;
     results_struct.glm.n_obs = size(power, 1);
+    % Observations, in the units the reader counts in. n_obs is ROWS; for a
+    % repeated-measures design that is not the number of subjects, and for a
+    % between-groups design "n = 32" hides whether it was 16 vs 16 or 28 vs 4.
+    % Both are stated so the report's Observations row never has to infer one
+    % from the other. group_sizes/group_size_labels are empty when the preset
+    % has no grouping factor.
+    [results_struct.glm.n_subjects, results_struct.glm.group_sizes, ...
+        results_struct.glm.group_size_labels] = design_counts(meta, opts);
     results_struct.glm.group_labels   = group_labels;    % cellstr, parallel to ...
     results_struct.glm.group_mean_png = group_mean_png;  % ... mean-topo filenames
     results_struct.glm.fmap_png       = fmap_png;        % standalone F-map filename
@@ -457,34 +475,9 @@ function s = level_to_str(levels, i)
     end
 end
 
-function save_single_topo(data, chanlocs, title_str, out_png, cmap, clim)
-% Single-map scalp topography saved to OUT_PNG. Mirrors create_topo_plot in
-% dependencies/plot_topoInd.m (settings, sizing, dpi) so the per-group means
-% and F-map match the look of the legacy difference maps.
-%
-% CLIM (optional) sets explicit colour limits. Signed maps (e.g. post-hoc
-% pairwise t) must pass symmetric limits [-m m] so 0 sits at the colormap
-% centre; without it 'minmax'/'auto' scaling is asymmetric and a mixed +/-
-% map can read as all-one-colour. Omit CLIM (or pass []) to keep the legacy
-% data-driven 'minmax' scaling used by the 'hot' F-map / group means.
-    if nargin < 6, clim = []; end
-    if isempty(clim), maplim = 'minmax'; else, maplim = clim; end
-    plot_settings = {'headrad', 0.6, 'style', 'map', 'electrodes', 'on', ...
-        'maplimits', maplim, 'whitebk', 'on'};
-    fig = figure('Position', [50 50 450 450], 'Color', 'w', 'PaperPositionMode', 'auto', 'Visible', 'off');
-    cl = onCleanup(@() close(fig)); %#ok<NASGU>
-    topoplot(data, chanlocs, plot_settings{:});
-    if ischar(cmap) || iscell(cmap) || isnumeric(cmap)
-        if iscell(cmap), colormap(cmap{1}); else, colormap(cmap); end
-    end
-    if isempty(clim), caxis('auto'); else, caxis(clim); end
-    axis off;
-    set(gca, 'XLim', [-0.55 0.55], 'YLim', [-0.59 0.59]);
-    delete(findobj(gca, 'Marker', '.'));
-    title(title_str, 'Interpreter', 'none');
-    colorbar;
-    print(fig, '-dpng', '-r300', out_png);
-end
+% save_single_topo lives in dependencies/save_single_topo.m -- this file used to
+% hold a byte-identical local copy, which shadowed it and had to be kept in sync
+% by hand. Deleted; the shared function is on the path from the repo root.
 
 % =========================================================================
 % TWO-WAY MIXED ANOVA (mixed2way) — multi-effect pipeline
@@ -521,7 +514,8 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     eG.key = 'group';
     eG.excluded_channels = excluded_channel_info(eG.evaluable, chanlocs, 'mixed2way group');
     eG = gen_effect_topos(eG, subj_power, subj_meta, opts.group_col, chanlocs, ...
-        insidegoodch, select_mode, outpath, [base_filename '_group'], [outputSname '_group']);
+        insidegoodch, select_mode, outpath, [base_filename '_group'], ...
+        [outputSname '_group'], alpha);
 
     % ---- (2) CONDITION main effect: within-subject ----
     optsC = opts; optsC.effect = 'condition';
@@ -530,7 +524,8 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     eC.key = 'condition';
     eC.excluded_channels = excluded_channel_info(eC.evaluable, chanlocs, 'mixed2way condition');
     eC = gen_effect_topos(eC, power, meta, opts.condition_col, chanlocs, ...
-        insidegoodch, select_mode, outpath, [base_filename '_condition'], [outputSname '_condition']);
+        insidegoodch, select_mode, outpath, [base_filename '_condition'], ...
+        [outputSname '_condition'], alpha);
 
     % ---- (3) INTERACTION: within-subject. Map only here (the group x condition
     %          cell pattern is the descriptive grid); simple effects follow. ----
@@ -540,7 +535,8 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     eX.key = 'interaction';
     eX.excluded_channels = excluded_channel_info(eX.evaluable, chanlocs, 'mixed2way interaction');
     eX = gen_effect_topos(eX, power, meta, '', chanlocs, ...
-        insidegoodch, select_mode, outpath, [base_filename '_interaction'], [outputSname '_interaction']);
+        insidegoodch, select_mode, outpath, [base_filename '_interaction'], ...
+        [outputSname '_interaction'], alpha);
     eX.simple_effects = compute_simple_effects(power, meta, opts, neighbors, ...
         alpha, E, H, nperm, chanlocs, insidegoodch, select_mode, outpath, base_filename, outputSname);
 
@@ -606,6 +602,10 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     results_struct.uncorrsigch = eX.uncorrsigch;
     results_struct.correctTFCEsigch = eX.correctTFCEsigch;
     results_struct.SnPMsigch = eX.SnPMsigch;
+    % The significance level the maps, clusters and TFCE sets above were built
+    % at. Published so the report numbers its clusters with the SAME threshold
+    % the run used, rather than a second hard-coded .05 that could drift.
+    results_struct.alpha = alpha;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = eX.posthoc;
     results_struct.excluded_channels = eX.excluded_channels;   % top level = interaction
@@ -621,6 +621,14 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     results_struct.glm.effect_map_only = false;
     results_struct.glm.perm_type = eX.perm_type;
     results_struct.glm.n_obs = size(power, 1);
+    % Observations, in the units the reader counts in. n_obs is ROWS; for a
+    % repeated-measures design that is not the number of subjects, and for a
+    % between-groups design "n = 32" hides whether it was 16 vs 16 or 28 vs 4.
+    % Both are stated so the report's Observations row never has to infer one
+    % from the other. group_sizes/group_size_labels are empty when the preset
+    % has no grouping factor.
+    [results_struct.glm.n_subjects, results_struct.glm.group_sizes, ...
+        results_struct.glm.group_size_labels] = design_counts(meta, opts);
     results_struct.glm.group_labels   = {};
     results_struct.glm.group_mean_png = {};
     results_struct.glm.fmap_png       = '';
@@ -715,15 +723,18 @@ end
 
 % ---- topoplots for one effect (significance maps + means/stat + post-hoc) --
 function eff = gen_effect_topos(eff, Y, meta, level_col, chanlocs, insidegoodch, ...
-        select_mode, out_path, map_base, outname_prefix)
+        select_mode, out_path, map_base, outname_prefix, alpha)
 % map_base    : base for the significance PNGs "<map_base> Cluster/TFCE.png".
 % outname_prefix : prefix for mean / F / t map PNGs.
 % level_col   : meta column for per-level mean topos (''=none -> stat map only).
+% alpha       : the run's significance level, handed to the plotter so the
+%               cluster numbers on the PNG match the report's cluster table.
     if strcmpi(eff.contrast_type, 'F'), topo_comp = 'mixed2way'; else, topo_comp = 'ancova'; end
     eff.map_base = map_base;
     try
         TopoplotSignificant_single(eff.T.real_T, eff.uncorrsigch, eff.correctTFCEsigch, ...
-            eff.SnPMsigch, chanlocs, insidegoodch, topo_comp, out_path, map_base, select_mode);
+            struct('Clusters',{eff.Clusters},'alpha',alpha), ...
+            chanlocs, insidegoodch, topo_comp, out_path, map_base, select_mode);
     catch ME
         warning(ME.identifier, 'Could not generate significance topology (%s): %s', map_base, ME.message);
     end
@@ -789,7 +800,8 @@ function eff = gen_effect_topos(eff, Y, meta, level_col, chanlocs, insidegoodch,
         pmb = [map_base '_posthoc-' safe];
         try
             TopoplotSignificant_single(eff.posthoc(ph).T.real_T, eff.posthoc(ph).uncorrsigch, ...
-                eff.posthoc(ph).correctTFCEsigch, eff.posthoc(ph).SnPMsigch, chanlocs, ...
+                eff.posthoc(ph).correctTFCEsigch, ...
+                struct('Clusters',{eff.posthoc(ph).Clusters},'alpha',alpha), chanlocs, ...
                 insidegoodch, 'posthocT', out_path, pmb, select_mode);
             eff.posthoc(ph).map_base = pmb;
         catch ME
@@ -844,9 +856,38 @@ function simples = compute_simple_effects(power, meta, opts, neighbors, alpha, E
         safe = matlab.lang.makeValidName(level_to_str(glev, g));
         se = gen_effect_topos(se, power(rows, :), meta(rows, :), opts.condition_col, ...
             chanlocs, insidegoodch, select_mode, out_path, ...
-            [base_filename '_simple-' safe], [outputSname '_simple-' safe]);
+            [base_filename '_simple-' safe], [outputSname '_simple-' safe], alpha);
         cnt = cnt + 1;
         simples(cnt) = normalize_effect(se); %#ok<AGROW>
+    end
+end
+
+% ---- observation counts for the report's model card ---------------------
+function [nsub, gsizes, glabels] = design_counts(meta, opts)
+% How many SUBJECTS the design has, and how they split across the grouping
+% factor. Rows are not subjects in a repeated-measures design, and a total is
+% not a split in a between-groups one; the report states both rather than
+% guessing either. Everything is read from the meta table the design was built
+% from, so it cannot disagree with the model that was fitted.
+    nsub = NaN; gsizes = []; glabels = {};
+    if ~istable(meta), return; end
+    vn = meta.Properties.VariableNames;
+    if isfield(opts,'subject_col') && ~isempty(opts.subject_col) && ismember(opts.subject_col, vn)
+        nsub = numel(unique(string(meta.(opts.subject_col))));
+    else
+        nsub = height(meta);      % one row per subject when no subject column
+    end
+    if isfield(opts,'group_col') && ~isempty(opts.group_col) && ismember(opts.group_col, vn)
+        gv = string(meta.(opts.group_col));
+        if isfield(opts,'subject_col') && ~isempty(opts.subject_col) && ismember(opts.subject_col, vn)
+            % Repeated measures: count each subject once, in the group of its
+            % first row, so a 2-condition design does not report double the n.
+            [~, first] = unique(string(meta.(opts.subject_col)), 'stable');
+            gv = gv(first);
+        end
+        [lev, ~, li] = unique(gv, 'stable');
+        gsizes  = accumarray(li(:), 1)';
+        glabels = cellstr(lev(:)');
     end
 end
 

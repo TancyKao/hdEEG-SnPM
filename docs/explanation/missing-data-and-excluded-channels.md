@@ -160,8 +160,8 @@ excluded, the run produces all of the following:
   individual channel labels.
 - An **`excludedChannels`** sheet in the `.xlsx`, one row per dropped channel with its index,
   its label, and the reason.
-- An amber **Excluded channels** banner near the top of the HTML report, stating how many of how
-  many channels were not tested and listing them.
+- An **Excluded channels** entry in the amber notice block under the HTML report's model card,
+  stating how many of how many channels were not tested and listing them.
 - A `--- Channel Exclusions ---` block in the results text, and
   `results_struct.excluded_channels` in the `.mat`.
 

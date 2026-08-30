@@ -1,24 +1,41 @@
 function generateAnalysisReport(results_struct, params, base_filename, outputSname, uncorrsigch, correctTFCEsigch, SnPMsigch)
-%GENERATEANALYSISREPORT  One self-contained, journal-styled HTML report.
-% Writes <outputSname>_report.html for a SINGLE statistical comparison
-% (no faceting): a calm, card-based page with the mean topographies and the
-% statistic map, a three-way Uncorrected / TFCE / Cluster significance toggle
-% (each view lists its significant channels with statistic + p-value), an
-% optional post-hoc table for omnibus-F presets, and a short "Reading the
-% statistics" explainer. Stat-aware (t / F / correlation r / circular).
+%GENERATEANALYSISREPORT  One self-contained HTML report per analysis (design v2).
+%
+% Writes <outputSname>_report.html for ONE run of any tier that reaches it:
+% the legacy t-test / correlation flow (core_snpm_analysis), the GLM presets
+% and the three-effect mixed2way report (core_snpm_glm), and the circular tier
+% (core_snpm_circ). One layout, one stylesheet, one behaviour, whatever the
+% statistic.
+%
+% LAYOUT is the approved design mock templates/snpm_report_v2_master.html:
+% masthead -> sticky per-effect summary strip -> model card -> amber notice
+% block (only when something needs saying) -> legend -> descriptive figures ->
+% one collapsible .effect section per effect (effect map + Cluster / TFCE /
+% Uncorrected toggle + post-hoc tabs) -> global test card -> footer.
+% v2_css() and v2_js() below carry lines 5-166 and 167-185 of that file
+% BYTE-FOR-BYTE; the mock stays the source of truth for the styling and a test
+% diffs the two. Never hand-edit the CSS here -- edit the template and re-port.
+%
+% STRUCTURE of this file: normalise FIRST (build_model turns whatever the tier
+% put in results_struct into one R model: R.effects{k} with a statistic vector,
+% p-vectors, clusters, significant-channel sets, PNG names and an optional
+% global), render SECOND (write_document reads R only). Adding a tier means
+% teaching build_model about it, not touching the emitter.
 %
 % INPUTS  results_struct, params, base_filename, outputSname,
-%         uncorrsigch       channels with uncorrected p <= .05
-%         correctTFCEsigch  channels with TFCE-corrected p <= .05
-%         SnPMsigch         channels in clusters with cluster p <= .05
+%         uncorrsigch       channels with uncorrected p <= alpha
+%         correctTFCEsigch  channels with TFCE-corrected p <= alpha
+%         SnPMsigch         channels in clusters with cluster p <= alpha
 %
-% All values come from results_struct; nothing is recomputed.
-%   p.real            uncorrected per-channel p
-%   p.correctedTFCE   TFCE-corrected per-channel p
-%   Clusters(k).channels / .p   cluster membership + cluster-level p
-%   T.real_T          statistic per channel
-%   chanlocs(i).labels  channel name (e.g. "E129")
-%   glm.contrast_type ('t'/'F') / .effect_label ; posthoc(.label,...)
+% ALPHA is the run's own (results_struct.alpha, published by every core, .05 in
+% every shipped preset). It drives the cluster numbering here AND was handed to
+% TopoplotSignificant_single, so the numbers in the table and on the PNG cannot
+% disagree; the prose quotes it rather than a second hard-coded literal.
+%
+% Every number comes from results_struct; nothing is recomputed here. Cluster
+% numbering is delegated to dependencies/snpm_order_clusters.m, the same helper
+% TopoplotSignificant_single uses to number the discs it draws on the Cluster
+% PNG, so a "Cluster 2" in the table is the "2" on the map.
 
     report_filename = [outputSname '_report.html'];
     fid = fopen(report_filename, 'w');
@@ -26,61 +43,409 @@ function generateAnalysisReport(results_struct, params, base_filename, outputSna
         warning('generateAnalysisReport:open', 'Could not open %s for writing.', report_filename);
         return;
     end
-    closer = onCleanup(@() fclose(fid)); %#ok<NASGU>
+    closer = onCleanup(@() fclose(fid));
 
-    nperm = 1000;
-    if isfield(params,'permutations') && ~isempty(params.permutations)
-        nperm = double(params.permutations);
-    end
-    [statName, statSym] = stat_info(results_struct, params);
-
-    % Multi-effect report (two-way mixed ANOVA): one section per effect (group,
-    % condition, interaction), a descriptive block and a per-effect global
-    % table. Single-effect presets fall through to the original layout below.
-    if isfield(results_struct, 'effects') && numel(results_struct.effects) > 1
-        write_head(fid);
-        fprintf(fid, '<body>\n<div class="wrap">\n');
-        write_masthead(fid, results_struct, params, base_filename, statName, nperm);
-        write_legend_multi(fid);
-        % NOT write_excluded(results_struct): in a multi-effect report the
-        % top-level exclusion set is only the interaction's. The three effects
-        % genuinely differ (the group effect is computed on subject means, so a
-        % channel missing in ONE row of a subject still yields a finite subject
-        % mean and stays testable), so a single global banner would tell the
-        % reader a channel carries no statistic while the section below it
-        % displays one. The union is stated here; each effect states its own.
-        write_excluded_multi(fid, results_struct);
-        write_descriptive(fid, results_struct);
-        for k = 1:numel(results_struct.effects)
-            write_effect_one(fid, results_struct, results_struct.effects(k), k, nperm);
-        end
-        write_global_multi(fid, results_struct, nperm);
-        write_footer(fid);
-        fprintf(fid, '</div>\n</body>\n</html>\n');
-        return;
-    end
-
-    write_head(fid);
-    fprintf(fid, '<body>\n<div class="wrap">\n');
-
-    write_masthead(fid, results_struct, params, base_filename, statName, nperm);
-    write_legend(fid, statName);
-    write_excluded(fid, results_struct);
-    write_data2_matching(fid, results_struct);
-    write_normalize_broadcast(fid, results_struct);
-    write_topographies(fid, results_struct, base_filename, statName);
-    write_significance(fid, results_struct, base_filename, statSym, nperm, ...
+    R = build_model(results_struct, params, base_filename, outputSname, ...
         uncorrsigch, correctTFCEsigch, SnPMsigch);
-    write_posthoc(fid, results_struct, nperm);
-    write_circ_descriptive(fid, results_struct);
-    write_global(fid, results_struct, statName, nperm);
-    write_footer(fid);
-
-    fprintf(fid, '</div>\n</body>\n</html>\n');
+    write_document(fid, R);
 end
 
 % =========================================================================
-% STATISTIC RESOLUTION
+% MODEL: results_struct (any tier) -> one R struct the emitter can render
+% =========================================================================
+function R = build_model(rs, params, base, outputSname, unc, tfce, clu)
+    R = struct();
+    R.rs    = rs;                       % only for channel labels
+    % The RUN'S significance level (every core publishes results_struct.alpha).
+    % The cluster table below numbers the clusters with it, and the same value
+    % went to TopoplotSignificant_single, so a "3" in the table is the "3" on
+    % the PNG. Falling back to .05 only for an older .mat re-rendered here.
+    R.alpha = double(gf(rs, 'alpha', 0.05));
+    R.nperm = 1000;
+    if isfield(params,'permutations') && ~isempty(params.permutations)
+        R.nperm = double(params.permutations);
+    end
+    R.comparison = '';
+    if isfield(params,'comparison') && ischar(params.comparison)
+        R.comparison = params.comparison;
+    end
+    [statName, statSym] = stat_info(rs, params);
+    R.statName = statName;
+    R.kind = report_kind(rs);
+
+    [~, csvbase] = fileparts(outputSname);
+    R.csv = [csvbase '_report.csv'];
+
+    R.title    = analysis_title(rs, params);
+    R.methods  = methods_line(rs, params, statName, R.nperm, R.alpha);
+    R.model    = model_card_rows(rs, params, base);
+    R.notices  = build_notices(rs);
+    R.effects  = build_effects(rs, params, base, statName, statSym, unc, tfce, clu);
+    R.descriptive = build_descriptive(rs, params, base, statName);
+
+    % Global card. The circular tier deliberately has none (no valid arithmetic
+    % channel mean of an angle); a preset that simply does not compute one says
+    % so rather than showing an empty card.
+    R.global_note = '';
+    anyg = false;
+    for k = 1:numel(R.effects)
+        if ~isempty(R.effects{k}.global), anyg = true; end
+    end
+    R.has_global = anyg;
+    if ~anyg
+        if strcmp(R.kind, 'circ')
+            R.global_note = ['<b>No whole-head test.</b> An angle has no valid arithmetic ' ...
+                'channel mean, so a channel-averaged omnibus would not be the quantity it ' ...
+                'appears to be. The circular summary above is descriptive only.'];
+        else
+            R.global_note = ['<b>No whole-head test for this design.</b> This preset does not ' ...
+                'compute a channel-averaged omnibus; read the per-channel maps below.'];
+        end
+    end
+end
+
+function k = report_kind(rs)
+    if isfield(rs,'effects') && numel(rs.effects) > 1
+        k = 'multi';
+    elseif isfield(rs,'circ')
+        k = 'circ';
+    elseif isfield(rs,'lmm')
+        k = 'lmm';
+    elseif isfield(rs,'glm') && isfield(rs.glm,'preset')
+        k = 'glm';
+    else
+        k = 'legacy';
+    end
+end
+
+% ---- one effect model ---------------------------------------------------
+function E = build_effects(rs, params, base, statName, statSym, unc, tfce, clu)
+    E = {};
+    if isfield(rs,'effects') && numel(rs.effects) > 1
+        keymap = struct('group','g','condition','c','interaction','i');
+        nse = 0;
+        for k = 1:numel(rs.effects)
+            eff = rs.effects(k);
+            key = sprintf('e%d', k);
+            if isfield(eff,'key') && isfield(keymap, lower(eff.key)), key = keymap.(lower(eff.key)); end
+            E{end+1} = effect_from_glm_effect(rs, eff, key); %#ok<AGROW>
+            se = [];
+            if isfield(eff,'simple_effects'), se = eff.simple_effects; end
+            for s = 1:numel(se)
+                nse = nse + 1;
+                E{end+1} = effect_from_glm_effect(rs, se(s), sprintf('s%d', nse)); %#ok<AGROW>
+            end
+        end
+        return;
+    end
+
+    e = new_effect();
+    e.key      = 'e';
+    e.title    = effect_heading(rs, params, statName);
+    e.sym      = statSym;
+    e.signed   = ~any(strcmp(statName, {'F','circ'}));
+    e.subtitle = sprintf('%s &middot; %s', stat_word(statSym, e.signed), perm_phrase(rs, params));
+    e.T        = statvec(rs);
+    e.punc     = pvec(rs, 'real');
+    e.ptfce    = pvec(rs, 'correctedTFCE');
+    e.Clusters = gf(rs, 'Clusters', []);
+    e.sunc     = idxvec(unc); e.stfce = idxvec(tfce); e.sclu = idxvec(clu);
+    e.lamp     = ~isempty(e.sclu) || ~isempty(e.stfce);
+    e.map_base = base;
+    [e.eff_png, e.eff_title] = single_effect_map(rs, params, base, statName);
+    e.posthoc  = posthoc_list(gf(rs,'posthoc',[]));
+    e.global   = global_from_legacy(rs, statSym);
+    E = {e};
+end
+
+function e = effect_from_glm_effect(rs, eff, key)
+    e = new_effect();
+    e.key    = key;
+    e.title  = eff_title(eff);
+    sym = 'F'; if isfield(eff,'contrast_type') && strcmpi(eff.contrast_type,'t'), sym = 't'; end
+    e.sym    = sym;
+    e.signed = strcmp(sym, 't');
+    e.subtitle = sprintf('%s &middot; %s permutation', stat_word(sym, e.signed), perm_word(eff));
+    e.T      = statvec(eff);
+    e.punc   = pvec(eff, 'real');
+    e.ptfce  = pvec(eff, 'correctedTFCE');
+    e.Clusters = gf(eff, 'Clusters', []);
+    e.sunc  = idxvec(gf(eff,'uncorrsigch',[]));
+    e.stfce = idxvec(gf(eff,'correctTFCEsigch',[]));
+    e.sclu  = idxvec(gf(eff,'SnPMsigch',[]));
+    e.lamp  = ~isempty(e.sclu) || ~isempty(e.stfce);
+    e.map_base = gf(eff,'map_base','');
+    if strcmp(sym,'F')
+        e.eff_png = gf(eff,'fmap_png','');
+        e.eff_title = 'Effect map (F)';
+    else
+        e.eff_png = gf(eff,'diff_png','');
+        e.eff_title = 'Effect map (t)';
+    end
+    e.posthoc = posthoc_list(gf(eff,'posthoc',[]));
+    e.excl_html = excluded_effect_html(rs, eff);
+    e.global = [];
+    if isfield(eff,'global_stat') && ~isempty(eff.global_stat) && ~isnan(eff.global_stat)
+        g = struct('label', eff_title(eff), 'sym', sym, 'stat', eff.global_stat, ...
+            'p', gf(eff,'global_pval',NaN), 'nch', gf(eff,'global_n_channels',NaN), ...
+            'df1', gf(eff,'global_df1',NaN), 'df2', gf(eff,'global_df2',NaN), 'flag', '');
+        e.global = g;
+    end
+end
+
+function e = new_effect()
+    e = struct('key','', 'title','', 'subtitle','', 'sym','t', 'signed',true, ...
+        'T',[], 'punc',[], 'ptfce',[], 'Clusters',[], 'sunc',[], 'stfce',[], 'sclu',[], ...
+        'lamp',false, 'map_base','', 'eff_png','', 'eff_title','Effect map', ...
+        'posthoc',{{}}, 'global',[], 'excl_html','');
+end
+
+function P = posthoc_list(ph)
+    P = {};
+    for i = 1:numel(ph)
+        q = struct();
+        q.label = gf(ph(i),'label', sprintf('Contrast %d', i));
+        q.T     = statvec(ph(i));
+        q.punc  = pvec(ph(i),'real');
+        q.ptfce = pvec(ph(i),'correctedTFCE');
+        q.Clusters = gf(ph(i),'Clusters',[]);
+        q.sunc  = idxvec(gf(ph(i),'uncorrsigch',[]));
+        q.stfce = idxvec(gf(ph(i),'correctTFCEsigch',[]));
+        q.sclu  = idxvec(gf(ph(i),'SnPMsigch',[]));
+        q.map_base = gf(ph(i),'map_base','');
+        q.name  = tab_name(q.label, i);
+        P{end+1} = q; %#ok<AGROW>
+    end
+end
+
+function g = global_from_legacy(rs, statSym)
+    g = [];
+    hasS = isfield(rs,'global_stat') && ~isempty(rs.global_stat);
+    hasP = isfield(rs,'global_pval') && ~isempty(rs.global_pval);
+    if ~hasS && ~hasP, return; end
+    g = struct('label','Whole head', 'sym', statSym, 'stat', NaN, 'p', NaN, ...
+        'nch', NaN, 'df1', NaN, 'df2', NaN, 'flag', '');
+    if hasS, g.stat = rs.global_stat(1); end
+    if hasP, g.p    = rs.global_pval(1); end
+    if isfield(rs,'global_n_channels') && ~isempty(rs.global_n_channels)
+        g.nch = rs.global_n_channels;
+    end
+    % A global the engine itself declared uninterpretable (correlation +
+    % datatype 'normalize': the channel average of a per-subject z-scored row is
+    % analytically zero, so the statistic is rounding noise) must never be
+    % painted as a significant headline number.
+    if isfield(rs,'global_not_interpretable') && rs.global_not_interpretable
+        g.flag = 'not interpretable';
+    end
+end
+
+% ---- descriptive block --------------------------------------------------
+% kind: 'cells' (mixed2way grid + interaction), 'scatter' (correlation),
+% 'means' (A/B/effect topos or per-level means), 'circ', 'none'.
+function D = build_descriptive(rs, params, base, statName)
+    D = struct('kind','none', 'title','Descriptive means', 'sub','', ...
+        'figs',{{}}, 'rows',{{}}, 'cols',{{}}, 'cells',{{}}, 'note','');
+    % Source space has no scalp layout, so the run deliberately writes no
+    % images. Listing figure cards would fill the report with grey "No data"
+    % slots for files nobody intended to produce; the notice block says so and
+    % the significant-voxel CSV is the deliverable.
+    if isfield(rs,'is_source') && rs.is_source, return; end
+    d = gf(rs,'descriptive',[]);
+
+    if isfield(rs,'effects') && numel(rs.effects) > 1 && ~isempty(d)
+        D.kind = 'cells';
+        D.sub  = 'Cell means per design cell and the interaction plot';
+        D.rows = gf(d,'cell_rows',{});
+        D.cols = gf(d,'cell_cols',{});
+        pngs = gf(d,'cellmean_png',{}); labs = gf(d,'cellmean_labels',{});
+        D.cells = {pngs, labs};
+        ip = gf(d,'interaction_png','');
+        if ~isempty(ip)
+            nch = numel(gf(d,'interaction_channels',[]));
+            D.figs = {fig_spec(ip, 'Interaction plot', ...
+                sprintf(['Channel-averaged signal per cell, mean &plusmn; SE, one line per ' ...
+                'group &mdash; averaged over <b>%d</b> channel(s): the interaction cluster, ' ...
+                'else the TFCE-significant set, else all channels.'], nch), 'wide')};
+        end
+        return;
+    end
+
+    if has(lower(base_comparison(params)), 'correlation')
+        D.kind = 'scatter';
+        D.title = 'Descriptive';
+        D.sub   = 'The association behind the map';
+        sp = ''; nch = 0; chlabel = ''; is_rank = false;
+        if ~isempty(d)
+            sp = gf(d,'scatter_png','');
+            sch = gf(d,'scatter_channels',[]);
+            nch = numel(sch);
+            chlabel = gf(d,'scatter_channel_set','');
+            is_rank = isfield(d,'scatter_is_rank') && d.scatter_is_rank;
+        end
+        ylab = 'Data 2';
+        if isfield(rs,'behavior_col') && ~isempty(rs.behavior_col), ylab = char(rs.behavior_col); end
+        skipmsg = gf(d,'scatter_skipped_reason','');
+        % The scatter is absent by design when an axis had no usable spread
+        % (datatype 'normalize' flattens the channel mean). Say so IN THIS CARD:
+        % without it the section shows only mean topographies under the heading
+        % "The association behind the map" and a reader of the HTML alone cannot
+        % tell a suppressed figure from one that failed to render. The engine's
+        % own sentence is reused verbatim so console and report never diverge.
+        % The 'Data Type caveat' notice does not cover this -- it only fires when
+        % Data 2 is a single broadcast behavioural score, not for the
+        % montage-vs-montage correlation, which degenerates under 'normalize'
+        % just the same.
+        if isempty(sp) && ~isempty(skipmsg)
+            D.figs{end+1} = notecard_spec(sprintf('Scatter &mdash; EEG vs %s', esc(ylab)), ...
+                esc(char(skipmsg)));
+        end
+        if ~isempty(sp)
+            if isempty(chlabel), chlabel = 'the analysed channels'; end
+            if is_rank
+                % Spearman: the engine correlates RANKS, so the plotted axes are
+                % ranks and the fitted line is the relation the map reports.
+                % Saying so is the difference between a caption and a claim.
+                cap = sprintf(['Per subject: the <b>rank</b> of the signal averaged over ' ...
+                    '<b>%d</b> channel(s) &mdash; %s &mdash; against the <b>rank</b> of %s. ' ...
+                    'Spearman correlates ranks, so both axes are ranks and the line is the ' ...
+                    'fit to them. Descriptive; the inference is the map.'], ...
+                    nch, esc(chlabel), esc(ylab));
+                ttl = sprintf('Scatter (ranks) &mdash; EEG vs %s', esc(ylab));
+            else
+                cap = sprintf(['Per subject: the signal averaged over <b>%d</b> channel(s) ' ...
+                    '&mdash; %s &mdash; against %s. Descriptive; the inference is the map.'], ...
+                    nch, esc(chlabel), esc(ylab));
+                ttl = sprintf('Scatter &mdash; EEG vs %s', esc(ylab));
+            end
+            D.figs{end+1} = fig_spec(sp, ttl, cap, 'wide');
+        end
+        % Mean topographies. plot_topoInd writes them for the correlation path
+        % too (<data1>_topo.png, and <data2>_topo.png unless Data 2 is a
+        % broadcast behavioural score); without these cards those PNGs sat in
+        % the output folder unreferenced. The r-map is NOT repeated here -- it
+        % is the effect map of the effect section below.
+        [d1, d2] = ab_basenames(base);
+        hideB = isfield(rs,'hide_condition_b') && rs.hide_condition_b;
+        if hideB
+            D.figs{end+1} = fig_spec([d1 '_topo.png'], 'Mean topography &mdash; EEG', ...
+                'Channel means of the EEG measure across subjects.', '');
+        else
+            D.figs{end+1} = fig_spec([d1 '_topo.png'], 'Mean topography &mdash; Data 1', '', '');
+            D.figs{end+1} = fig_spec([d2 '_topo.png'], 'Mean topography &mdash; Data 2', '', '');
+        end
+        return;
+    end
+
+    if isfield(rs,'circ_descriptive') && isstruct(rs.circ_descriptive)
+        % Circular tier: the per-group table (rendered from rs.circ_descriptive)
+        % plus the mean-DIRECTION topographies. For the two group tests
+        % <base>_topo.png is the circ_dist difference of mean directions -- a
+        % descriptive map, not the statistic -- so it belongs here, not in the
+        % effect section.
+        D.kind = 'circ';
+        D.title = 'Circular summary';
+        D.sub   = 'Descriptive only &mdash; no whole-head test';
+        [d1, d2] = ab_basenames(base);
+        hideB = isfield(rs,'hide_condition_b') && rs.hide_condition_b;
+        D.figs{end+1} = fig_spec([d1 '_topo.png'], 'Mean direction &mdash; A (deg)', '', '');
+        if ~hideB
+            D.figs{end+1} = fig_spec([d2 '_topo.png'], 'Mean direction &mdash; B (deg)', '', '');
+            D.figs{end+1} = fig_spec([base '_topo.png'], ...
+                'Mean-direction difference (circ_dist, deg)', '', '');
+        end
+        return;
+    end
+
+    % Per-level means for an omnibus-F GLM preset.
+    if isfield(rs,'glm') && isfield(rs.glm,'group_mean_png') && ~isempty(rs.glm.group_mean_png)
+        D.kind = 'means';
+        D.sub  = 'Per-level mean topographies';
+        pngs = rs.glm.group_mean_png; labs = gf(rs.glm,'group_labels',{});
+        for i = 1:numel(pngs)
+            lab = sprintf('Level %d', i);
+            if i <= numel(labs) && ~isempty(labs{i}), lab = labs{i}; end
+            D.figs{end+1} = fig_spec(pngs{i}, sprintf('Mean &mdash; %s', esc(lab)), '', '');
+        end
+        return;
+    end
+
+    % Regression / single-map GLM preset: the slope map is the effect map, so
+    % there is nothing descriptive to add.
+    if isfield(rs,'glm') && isfield(rs.glm,'effect_map_only') && rs.glm.effect_map_only
+        return;
+    end
+
+    % Legacy t-test layout: condition means (+ the effect map lives in the
+    % effect section, so only the means are descriptive).
+    if strcmp(statName, 't')
+        D.kind = 'means';
+        D.sub  = 'Condition / group mean topographies';
+        [d1, d2] = ab_basenames(base);
+        hideB = isfield(rs,'hide_condition_b') && rs.hide_condition_b;
+        if hideB
+            D.figs{end+1} = fig_spec([d1 '_topo.png'], 'Mean topography', '', '');
+        else
+            D.figs{end+1} = fig_spec([d1 '_topo.png'], 'Mean topography &mdash; A', '', '');
+            D.figs{end+1} = fig_spec([d2 '_topo.png'], 'Mean topography &mdash; B', '', '');
+        end
+    end
+end
+
+function s = fig_spec(png, title, note, cls)
+    s = struct('png', png, 'title', title, 'note', note, 'cls', cls);
+end
+
+% A figure-shaped card that carries prose INSTEAD of an image, for a figure the
+% run deliberately did not produce. write_fig renders .emptynote in the slot's
+% place, so the reason sits exactly where the missing figure would have been
+% rather than as a grey "No data" placeholder that reads like a broken link.
+function s = notecard_spec(title, text)
+    s = struct('png', '', 'title', title, 'note', '', 'cls', 'wide', 'emptynote', text);
+end
+
+function c = base_comparison(params)
+    c = '';
+    if isfield(params,'comparison') && ischar(params.comparison), c = params.comparison; end
+end
+
+function [d1, d2] = ab_basenames(base)
+    if has(base, ' VS ')
+        parts = strsplit(base, ' VS '); d1 = parts{1}; d2 = parts{2};
+    else
+        d1 = [base '_Data1']; d2 = [base '_Data2'];
+    end
+end
+
+function [png, ttl] = single_effect_map(rs, params, base, statName)
+% The standalone statistic map shown at the top of an effect section.
+%   legacy t / correlation : <base>_topo.png (plot_topoInd's third card)
+%   GLM omnibus F          : glm.fmap_png
+%   circular group tests   : none -- <base>_topo.png is the descriptive
+%                            mean-DIRECTION difference, not the statistic
+%   circular-linear        : <base>_topo.png IS the F map (fed as 'diffdata')
+%   source space           : no scalp layout, so no map at all
+    png = ''; ttl = 'Effect map';
+    if isfield(rs,'is_source') && rs.is_source, return; end
+    if isfield(rs,'glm') && isfield(rs.glm,'fmap_png') && ~isempty(rs.glm.fmap_png)
+        png = rs.glm.fmap_png; ttl = 'Effect map (F)'; return;
+    end
+    comp = base_comparison(params);
+    if has(comp, 'circ')
+        if isfield(rs,'hide_condition_b') && rs.hide_condition_b
+            png = [base '_topo.png']; ttl = 'Effect map (circular-linear F)';
+        end
+        return;
+    end
+    png = [base '_topo.png'];
+    switch statName
+        case 'F', ttl = 'Effect map (F)';
+        case 'r', ttl = 'Correlation r-map';
+        otherwise, ttl = 'Effect map (t)';
+    end
+end
+
+% =========================================================================
+% STATISTIC RESOLUTION + TITLES
 % =========================================================================
 function [name, sym] = stat_info(rs, params)
     name = 't';
@@ -106,124 +471,141 @@ function [name, sym] = stat_info(rs, params)
             sym = 'F';
             if isfield(params,'comparison') && ischar(params.comparison) && ...
                     strcmp(params.comparison, 'circ_phase_group_u2')
-                sym = 'U^2';
+                sym = 'U&sup2;';
             end
         otherwise,   sym = 't';
     end
 end
 
-% =========================================================================
-% HEAD : inline CSS + the (only) bit of JS, the view toggle
-% =========================================================================
-function write_head(fid)
-    css = [ ...
-'<!DOCTYPE html>' newline '<html lang="en"><head><meta charset="utf-8">' newline ...
-'<meta name="viewport" content="width=device-width, initial-scale=1">' newline ...
-'<title>SnPM Analysis Report</title>' newline '<style>' newline ...
-':root{--ink:#1b2733;--ink-2:#445261;--muted:#7c8a98;--line:#e3e9ef;--line-2:#eef2f6;--bg:#f5f7f9;--panel:#ffffff;--accent:#1f6f8b;--accent-soft:#e8f1f4;--sig:#1f8a5b;--sig-soft:#e7f4ec;--warm:#c2543a;--cool:#2f6db0;--amber:#b8862a;--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--serif:Charter,"Iowan Old Style",Georgia,"Times New Roman",serif}' newline ...
-'*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}' newline ...
-'body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}' newline ...
-'.wrap{max-width:1100px;margin:0 auto;padding:40px 32px 96px}' newline ...
-'.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}' newline ...
-'.masthead{display:flex;justify-content:space-between;align-items:flex-start;gap:32px;flex-wrap:wrap}' newline ...
-'.masthead h1{font-family:var(--serif);font-weight:600;font-size:29px;line-height:1.2;letter-spacing:-.01em;margin:9px 0 11px;max-width:760px;color:var(--ink)}' newline ...
-'.methods{color:var(--ink-2);font-size:13.5px;max-width:800px;margin:0}.methods b{color:var(--ink);font-weight:600}' newline ...
-'.actions{display:flex;gap:8px;flex-shrink:0}' newline ...
-'.btn{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:border-color .15s,color .15s}' newline ...
-'.btn:hover{border-color:var(--accent);color:var(--accent)}.btn svg{width:14px;height:14px}' newline ...
-'.legend{display:flex;flex-wrap:wrap;gap:10px 26px;align-items:center;margin:22px 0 4px;padding:14px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;font-size:12.5px;color:var(--ink-2)}' newline ...
-'.legend .grp{display:flex;align-items:center;gap:9px}.legend .grp .k{font-weight:600;color:var(--ink)}' newline ...
-'.chip{display:inline-flex;align-items:center;gap:6px}' newline ...
-'.swatch{width:13px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.08);flex:none}' newline ...
-'.tmapbar{width:120px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.1)}' newline ...
-'.legend .sep{width:1px;height:26px;background:var(--line)}' newline ...
-'.section{margin-top:46px}' newline ...
-'.section>.head{display:flex;align-items:baseline;gap:14px;margin-bottom:16px;flex-wrap:wrap}' newline ...
-'.section>.head h2{font-size:18px;font-weight:650;letter-spacing:-.01em;margin:0}' newline ...
-'.section>.head .sub{font-size:12.5px;color:var(--muted)}' newline ...
-'.topo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}' newline ...
-'@media(max-width:820px){.topo-grid{grid-template-columns:1fr}}' newline ...
-'.fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}' newline ...
-'.fig>.cap{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line-2)}' newline ...
-'.fig>.cap .t{font-size:13px;font-weight:650}.fig>.cap .f{font-family:var(--mono);font-size:10.5px;color:var(--muted)}' newline ...
-'.slot{position:relative;margin:0;background:#f1f5f7;aspect-ratio:1/1}' newline ...
-'.slot img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;display:block}' newline ...
-'.slot img.err{display:none}' newline ...
-'.slot .ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#9fb0bd;text-align:center;padding:14px}' newline ...
-'.slot .ph svg{width:30px;height:30px;opacity:.6}' newline ...
-'.slot .ph .fn{font-family:var(--mono);font-size:10px;color:#a7b6c2;word-break:break-all;max-width:90%}' newline ...
-'.seg{display:inline-flex;background:var(--line-2);border-radius:9px;padding:4px;gap:3px;flex-wrap:wrap}' newline ...
-'.seg button{font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);background:transparent;border:0;border-radius:6px;padding:9px 18px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:8px}' newline ...
-'.seg button.on{background:var(--panel);color:var(--accent);box-shadow:0 1px 2px rgba(20,40,60,.1)}' newline ...
-'.seg button .ct{font-family:var(--mono);font-size:11px;font-weight:600;color:#fff;background:var(--muted);border-radius:20px;padding:1px 8px;min-width:22px;text-align:center}' newline ...
-'.seg button.on .ct{background:var(--accent)}.seg button .ct.none{background:var(--line);color:var(--muted)}' newline ...
-'.vpanel{margin-top:24px;animation:fade .25s ease}' newline ...
-'@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}' newline ...
-'.vbody{display:grid;grid-template-columns:380px 1fr;gap:22px;align-items:start}' newline ...
-'@media(max-width:860px){.vbody{grid-template-columns:1fr}}' newline ...
-'.tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}' newline ...
-'.tablewrap .thead-note{padding:11px 16px;border-bottom:1px solid var(--line-2);font-size:12px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}' newline ...
-'.tablewrap .thead-note b{color:var(--ink)}' newline ...
-'table.sum{border-collapse:collapse;width:100%;font-size:13.5px}' newline ...
-'table.sum th,table.sum td{padding:9px 16px;text-align:right;border-bottom:1px solid var(--line-2)}' newline ...
-'table.sum th:first-child,table.sum td:first-child{text-align:left}' newline ...
-'table.sum thead th{font-size:11px;letter-spacing:.03em;color:var(--ink-2);font-weight:650;white-space:nowrap;background:#fafcfd}' newline ...
-'table.sum tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink-2)}' newline ...
-'table.sum tbody td.band{font-family:var(--sans);color:var(--ink);font-weight:600;white-space:nowrap}' newline ...
-'table.sum tbody tr.sig td.band{box-shadow:inset 3px 0 0 var(--sig)}' newline ...
-'table.sum tbody tr:last-child td{border-bottom:0}' newline ...
-'table.sum .p-sig{color:var(--sig);font-weight:700}table.sum .stat-v{color:var(--ink);font-weight:600}' newline ...
-'tr.grp-row td{background:var(--accent-soft);color:var(--accent);font-family:var(--sans);font-weight:650;font-size:12px;text-align:left;letter-spacing:.01em}' newline ...
-'tr.grp-row td .cp{font-family:var(--mono);font-weight:600;color:var(--ink-2);margin-left:8px}' newline ...
-'.empty-note{padding:34px 18px;text-align:center;color:var(--muted);font-size:13.5px}' newline ...
-'.empty-note svg{width:26px;height:26px;opacity:.5;display:block;margin:0 auto 8px}' newline ...
-'.global-card{display:flex;align-items:stretch;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;flex-wrap:wrap}' newline ...
-'.gstat{padding:22px 30px;display:flex;flex-direction:column;gap:7px;min-width:160px}' newline ...
-'.gstat .gk{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}' newline ...
-'.gstat .gv{font-family:var(--mono);font-size:30px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1}' newline ...
-'.gstat .gv.p-sig{color:var(--sig)}' newline ...
-'.gsep{width:1px;background:var(--line)}' newline ...
-'.gnote{margin-left:auto;align-self:center;padding:20px 30px;font-size:12.5px;color:var(--ink-2);max-width:340px;line-height:1.5}.gnote b{color:var(--ink)}' newline ...
-'.map-note{padding:9px 16px;border-top:1px solid var(--line-2);font-size:11px;color:var(--muted);display:flex;align-items:center;gap:14px;flex-wrap:wrap}' newline ...
-'.map-note .dl{display:inline-flex;align-items:center;gap:6px}' newline ...
-'.map-note .dd{width:9px;height:9px;border-radius:50%;border:1px solid rgba(0,0,0,.25);flex:none}' newline ...
-'.foot{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}' newline ...
-'@media(max-width:820px){.wrap{padding:28px 18px 72px}.masthead h1{font-size:24px}}' newline ...
-'@media print{:root{--bg:#fff}body{font-size:11px}.wrap{max-width:none;padding:0}.actions,.seg{display:none!important}.vpanel{display:block!important;animation:none;break-inside:avoid;margin-top:22px}.vpanel::before{content:attr(data-view-name);display:block;font-family:var(--serif);font-size:16px;font-weight:600;margin:0 0 12px;color:#000}.fig,.tablewrap,.legend,.global-card{break-inside:avoid;box-shadow:none}}' newline ...
-'</style>' newline ...
-'<script>function showView(w){var v=["unc","tfce","clu"];for(var i=0;i<v.length;i++){var k=v[i];document.getElementById("panel_"+k).style.display=(k===w)?"block":"none";document.getElementById("btn_"+k).className=(k===w)?"on":"";}}' newline ...
-'function showViewG(g,w){var v=["unc","tfce","clu"];for(var i=0;i<v.length;i++){var k=v[i];var p=document.getElementById("panel_"+g+"_"+k);if(p)p.style.display=(k===w)?"block":"none";var b=document.getElementById("btn_"+g+"_"+k);if(b)b.className=(k===w)?"on":"";}}</script>' newline ...
-'</head>' newline];
-    fprintf(fid, '%s', css);
+function t = analysis_title(rs, params)
+    comp = lower(base_comparison(params));
+    switch comp
+        case 'pairedt',      t = 'Paired t-test &mdash; condition A vs B';
+        case 'unpairedt',    t = 'Independent-groups t-test &mdash; group A vs B';
+        case 'onesamplet',   t = 'One-sample t-test &mdash; condition vs 0';
+        case 'correlationp', t = 'Pearson correlation';
+        case 'correlations', t = 'Spearman correlation';
+        case 'anova1',       t = 'One-way ANOVA &mdash; between subjects';
+        case 'ancova',       t = 'ANCOVA &mdash; group effect adjusted for covariates';
+        case 'regression',   t = 'Regression &mdash; continuous predictor';
+        case 'rmanova',      t = 'Repeated-measures ANOVA &mdash; within subject';
+        case 'mixed2way',    t = 'Two-way mixed ANOVA &mdash; group &times; condition';
+        case 'mixedmodel',   t = 'Linear mixed model';
+        case 'circ_phase_group',    t = 'Preferred phase &mdash; Hotelling T&sup2; between groups';
+        case 'circ_phase_group_u2', t = 'Preferred phase &mdash; Watson U&sup2; between groups';
+        case 'circ_corranglinear',  t = 'Circular-linear association';
+        otherwise
+            t = 'SnPM analysis';
+            if ~isempty(comp), t = ['SnPM analysis &mdash; ' esc(base_comparison(params))]; end
+    end
+    if any(strcmp(comp, {'correlationp','correlations'}))
+        if isfield(rs,'behavior_col') && ~isempty(rs.behavior_col)
+            t = [t ' &mdash; EEG vs ' esc(char(rs.behavior_col))];
+        else
+            t = [t ' &mdash; EEG vs Data 2'];
+        end
+    end
+end
+
+% Heading of the single effect section of a single-effect analysis.
+function t = effect_heading(rs, params, statName)
+    if isfield(rs,'glm') && isfield(rs.glm,'effect_label') && ~isempty(rs.glm.effect_label)
+        % The circular tier parks its whole provenance line in effect_label
+        % ("Hotelling T^2 ... | zero convention ... | count covariate: ...").
+        % That belongs in the model card, not in a section heading and a summary
+        % chip -- keep the part before the first pipe.
+        lab = char(rs.glm.effect_label);
+        bar = strfind(lab, '|');
+        if ~isempty(bar), lab = strtrim(lab(1:bar(1)-1)); end
+        t = esc(lab);
+        return;
+    end
+    switch statName
+        case 'r',    t = 'Correlation';
+        case 'F',    t = 'Omnibus effect';
+        case 'circ', t = 'Phase effect';
+        otherwise
+            comp = lower(base_comparison(params));
+            if strcmp(comp,'onesamplet'), t = 'Condition vs zero';
+            elseif strcmp(comp,'pairedt'), t = 'Condition difference (A &minus; B)';
+            elseif strcmp(comp,'unpairedt'), t = 'Group difference (A &minus; B)';
+            else, t = 'Effect';
+            end
+    end
+end
+
+function w = stat_word(sym, signed)
+    if signed
+        w = sprintf('signed %s', sym);
+    else
+        w = sprintf('omnibus %s', sym);
+    end
+end
+
+function w = perm_word(eff)
+    pt = ''; if isfield(eff,'perm_type'), pt = eff.perm_type; end
+    switch lower(pt)
+        case 'free',   w = 'between-subjects';
+        case 'within', w = 'within-subject';
+        otherwise
+            if isempty(pt), w = 'residual'; else, w = pt; end
+    end
+end
+
+function s = perm_phrase(rs, params)
+    comp = lower(base_comparison(params));
+    if isfield(rs,'glm') && isfield(rs.glm,'perm_type') && ~isempty(rs.glm.perm_type)
+        s = [perm_word(rs.glm) ' permutation'];
+        return;
+    end
+    % 'unpaired' CONTAINS 'paired' -- test it first or every independent-groups
+    % run is captioned as a within-subject sign flip.
+    if     has(comp,'unpaired'),    s = 'group-relabelling permutation';
+    elseif has(comp,'paired') || has(comp,'onesample'), s = 'within-subject sign-flip permutation';
+    elseif has(comp,'correlation'), s = 'subject-relabelling permutation';
+    elseif has(comp,'circ'),        s = 'Freedman&ndash;Lane permutation';
+    else,                           s = 'permutation';
+    end
+end
+
+function t = eff_title(eff)
+    key = ''; if isfield(eff,'key'), key = eff.key; end
+    switch lower(key)
+        case 'group',       t = 'Group main effect';
+        case 'condition',   t = 'Condition main effect';
+        case 'interaction', t = 'Interaction (group &times; condition)';
+        otherwise
+            lab = '';
+            if isfield(eff,'effect_label') && ~isempty(eff.effect_label), lab = char(eff.effect_label); end
+            if isempty(lab), lab = char(key); end
+            if strncmpi(key, 'condition@', 10)
+                t = ['Simple effect: ' esc(lab)];
+            else
+                t = esc(lab);
+            end
+    end
 end
 
 % =========================================================================
-% MASTHEAD
+% METHODS SENTENCE (masthead)
 % =========================================================================
-function write_masthead(fid, rs, params, base, statName, nperm)
-    title = strrep(base, '_', ' ');
-    fprintf(fid, '<header class="masthead">\n  <div>\n');
-    fprintf(fid, '    <span class="eyebrow">SnPM Topographic Statistics</span>\n');
-    fprintf(fid, '    <h1>%s</h1>\n', esc(title));
-    fprintf(fid, '    <p class="methods">%s</p>\n', methods_line(rs, params, statName, nperm));
-    fprintf(fid, '  </div>\n');
-    fprintf(fid, ['  <div class="actions"><button class="btn" onclick="window.print()">' ...
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">' ...
-        '<path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/>' ...
-        '</svg>Print / PDF</button></div>\n']);
-    fprintf(fid, '</header>\n');
-end
-
-function s = methods_line(rs, params, statName, nperm)
-    % comparison phrase + statistical word
+function s = methods_line(rs, params, statName, nperm, alpha)
     comp = '';
     if isfield(params,'comparison') && ischar(params.comparison), comp = lower(params.comparison); end
+    % A MULTI-EFFECT REPORT HAS NO SINGLE STATISTIC. mixed2way carries three
+    % effects with three error terms and three permutation schemes; the
+    % top-level rs.glm.contrast_type describes only the interaction, so naming
+    % it here ("omnibus F-test", or "t-test" when the interaction happens to be
+    % a 1-df contrast) mis-describes the other two. Name the DESIGN and let each
+    % effect section state its own statistic.
+    multi = isfield(rs,'effects') && numel(rs.effects) > 1;
     switch statName
         case 'F',    statword = 'omnibus F-test';
         case 'r',    statword = 'correlation';
         case 'circ', statword = 'circular statistic';
         otherwise,   statword = 't-test';
     end
+    if multi, statword = design_word(comp); end
     phrase = 'Permutation';
     if     has(comp,'unpair'),     phrase = 'Independent-groups permutation';
     elseif has(comp,'onesample'),  phrase = 'One-sample permutation';
@@ -249,7 +631,7 @@ function s = methods_line(rs, params, statName, nperm)
     % so every GLM report claimed "one-tailed". The overload is gone, but an
     % older results .mat re-rendered through this function can still carry it.
     tail = '';
-    if ~any(strcmp(statName, {'F', 'circ'}))
+    if ~multi && ~any(strcmp(statName, {'F', 'circ'}))
         tail = 'two-tailed';
         if isfield(params,'tail') && ~isempty(params.tail) && ischar(params.tail) ...
                 && any(strcmpi(params.tail, {'left','right'}))
@@ -257,647 +639,1022 @@ function s = methods_line(rs, params, statName, nperm)
         end
     end
     if isempty(tail), tail_clause = ''; else, tail_clause = [tail ', ']; end
-    % data type
     dt = '';
     if isfield(params,'datatype') && ~isempty(params.datatype) && ischar(params.datatype)
         dt = [' of the ' esc(params.datatype) ' data'];
     end
 
-    s = sprintf('%s <b>%s</b>%s, tested channel by channel. <b>%s permutations</b>, %sfamily-wise corrected with <b>TFCE</b> and <b>cluster-based</b> methods at <b>&alpha; = .05</b>.', ...
-        phrase, statword, dt, fmt_int(nperm), tail_clause);
+    if multi
+        s = sprintf(['Per-channel <b>%s</b>%s; per-effect statistics listed below. ' ...
+            '<b>%s permutations</b>, family-wise corrected with <b>TFCE</b> and ' ...
+            '<b>cluster-based</b> methods at <b>&alpha; = %s</b>.'], ...
+            statword, dt, fmt_int(nperm), fmt_alpha(alpha));
+    else
+        s = sprintf(['Per-channel <b>%s</b>%s. <b>%s permutations</b>, %sfamily-wise corrected ' ...
+            'with <b>TFCE</b> and <b>cluster-based</b> methods at <b>&alpha; = %s</b>.'], ...
+            statword, dt, fmt_int(nperm), tail_clause, fmt_alpha(alpha));
+    end
+    s = [upper(phrase(1)) phrase(2:end) ' test. ' s];
 
-    nc = n_clause(rs);
+    nc = obs_clause(rs, params);
     if ~isempty(nc), s = [s ' &nbsp;<b>' nc '</b>.']; end
+end
 
-    if isfield(rs,'glm') && isfield(rs.glm,'effect_label') && ~isempty(rs.glm.effect_label)
-        s = [s ' &nbsp;<span style="color:var(--muted)">Effect: ' esc(rs.glm.effect_label) '</span>'];
+% The DESIGN a multi-effect report covers, for the masthead sentence.
+function w = design_word(comp)
+    switch comp
+        case 'mixed2way', w = 'two-way mixed ANOVA';
+        otherwise,        w = 'multi-effect design';
     end
 end
 
-function nc = n_clause(rs)
+% OBSERVATIONS, IN THE UNIT THE DESIGN IS ACTUALLY COUNTED IN.
+%
+% This used to print data1_size(1) whenever the two arms matched, so a balanced
+% 16-vs-16 independent-groups test read "16" -- half the sample, and silent
+% about the balance that matters most for a between-groups claim. It also
+% printed ROWS for the repeated-measures and mixed designs, where a row is a
+% subject x condition cell, not a subject.
+%
+% The rules, one per design family:
+%   two independent arms  "16 vs 16 (32 subjects)"  -- always both arms, even
+%                         when equal, plus the total
+%   paired / one-sample   "24 pairs" / "24 subjects"
+%   correlation           "27 subjects"
+%   GLM presets           "48 rows, 24 subjects" when rows > subjects, else
+%                         "24 subjects"; plus "(12 / 12 per group)" when the
+%                         design has a grouping factor
+%   LMM                   "620 rows, 24 subjects"
+% Everything is read from published fields (rs.data_summary, rs.glm, rs.lmm) --
+% nothing is inferred from the map or the channel count.
+function nc = obs_clause(rs, params)
     nc = '';
+    comp = lower(base_comparison(params));
+
+    % ---- LMM: trial rows nested in subjects ------------------------------
+    if isfield(rs,'lmm') && isstruct(rs.lmm) && isfield(rs.lmm,'n_trials') ...
+            && ~isempty(rs.lmm.n_trials)
+        nsub = gf(rs.lmm, 'n_subjects', []);
+        if isempty(nsub) || ~isfinite(nsub)
+            nc = sprintf('%s rows', fmt_int(rs.lmm.n_trials));
+        else
+            nc = sprintf('%s rows, %s subjects', fmt_int(rs.lmm.n_trials), fmt_int(nsub));
+        end
+        return;
+    end
+
+    % ---- GLM presets, including the mixed2way multi-effect report --------
+    % Keyed on glm.preset: the circular tier also writes an rs.glm (effect_label
+    % only) and must not be counted as a GLM design.
+    if isfield(rs,'glm') && isstruct(rs.glm) && isfield(rs.glm,'preset') ...
+            && isfield(rs.glm,'n_obs') && ~isempty(rs.glm.n_obs)
+        nrow = double(rs.glm.n_obs);
+        nsub = gf(rs.glm, 'n_subjects', []);
+        if isempty(nsub) || ~isfinite(nsub), nsub = nrow; end
+        if nsub < nrow
+            nc = sprintf('%s rows, %s subjects', fmt_int(nrow), fmt_int(nsub));
+        else
+            nc = sprintf('%s subjects', fmt_int(nsub));
+        end
+        gs = gf(rs.glm, 'group_sizes', []);
+        if numel(gs) > 1
+            parts = cell(1, numel(gs));
+            for i = 1:numel(gs), parts{i} = fmt_int(gs(i)); end
+            nc = sprintf('%s (%s per group)', nc, strjoin(parts, ' / '));
+        end
+        return;
+    end
+
+    % ---- legacy t-test / correlation / circular: two data matrices -------
     if ~isfield(rs,'data_summary'), return; end
     ds = rs.data_summary;
     n1 = []; n2 = [];
     if isfield(ds,'data1_size') && ~isempty(ds.data1_size), n1 = ds.data1_size(1); end
     if isfield(ds,'data2_size') && ~isempty(ds.data2_size), n2 = ds.data2_size(1); end
-    if ~isempty(n1) && ~isempty(n2) && n2 ~= n1
-        nc = sprintf('n = %d vs %d', n1, n2);
-    elseif ~isempty(n1)
-        nc = sprintf('n = %d', n1);
+    if isempty(n1), return; end
+
+    two_arm = any(strcmp(comp, {'unpairedt','circ_phase_group','circ_phase_group_u2'}));
+    if two_arm && ~isempty(n2) && n2 > 0
+        nc = sprintf('%d vs %d (%d subjects)', n1, n2, n1 + n2);
+        return;
+    end
+    if strcmp(comp, 'pairedt')
+        nc = sprintf('%d pairs', n1);
+        return;
+    end
+    if any(strcmp(comp, {'onesamplet','correlationp','correlations','circ_corranglinear'}))
+        nc = sprintf('%d subjects', n1);
+        return;
+    end
+    % Unknown comparison: state both matrices rather than guess a unit.
+    if ~isempty(n2) && n2 > 0 && n2 ~= n1
+        nc = sprintf('%d vs %d', n1, n2);
+    else
+        nc = sprintf('%d', n1);
     end
 end
 
 % =========================================================================
-% EXCLUDED CHANNELS
-% A channel that leaves an analysis must say so on the face of the report.
-% Only rendered when something WAS excluded; a complete montage stays silent.
+% MODEL CARD: the fitted formula + the specification rows
 % =========================================================================
-function write_excluded(fid, rs)
-    if ~isfield(rs, 'excluded_channels') || ~isstruct(rs.excluded_channels), return; end
-    ex = rs.excluded_channels;
-    if ~isfield(ex, 'n') || ex.n == 0, return; end
-    labs = ex.labels;
-    if ~iscell(labs), labs = cellstr(string(labs)); end
-    nch = 0;
-    if isfield(ex, 'n_channels'), nch = ex.n_channels; end
-    fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
-    fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">Excluded channels</span>' ...
-        '<span><b>%d</b> of %d channel(s) were not tested.</span></div>\n'], ex.n, nch);
-    % Render the engine's own reason string rather than hard-coding "missing
-    % data": the correlation tier now excludes non-finite cells too (log10(0) =
-    % -Inf under datatype 'logscale'), which is not missing data and has a
-    % different remedy. The Excel sheet already carried ex.reason, so hard-coding
-    % here made the HTML and the workbook say different things.
-    reason_txt = 'missing data: channel not usable in every analysed subject';
-    if isfield(ex, 'reason') && ~isempty(ex.reason)
-        reason_txt = char(ex.reason);
-    end
-    fprintf(fid, ['  <div class="grp"><span>Reason: %s. They cannot be evaluated on the same row ' ...
-        'set in every permutation, so they carry no statistic and no p-value in either the ' ...
-        'observed map or the null. Reported here rather than dropped silently.</span></div>\n'], ...
-        esc(reason_txt));
-    fprintf(fid, '  <div class="grp"><span class="k">Channels</span><span style="font-family:var(--mono);font-size:11.5px">%s</span></div>\n', ...
-        esc(strjoin(labs(:)', ', ')));
-    fprintf(fid, '</div>\n');
-end
+function M = model_card_rows(rs, params, base)
+    comp = lower(base_comparison(params));
+    dv = 'SIGNAL';
+    if isfield(rs,'lmm') && isfield(rs.lmm,'dv') && ~isempty(rs.lmm.dv), dv = upper(char(rs.lmm.dv)); end
+    v = @(x) ['<span class="v">' x '</span>'];
+    r = @(x) ['<span class="r">' x '</span>'];
+    gcol = pget(params,'group_col','group');
+    ccol = pget(params,'condition_col','condition');
+    pcol = pget(params,'predictor_col','predictor');
+    covs = covariate_names(params);
 
-% =========================================================================
-% HOW DATA 2 WAS MATCHED TO DATA 1'S CHANNELS (correlation only)
-%
-% 'positional' is a caveat on every number in the report -- Data 2's column
-% names were not recognised channel labels, so the pairing was taken on trust.
-% It is raised as a console warning too, but a headless scripts/ run throws its
-% console away, so it has to be visible in the artefact a reader keeps.
-% 'behavior' is stated for orientation (no channel-to-channel pairing exists);
-% the verified 'label' case says nothing, to keep the report quiet.
-% =========================================================================
-function write_data2_matching(fid, rs)
-    if ~isfield(rs, 'data2_matched') || isempty(rs.data2_matched), return; end
-    switch char(rs.data2_matched)
-        case 'positional'
-            fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
-            fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">' ...
-                'Data 2 matched by POSITION</span><span>Data 2''s column names are not ' ...
-                'recognised channel labels, so channel <i>i</i> of Data 1 was paired with ' ...
-                'Data 2''s <i>i</i>-th data column <b>on trust</b> &mdash; the pairing could ' ...
-                'not be checked.</span></div>\n']);
-            fprintf(fid, ['  <div class="grp"><span>If the two files do not list their channels ' ...
-                'in the same order, every value in this report is mis-paired. Re-export Data 2 ' ...
-                'with the recording system''s labels (E1, Cz, ...) to have the pairing verified ' ...
-                'by name.</span></div>\n']);
-            fprintf(fid, '</div>\n');
-        case 'behavior'
-            lab = 'a single behavioural measure';
-            if isfield(rs, 'behavior_col') && ~isempty(rs.behavior_col)
-                lab = sprintf('the behavioural measure <b>%s</b>', esc(rs.behavior_col));
+    rows = {};
+    switch comp
+        case 'pairedt'
+            f = [v(dv) ' ~ ' r('condition') ' + Error(Subject)'];
+            rows{end+1} = {'Design', 'Paired / within subject', true};
+        case 'unpairedt'
+            f = [v(dv) ' ~ ' r('group')];
+            rows{end+1} = {'Design', 'Two independent groups', true};
+        case 'onesamplet'
+            f = [v(dv) ' ~ ' r('1') '  (tested against 0)'];
+            rows{end+1} = {'Design', 'One sample vs zero', true};
+        case {'correlationp','correlations'}
+            y = 'Data 2';
+            if isfield(rs,'behavior_col') && ~isempty(rs.behavior_col), y = char(rs.behavior_col); end
+            if strcmp(comp,'correlations'), est = 'Spearman'; else, est = 'Pearson'; end
+            f = ['corr( ' v(dv) ' , ' r(esc(y)) ' )'];
+            rows{end+1} = {'Design', [est ' correlation, per channel'], true};
+            if ~isempty(covs)
+                f = [f ' &nbsp;|&nbsp; ' esc(strjoin(covs, ', '))];
+                rows{end+1} = {'Partialled out', strjoin(covs, ', '), false};
             end
-            fprintf(fid, '<div class="legend">\n');
-            fprintf(fid, ['  <div class="grp"><span class="k">Data 2</span><span>%s &mdash; one ' ...
-                'value per subject, correlated against every channel of Data 1. There is no ' ...
-                'channel-to-channel pairing in this analysis.</span></div>\n'], lab);
-            fprintf(fid, '</div>\n');
+        case 'anova1'
+            f = [v(dv) ' ~ ' r(esc(gcol))];
+            rows{end+1} = {'Design', 'One-way, between subjects', true};
+        case 'ancova'
+            f = [v(dv) ' ~ ' r(esc(gcol)) ' + ' esc(strjoin_or(covs,'covariates'))];
+            rows{end+1} = {'Design', 'ANCOVA, between subjects', true};
+        case 'regression'
+            f = [v(dv) ' ~ ' r(esc(pcol))];
+            if ~isempty(covs), f = [f ' + ' esc(strjoin(covs, ' + '))]; end
+            rows{end+1} = {'Design', 'Linear regression', true};
+        case 'rmanova'
+            f = [v(dv) ' ~ ' r(esc(ccol)) ' + Error(Subject)'];
+            rows{end+1} = {'Design', 'Repeated measures, within subject', true};
+        case 'mixed2way'
+            f = [v(dv) ' ~ ' r(esc(gcol)) ' &times; ' r(esc(ccol)) ' + Error(Subject)'];
+            rows{end+1} = {'Design', 'Two-way mixed (between &times; within)', true};
+        case {'circ_phase_group','circ_phase_group_u2'}
+            f = ['( cos ' v('&theta;') ' , sin ' v('&theta;') ' ) ~ ' r('group')];
+            rows{end+1} = {'Design', 'Preferred phase, two independent groups', true};
+        case 'circ_corranglinear'
+            f = [v('&theta;') ' ~ ' r('linear measure') '  (circular-linear)'];
+            rows{end+1} = {'Design', 'Circular-linear association, paired by subject', true};
+        otherwise
+            f = [v(dv) ' ~ ' r('effect')];
     end
+
+    if isfield(rs,'glm') && isfield(rs.glm,'effect_label') && ~isempty(rs.glm.effect_label) ...
+            && ~strcmp(comp,'mixed2way')
+        rows{end+1} = {'Effect tested', char(rs.glm.effect_label), false};
+    end
+    if any(strcmp(comp, {'anova1','ancova','mixed2way'})) && ~isempty(gcol)
+        rows{end+1} = {'Between-subjects factor', gcol, true};
+    end
+    if any(strcmp(comp, {'rmanova','mixed2way'})) && ~isempty(ccol)
+        rows{end+1} = {'Within-subject factor', ccol, true};
+    end
+    if strcmp(comp,'regression') && ~isempty(pcol)
+        rows{end+1} = {'Predictor', pcol, true};
+    end
+    if ~isempty(covs) && ~any(strcmp(comp, {'correlationp','correlations'}))
+        rows{end+1} = {'Covariates', strjoin(covs, ', '), false};
+    end
+    nc = obs_clause(rs, params);
+    if ~isempty(nc), rows{end+1} = {'Observations', nc, false}; end
+    if isfield(params,'datatype') && ~isempty(params.datatype)
+        rows{end+1} = {'Data type', char(params.datatype), true};
+    end
+    rows{end+1} = {'Montage', montage_label(rs, params), true};
+    nperm = 1000;
+    if isfield(params,'permutations') && ~isempty(params.permutations), nperm = double(params.permutations); end
+    rows{end+1} = {'Permutations &middot; &alpha;', ...
+        sprintf('%s &middot; %s', fmt_int(nperm), fmt_alpha(gf(rs,'alpha',0.05))), false};
+    rows{end+1} = {'Correction', 'TFCE + cluster', true};
+    rows{end+1} = {'Dataset', strrep(base, '_', ' '), false};
+
+    M = struct('formula', f, 'rows', {rows});
 end
 
-% =========================================================================
-% DATA TYPE 'normalize' + A BROADCAST BEHAVIOURAL SCORE
-%
-% Not a preference note. Per-subject z-scoring across channels forces each
-% subject's channels to average zero, which forces the sd-weighted sum of the
-% r-map to zero: a uniformly signed EEG-behaviour association is arithmetically
-% excluded, and the symmetric +/- map that results is the constraint, not a
-% finding. Raised as a console warning too (snpm:behavior:normalizeBroadcast),
-% but a headless scripts/ run throws its console away, so it has to be in the
-% artefact the reader keeps. Absent on every other run -- isfield-guarded.
-% =========================================================================
-function write_normalize_broadcast(fid, rs)
-    if ~isfield(rs, 'normalize_broadcast_caveat') || isempty(rs.normalize_broadcast_caveat)
-        return;
-    end
-    fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
-    fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">' ...
-        'Data Type caveat</span><span>%s</span></div>\n'], esc(char(rs.normalize_broadcast_caveat)));
-    fprintf(fid, '</div>\n');
+function s = strjoin_or(c, dflt)
+    if isempty(c), s = dflt; else, s = strjoin(c, ' + '); end
 end
 
-% =========================================================================
-% LEGEND
-% =========================================================================
-function write_legend(fid, statName)
-    fprintf(fid, '<div class="legend">\n');
-    if strcmp(statName,'F')
-        bar = 'linear-gradient(90deg,#f3f6f8,#0e4d63)';
-        fprintf(fid, '  <div class="grp"><span class="k">Statistic</span><span>F-statistic (omnibus)</span></div>\n');
-        fprintf(fid, '  <span class="sep"></span>\n');
-        fprintf(fid, '  <div class="grp"><span class="k">F-map</span><span class="chip"><span class="tmapbar" style="background:%s"></span></span><span style="color:var(--muted)">low</span><span style="color:var(--muted)">&middot;</span><span style="color:var(--warm)">high F</span></div>\n', bar);
-    elseif strcmp(statName,'r')
-        bar = 'linear-gradient(90deg,#2f6db0,#cfe0ef 46%,#f2efe6 50%,#edc6b6 54%,#c2543a)';
-        fprintf(fid, '  <div class="grp"><span class="k">Statistic</span><span>correlation (r)</span></div>\n');
-        fprintf(fid, '  <span class="sep"></span>\n');
-        fprintf(fid, '  <div class="grp"><span class="k">r-map</span><span class="chip"><span class="tmapbar" style="background:%s"></span></span><span style="color:var(--cool)">negative</span><span style="color:var(--muted)">&middot;</span><span style="color:var(--warm)">positive</span></div>\n', bar);
-    else
-        bar = 'linear-gradient(90deg,#2f6db0,#cfe0ef 46%,#f2efe6 50%,#edc6b6 54%,#c2543a)';
-        fprintf(fid, '  <div class="grp"><span class="k">Statistic</span><span>t-statistic &middot; A vs B</span></div>\n');
-        fprintf(fid, '  <span class="sep"></span>\n');
-        fprintf(fid, '  <div class="grp"><span class="k">T-map</span><span class="chip"><span class="tmapbar" style="background:%s"></span></span><span style="color:var(--cool)">B&gt;A</span><span style="color:var(--muted)">&middot;</span><span style="color:var(--warm)">warm = A&gt;B</span></div>\n', bar);
-    end
-    fprintf(fid, '  <span class="sep"></span>\n');
-    fprintf(fid, '  <div class="grp"><span class="k">Significant</span><span class="chip"><span class="swatch" style="background:var(--sig-soft);border-color:var(--sig)"></span>corrected channel</span></div>\n');
-    fprintf(fid, '</div>\n');
+function v = pget(params, f, dflt)
+    v = dflt;
+    if isfield(params, f) && ~isempty(params.(f)), v = char(string(params.(f))); end
 end
 
-% =========================================================================
-% TOPOGRAPHIES
-% =========================================================================
-function write_topographies(fid, rs, base, statName)
-    % Omnibus-F presets: one mean topography per group + the standalone F-map
-    % (the per-group means and F-map are saved by core_snpm_glm).
-    if strcmp(statName, 'F') && has_group_topos(rs)
-        write_topographies_F(fid, rs);
-        return;
+function c = covariate_names(params)
+    c = {};
+    if isfield(params,'covariate_cols') && ~isempty(params.covariate_cols)
+        c = cellstr(string(params.covariate_cols));
+    elseif isfield(params,'use_covariates') && params.use_covariates ...
+            && isfield(params,'covariate_file') && ~isempty(params.covariate_file)
+        c = {'covariate file'};
     end
-    % Regression (continuous predictor): no A/B means exist, so show only the
-    % single signed slope map (core_snpm_glm sets glm.effect_map_only).
-    if isfield(rs,'glm') && isfield(rs.glm,'effect_map_only') && rs.glm.effect_map_only
-        effTitle = 'Effect (t-map)';
-        if isfield(rs.glm,'effect_label') && ~isempty(rs.glm.effect_label)
-            effTitle = [rs.glm.effect_label ' (t-map)'];
+    c = c(:)';
+end
+
+% Recording system as the reader knows it (the registry's display name, not the
+% legacy GUI key '164 channels'), plus how many channels were actually analysed.
+function s = montage_label(rs, params)
+    s = '';
+    if isfield(params,'channels') && ~isempty(params.channels)
+        s = char(string(params.channels));
+        try
+            m = snpm_montage_registry(s);
+            s = m.display;
+        catch
+            % unknown key: show what the caller asked for, verbatim
         end
-        fprintf(fid, '<section class="section">\n  <div class="head"><h2>Topography</h2><span class="sub">Per-channel effect (slope) map</span></div>\n');
-        fprintf(fid, '  <div class="topo-grid">\n');
-        write_fig_card(fid, [base '_topo.png'], esc(effTitle));
-        fprintf(fid, '  </div>\n</section>\n');
+    end
+    n = 0;
+    if isfield(rs,'chanlocs'), n = numel(rs.chanlocs); end
+    if n > 0
+        if isempty(s), s = sprintf('%d channels analysed', n);
+        else,          s = sprintf('%s &mdash; %d channels analysed', s, n);
+        end
+    elseif isempty(s)
+        s = 'not stated';
+    end
+end
+
+% =========================================================================
+% NOTICES (amber block under the model card)
+% Anything that qualifies EVERY number in the report and would otherwise die
+% in a headless console: excluded channels, an unverified Data 2 pairing, the
+% normalize/broadcast constraint, an uninterpretable global, the circular
+% rotation actually applied. Rendered only when the list is non-empty.
+% The literal strings 'Excluded channels', 'Data Type caveat' and
+% 'rotation +X.X deg' are asserted by the test suites -- do not reword them.
+% =========================================================================
+function N = build_notices(rs)
+    N = {};
+
+    % -- excluded channels (single set, or the union across effects) --------
+    if isfield(rs,'effects') && numel(rs.effects) > 1
+        [idx, labs] = union_excluded(rs);
+        if ~isempty(idx)
+            N{end+1} = notice('Excluded channels', sprintf([ ...
+                '<b>%d</b> of %d channel(s) were not tested in <b>at least one</b> effect. ' ...
+                'The excluded set <b>differs per effect</b> and is stated in each section ' ...
+                'below: the group main effect is computed on subject means, so it can test ' ...
+                'channels the within-subject effects cannot. Union: <span style="font-family:' ...
+                'var(--mono);font-size:11.5px">%s</span>'], ...
+                numel(idx), effect_nchannels(rs), esc(strjoin(labs, ', '))));
+        end
+    elseif isfield(rs,'excluded_channels') && isstruct(rs.excluded_channels) ...
+            && isfield(rs.excluded_channels,'n') && rs.excluded_channels.n > 0
+        ex = rs.excluded_channels;
+        labs = ex.labels; if ~iscell(labs), labs = cellstr(string(labs)); end
+        nch = 0; if isfield(ex,'n_channels'), nch = ex.n_channels; end
+        % The engine's own reason string, not a hard-coded "missing data": the
+        % correlation tier also excludes non-finite cells (log10(0) = -Inf under
+        % datatype 'logscale'), which has a different remedy, and the Excel
+        % sheet already prints ex.reason.
+        reason = 'missing data: channel not usable in every analysed subject';
+        if isfield(ex,'reason') && ~isempty(ex.reason), reason = char(ex.reason); end
+        N{end+1} = notice('Excluded channels', sprintf([ ...
+            '<b>%d</b> of %d channel(s) were not tested. Reason: %s. They cannot be evaluated ' ...
+            'on the same row set in every permutation, so they carry no statistic and no ' ...
+            'p-value in either the observed map or the null. Channels: <span style="font-family:' ...
+            'var(--mono);font-size:11.5px">%s</span>'], ...
+            ex.n, nch, esc(reason), esc(strjoin(labs(:)', ', '))));
+    end
+
+    % -- how Data 2 was matched (correlation) -------------------------------
+    if isfield(rs,'data2_matched') && ~isempty(rs.data2_matched)
+        switch char(rs.data2_matched)
+            case 'positional'
+                N{end+1} = notice('Data 2 matched by POSITION', [ ...
+                    'Data 2''s column names are not recognised channel labels, so channel ' ...
+                    '<i>i</i> of Data 1 was paired with Data 2''s <i>i</i>-th data column ' ...
+                    '<b>on trust</b>. If the two files do not list their channels in the same ' ...
+                    'order, every value in this report is mis-paired. Re-export Data 2 with ' ...
+                    'the recording system''s labels (E1, Cz, ...) to have the pairing verified.']);
+            case 'behavior'
+                lab = 'a single behavioural measure';
+                if isfield(rs,'behavior_col') && ~isempty(rs.behavior_col)
+                    lab = sprintf('the behavioural measure <b>%s</b>', esc(char(rs.behavior_col)));
+                end
+                N{end+1} = notice('Data 2', sprintf([ ...
+                    '%s &mdash; one value per subject, correlated against every channel of ' ...
+                    'Data 1. There is no channel-to-channel pairing in this analysis.'], lab));
+        end
+    end
+
+    % -- datatype 'normalize' + a broadcast behavioural score ---------------
+    % Not a preference note: per-subject z-scoring across channels forces the
+    % sd-weighted sum of the r-map to zero, so a uniformly signed association is
+    % arithmetically excluded and the symmetric +/- map is the constraint, not a
+    % finding.
+    if isfield(rs,'normalize_broadcast_caveat') && ~isempty(rs.normalize_broadcast_caveat)
+        N{end+1} = notice('Data Type caveat', esc(char(rs.normalize_broadcast_caveat)));
+    end
+
+    % -- a global the engine declared uninterpretable ------------------------
+    if isfield(rs,'global_not_interpretable') && rs.global_not_interpretable
+        g = ['The channel-averaged signal is analytically zero under this transform, so the ' ...
+            'global value below is floating-point noise rather than a whole-head result.'];
+        if isfield(rs,'global_note') && ~isempty(rs.global_note), g = char(rs.global_note); end
+        N{end+1} = notice('Global test not interpretable', esc(g));
+    end
+
+    % -- source space: no scalp images at all --------------------------------
+    if isfield(rs,'is_source') && rs.is_source
+        N{end+1} = notice('Source space', ['This run is in source space (cortical voxels), ' ...
+            'which has no scalp layout, so no topography is drawn anywhere in this report ' ...
+            '&mdash; that is the design, not a missing file. The per-voxel deliverable is the ' ...
+            'sibling <span style="font-family:var(--mono);font-size:11.5px">_sigvoxels.csv</span>, ' ...
+            'which carries every voxel''s statistic, p-values, coordinates and cluster ' ...
+            'membership.']);
+    end
+
+    % -- circular: the rotation actually applied ----------------------------
+    if isfield(rs,'circ') && isfield(rs.circ,'rotation_deg')
+        N{end+1} = notice('Angle convention', sprintf([ ...
+            'Angles were rotated by <b>%+.1f deg</b> (declared convention <b>%s</b>) so that ' ...
+            '0 is the slow-oscillation up-state peak. A wrong declaration rotates every angle ' ...
+            'invisibly. Cluster statistic: <b>mass</b> (sum of the statistic over the cluster, ' ...
+            'divided by the number of channels), not cluster extent.'], ...
+            rs.circ.rotation_deg, esc(char(rs.circ.convention))));
+    end
+end
+
+function n = notice(title, body)
+    n = struct('title', title, 'body', body);
+end
+
+% Per-effect exclusion statement, rendered inside the effect section so it sits
+% next to the maps it describes. When the report excludes something somewhere
+% but NOT here, that is said explicitly -- otherwise the top notice would be
+% read as applying to this section too.
+function h = excluded_effect_html(rs, eff)
+    h = '';
+    [uidx, ~] = union_excluded(rs);
+    ex = [];
+    if isfield(eff,'excluded_channels') && isstruct(eff.excluded_channels)
+        ex = eff.excluded_channels;
+    end
+    n = 0; labs = {};
+    if ~isempty(ex) && isfield(ex,'n'), n = ex.n; end
+    if n > 0 && isfield(ex,'labels')
+        labs = ex.labels; if ~iscell(labs), labs = cellstr(string(labs)); end
+        labs = labs(:)';
+    end
+    nch = effect_nchannels(rs);
+    if n == 0
+        if isempty(uidx), return; end
+        h = sprintf(['    <p class="methods" style="margin:14px 0 0"><b>Channels:</b> all %d ' ...
+            'channels were tested for this effect (the exclusions noted at the top of the ' ...
+            'report apply to other effects).</p>\n'], nch);
         return;
     end
-    % t / r presets: unchanged two-means + effect-map layout.
-    if has(base, ' VS ')
-        parts = strsplit(base, ' VS '); d1 = parts{1}; d2 = parts{2};
-    else
-        d1 = [base '_Data1']; d2 = [base '_Data2'];
+    h = sprintf(['    <p class="methods" style="margin:14px 0 0;color:#b8862a"><b>Excluded ' ...
+        'for this effect:</b> %d of %d channel(s) &mdash; %s. They carry no statistic and no ' ...
+        'p-value in the maps and tables below.</p>\n'], n, nch, esc(strjoin(labs, ', ')));
+end
+
+function n = effect_nchannels(rs)
+    n = 0;
+    if isfield(rs,'chanlocs'), n = numel(rs.chanlocs); end
+    if n == 0 && isfield(rs,'effects') && ~isempty(rs.effects)
+        e = rs.effects(1);
+        if isfield(e,'excluded_channels') && isfield(e.excluded_channels,'n_channels')
+            n = e.excluded_channels.n_channels;
+        end
     end
-    switch statName
-        case 'F',    statTitle = 'F-map (omnibus)';
-        case 'r',    statTitle = 'r-map';
-        case 'circ', statTitle = 'Mean-direction difference (deg, circular)';
-        otherwise,   statTitle = 't-map (A vs B)';
-    end
-    % One-sample vs 0: condition B is a zero map -> show only the condition
-    % mean + the effect (t-vs-0) map.
-    hideB = isfield(rs,'hide_condition_b') && rs.hide_condition_b;
-    fprintf(fid, '<section class="section">\n  <div class="head"><h2>Topographies</h2><span class="sub">Group / condition means and the statistic map</span></div>\n');
-    fprintf(fid, '  <div class="topo-grid">\n');
-    if hideB
-        % Two different analyses hide condition B and they must not share one
-        % caption: a one-sample test against zero (the B map IS zero) and a
-        % correlation against a single behavioural score per subject (the B map
-        % is that score repeated at every channel, a flat disc). Captioning the
-        % latter "Effect (t vs 0)" would name a statistic the run never
-        % computed -- the map is r.
-        if strcmp(statName, 'r')
-            meanCap = 'Mean topography';
-            effCap  = 'r-map';
-            if isfield(rs, 'behavior_col') && ~isempty(rs.behavior_col)
-                meanCap = 'Mean topography &mdash; EEG';
-                effCap  = sprintf('r-map &mdash; EEG vs %s', esc(rs.behavior_col));
+end
+
+function [idx, labs] = union_excluded(rs)
+    idx = [];
+    if isfield(rs,'effects')
+        for k = 1:numel(rs.effects)
+            idx = [idx, eff_excl_idx(rs.effects(k))]; %#ok<AGROW>
+            se = [];
+            if isfield(rs.effects(k),'simple_effects'), se = rs.effects(k).simple_effects; end
+            for s = 1:numel(se)
+                idx = [idx, eff_excl_idx(se(s))]; %#ok<AGROW>
             end
-        else
-            meanCap = 'Condition mean';
-            effCap  = 'Effect (t vs 0)';
         end
-        write_fig_card(fid, [d1 '_topo.png'], meanCap);
-        write_fig_card(fid, [base '_topo.png'], effCap);
-    else
-        write_fig_card(fid, [d1 '_topo.png'], 'Mean topography &mdash; A');
-        write_fig_card(fid, [d2 '_topo.png'], 'Mean topography &mdash; B');
-        write_fig_card(fid, [base '_topo.png'], statTitle);
     end
-    fprintf(fid, '  </div>\n</section>\n');
+    idx = unique(idx(:)');
+    labs = cell(1, numel(idx));
+    for i = 1:numel(idx), labs{i} = chan_label(rs, idx(i)); end
 end
 
-function tf = has_group_topos(rs)
-    tf = isfield(rs,'glm') && isfield(rs.glm,'group_mean_png') && ~isempty(rs.glm.group_mean_png);
-end
-
-% F (omnibus): one card per group mean, then the F-map card.
-function write_topographies_F(fid, rs)
-    labels = {}; pngs = {}; fmap = '';
-    if isfield(rs.glm,'group_labels'),   labels = rs.glm.group_labels;   end
-    if isfield(rs.glm,'group_mean_png'), pngs   = rs.glm.group_mean_png; end
-    if isfield(rs.glm,'fmap_png'),       fmap   = rs.glm.fmap_png;       end
-
-    fprintf(fid, '<section class="section">\n  <div class="head"><h2>Topographies</h2><span class="sub">Per-group means and the omnibus F-map</span></div>\n');
-    fprintf(fid, '  <div class="topo-grid">\n');
-    for i = 1:numel(pngs)
-        lab = sprintf('Group %d', i);
-        if i <= numel(labels) && ~isempty(labels{i}), lab = labels{i}; end
-        write_fig_card(fid, pngs{i}, sprintf('Mean topography &mdash; %s', esc(lab)));
+function v = eff_excl_idx(eff)
+    v = [];
+    if isfield(eff,'excluded_channels') && isstruct(eff.excluded_channels) && ...
+            isfield(eff.excluded_channels,'index')
+        v = reshape(eff.excluded_channels.index, 1, []);
     end
-    if ~isempty(fmap)
-        write_fig_card(fid, fmap, 'F-map (omnibus)');
-    end
-    fprintf(fid, '  </div>\n</section>\n');
-end
-
-function write_fig_card(fid, fname, title)
-    fprintf(fid, '    <div class="fig"><div class="cap"><span class="t">%s</span><span class="f">%s</span></div>', title, esc(fname));
-    write_slot(fid, fname);
-    fprintf(fid, '</div>\n');
-end
-
-function write_slot(fid, fname)
-    fprintf(fid, ['<figure class="slot"><img src="%s" alt="%s" loading="lazy" ' ...
-        'onload="var p=this.parentNode.querySelector(''.ph'');if(p)p.style.display=''none''" ' ...
-        'onerror="this.classList.add(''err'')">' ...
-        '<figcaption class="ph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' ...
-        '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>' ...
-        '<span class="fn">%s</span></figcaption></figure>'], esc(fname), esc(fname), esc(fname));
 end
 
 % =========================================================================
-% SIGNIFICANCE : three-way toggle (Uncorrected / TFCE / Cluster)
+% RENDER: R -> HTML, in the order of templates/snpm_report_v2_master.html
 % =========================================================================
-function write_significance(fid, rs, base, statSym, nperm, unc, tfce, clu)
-    nU = numel(unc); nT = numel(tfce); nC = numel(clu);
+function write_document(fid, R)
+    fprintf(fid, '%s', '<!DOCTYPE html>');
+    fprintf(fid, '\n%s', '<html lang="en"><head><meta charset="utf-8">');
+    fprintf(fid, '\n%s', '<meta name="viewport" content="width=device-width, initial-scale=1">');
+    fprintf(fid, '\n<title>SnPM report &mdash; %s</title>\n', R.title);
+    fprintf(fid, '%s\n', v2_css());
+    fprintf(fid, '%s\n', v2_js());
+    fprintf(fid, '%s', '</head>');
+    fprintf(fid, '\n<body>\n<div class="wrap">\n\n');
+
+    write_masthead(fid, R);
+    write_strip(fid, R);
+    write_model(fid, R);
+    write_notices(fid, R);
+    write_legend(fid, R);
+    write_descriptive(fid, R);
+    for k = 1:numel(R.effects)
+        write_effect(fid, R, R.effects{k});
+    end
+    write_global(fid, R);
+    write_footer(fid);
+
+    fprintf(fid, '\n</div>\n</body>\n</html>\n');
+end
+
+function write_masthead(fid, R)
+    fprintf(fid, '<header class="masthead">\n  <div>\n');
+    fprintf(fid, '    <span class="eyebrow">SnPM Topographic Statistics</span>\n');
+    fprintf(fid, '    <h1>%s</h1>\n', R.title);
+    fprintf(fid, '    <p class="methods">%s</p>\n', R.methods);
+    fprintf(fid, '  </div>\n  <div class="actions">\n');
+    fprintf(fid, ['    <a class="btn" href="%s" download><svg viewBox="0 0 24 24" fill="none" ' ...
+        'stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 ' ...
+        '1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Results CSV</a>\n'], url(R.csv));
+    fprintf(fid, ['    <button class="btn" onclick="window.print()"><svg viewBox="0 0 24 24" ' ...
+        'fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 9V3h12v6M6 18H4a2 2 ' ...
+        '0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>' ...
+        'Print / PDF</button>\n']);
+    fprintf(fid, '  </div>\n</header>\n\n');
+end
+
+% Sticky per-effect summary strip: traffic light + counts + global headline.
+function write_strip(fid, R)
+    fprintf(fid, '<nav class="strip">\n');
+    for k = 1:numel(R.effects)
+        e = R.effects{k};
+        fprintf(fid, '  <a class="chipfx" href="#fx-%s"><span class="lamp %s"></span>', ...
+            e.key, lamp_cls(e.lamp));
+        fprintf(fid, '<span class="nm">%s</span>', e.title);
+        fprintf(fid, '<span class="cts">Clu %d &middot; TFCE %d &middot; Unc %d</span>', ...
+            numel(e.sclu), numel(e.stfce), numel(e.sunc));
+        if ~isempty(e.global)
+            g = e.global;
+            fprintf(fid, '<span class="gp%s">%s = %s &middot; %s</span>', ...
+                psig_cls(g, R.alpha), g.sym, fmt_stat(g.stat), p_phrase(g.p, R.nperm));
+        end
+        fprintf(fid, '</a>\n');
+    end
+    fprintf(fid, '  <a class="chipfx" href="#global"><span class="nm">Global test</span></a>\n');
+    fprintf(fid, '</nav>\n\n');
+end
+
+function write_model(fid, R)
     fprintf(fid, '<section class="section">\n');
-    fprintf(fid, '  <div class="head"><h2>Significant channels</h2><span class="sub">Choose the multiple-comparison correction</span></div>\n');
-    fprintf(fid, '  <div class="seg" id="viewSeg">\n');
-    fprintf(fid, '    <button id="btn_clu" class="on" onclick="showView(''clu'')">Cluster <span class="ct%s">%d</span></button>\n', none_cls(nC), nC);
-    fprintf(fid, '    <button id="btn_tfce" onclick="showView(''tfce'')">TFCE <span class="ct%s">%d</span></button>\n', none_cls(nT), nT);
-    fprintf(fid, '    <button id="btn_unc" onclick="showView(''unc'')">Uncorrected <span class="ct%s">%d</span></button>\n', none_cls(nU), nU);
-    fprintf(fid, '  </div>\n');
-
-    % --- Cluster panel (shown by default) ---
-    fprintf(fid, '  <div id="panel_clu" class="vpanel" data-view-name="Cluster-corrected">\n    <div class="vbody">\n');
-    write_map_card(fid, [base ' Cluster.png'], 'cluster-corrected');
-    write_cluster_table(fid, rs, clu, statSym, nperm);
-    fprintf(fid, '    </div>\n  </div>\n');
-
-    % --- TFCE panel ---
-    fprintf(fid, '  <div id="panel_tfce" class="vpanel" data-view-name="TFCE-corrected" style="display:none">\n    <div class="vbody">\n');
-    write_map_card(fid, [base ' TFCE.png'], 'TFCE-corrected');
-    write_flat_table(fid, rs, tfce, get_pvec(rs,'correctedTFCE'), statSym, 'TFCE-corrected', nperm);
-    fprintf(fid, '    </div>\n  </div>\n');
-
-    % --- Uncorrected panel : no map (uncorrected electrodes already show as
-    %     black dots on the TFCE / Cluster maps); full-width channel list ---
-    fprintf(fid, '  <div id="panel_unc" class="vpanel" data-view-name="Uncorrected" style="display:none">\n');
-    write_flat_table(fid, rs, unc, get_pvec(rs,'real'), statSym, 'uncorrected', nperm);
-    fprintf(fid, '  </div>\n');
-
-    fprintf(fid, '</section>\n');
-end
-
-function write_map_card(fid, fname, kind)
-    fprintf(fid, '      <div class="fig"><div class="cap"><span class="t">%s significance map</span><span class="f">%s</span></div>', cap_kind(kind), esc(fname));
-    write_slot(fid, fname);
-    fprintf(fid, ['<div class="map-note"><span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span>' ...
-        '<span class="dl"><span class="dd" style="background:#fff"></span>%s</span></div>'], kind);
-    fprintf(fid, '</div>\n');
-end
-
-function t = cap_kind(kind)
-    if strncmpi(kind,'TFCE',4), t = 'TFCE'; else, t = 'Cluster'; end
-end
-
-% Post-hoc significance-map card. Same as write_map_card but the legend shows
-% the effect DIRECTION instead of uncorrected/corrected (the dot meaning is
-% already printed on the PNG as "B: uncorrectedSig / W: correctedSig"). The map
-% is a signed t = mean_a - mean_b with a diverging jet colormap, so warm (red) =
-% A > B and cool (blue) = A < B, for label "A vs B".
-function write_posthoc_map_card(fid, fname, kind, lab)
-    parts = strsplit(lab, ' vs ');
-    if numel(parts) == 2, A = strtrim(parts{1}); B = strtrim(parts{2}); else, A = ''; B = ''; end
-    fprintf(fid, '      <div class="fig"><div class="cap"><span class="t">%s significance map</span><span class="f">%s</span></div>', cap_kind(kind), esc(fname));
-    write_slot(fid, fname);
-    if ~isempty(A) && ~isempty(B)
-        fprintf(fid, ['<div class="map-note"><span class="dl"><span class="dd" style="background:#c0392b"></span>%s &gt; %s</span>' ...
-            '<span class="dl"><span class="dd" style="background:#2c6fbb"></span>%s &lt; %s</span></div>'], ...
-            esc(A), esc(B), esc(A), esc(B));
+    fprintf(fid, '  <div class="head"><h2>Model</h2><span class="sub">The design fitted at every channel</span></div>\n');
+    fprintf(fid, '  <div class="model-card">\n');
+    fprintf(fid, '    <div class="formula"><span class="fk">Fitted per channel</span>\n');
+    fprintf(fid, '      <code>%s</code>\n    </div>\n', R.model.formula);
+    fprintf(fid, '    <div class="specs">\n');
+    for i = 1:numel(R.model.rows)
+        row = R.model.rows{i};
+        cls = 'val'; if row{3}, cls = 'val tag'; end
+        fprintf(fid, '      <div class="row"><span class="k">%s</span><span class="%s">%s</span></div>\n', ...
+            row{1}, cls, esc_soft(row{2}));
     end
-    fprintf(fid, '</div>\n');
+    fprintf(fid, '    </div>\n  </div>\n</section>\n\n');
 end
 
-% ---- flat table (uncorrected / TFCE) : Channel | statistic | p, ascending p ----
-function write_flat_table(fid, rs, chs, pvec, statSym, label, nperm)
-    chs = chs(:).';
-    if isempty(chs)
-        fprintf(fid, '      <div class="tablewrap">'); write_empty(fid, label); fprintf(fid, '</div>\n');
-        return;
-    end
-    ps = arrayfun(@(c) get_p(pvec, c), chs);
-    [ps, ord] = sort(ps);
-    chs = chs(ord);
-    fprintf(fid, '      <div class="tablewrap">\n');
-    fprintf(fid, '        <div class="thead-note"><span><b>%d</b> %s significant channels</span><span>sorted by ascending p</span></div>\n', numel(chs), label);
-    fprintf(fid, '        <table class="sum"><thead><tr><th>Channel</th><th>%s</th><th>p</th></tr></thead><tbody>\n', statSym);
-    for k = 1:numel(chs)
-        c = chs(k);
-        pcls = ''; if ps(k) <= 0.05, pcls = 'p-sig'; end
-        fprintf(fid, '          <tr class="sig"><td class="band">%s</td><td class="stat-v">%s</td><td class="%s">%s</td></tr>\n', ...
-            esc(chan_label(rs,c)), fmt_stat(stat_val(rs,c)), pcls, fmt_p(ps(k), nperm));
-    end
-    fprintf(fid, '        </tbody></table>\n      </div>\n');
-end
-
-% ---- cluster table : channels grouped under their cluster, cluster-level p ----
-function write_cluster_table(fid, rs, clu, statSym, nperm)
-    have = isfield(rs,'Clusters') && ~isempty(rs.Clusters);
-    idx = []; cps = [];
-    if have
-        C = rs.Clusters;
-        nCl = numel(C);
-        cps = nan(1,nCl); keep = false(1,nCl);
-        for i = 1:nCl
-            pv = cluster_p(C, i);
-            ch = cluster_chs(C, i);
-            if ~isnan(pv) && pv <= 0.05 && ~isempty(ch)
-                cps(i) = pv; keep(i) = true;
-            end
-        end
-        idx = find(keep);
-        [~, ord] = sort(cps(idx));
-        idx = idx(ord);
-    end
-
-    if isempty(idx)
-        % Fallback: no per-cluster structure but channels supplied -> flat list
-        if ~isempty(clu)
-            write_flat_table(fid, rs, clu, get_pvec(rs,'real'), statSym, 'cluster-corrected', nperm);
-        else
-            fprintf(fid, '      <div class="tablewrap">'); write_empty(fid, 'cluster-corrected'); fprintf(fid, '</div>\n');
-        end
-        return;
-    end
-
-    total = 0;
-    for j = 1:numel(idx), total = total + numel(cluster_chs(rs.Clusters, idx(j))); end
-    fprintf(fid, '      <div class="tablewrap">\n');
-    fprintf(fid, '        <div class="thead-note"><span><b>%d</b> channels in <b>%d</b> significant cluster(s)</span><span>grouped by cluster, ascending cluster p</span></div>\n', total, numel(idx));
-    fprintf(fid, '        <table class="sum"><thead><tr><th>Channel</th><th>%s</th><th>cluster p</th></tr></thead><tbody>\n', statSym);
-    for j = 1:numel(idx)
-        ci = idx(j);
-        ch = cluster_chs(rs.Clusters, ci);
-        cp = cluster_p(rs.Clusters, ci);
-        % order channels within the cluster by descending |statistic|
-        sv = arrayfun(@(c) abs(stat_val(rs,c)), ch);
-        [~, o] = sort(sv, 'descend');
-        ch = ch(o);
-        fprintf(fid, '          <tr class="grp-row"><td colspan="3">Cluster %d<span class="cp">p = %s &middot; %d ch</span></td></tr>\n', ...
-            j, fmt_p(cp, nperm), numel(ch));
-        for k = 1:numel(ch)
-            c = ch(k);
-            fprintf(fid, '          <tr class="sig"><td class="band">%s</td><td class="stat-v">%s</td><td class="p-sig">%s</td></tr>\n', ...
-                esc(chan_label(rs,c)), fmt_stat(stat_val(rs,c)), fmt_p(cp, nperm));
-        end
-    end
-    fprintf(fid, '        </tbody></table>\n      </div>\n');
-end
-
-function write_empty(fid, label)
-    fprintf(fid, ['<div class="empty-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">' ...
-        '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>No %s significant channels at &alpha; = .05.</div>'], label);
-end
-
-% =========================================================================
-% POST-HOC (omnibus-F presets)
-% =========================================================================
-function write_posthoc(fid, rs, nperm)
-    if ~isfield(rs,'posthoc') || isempty(rs.posthoc), return; end
-    ph = rs.posthoc;
+% Amber notice block. Not in the mock (which shows a clean run), so it borrows
+% the .legend card and states its colour inline; every string in it is a
+% validity caveat that must survive a headless run.
+function write_notices(fid, R)
+    if isempty(R.notices), return; end
     fprintf(fid, '<section class="section">\n');
-    fprintf(fid, '  <div class="head"><h2>Post-hoc pairwise contrasts</h2><span class="sub">Significant channels per comparison &mdash; choose the correction</span></div>\n');
-    for i = 1:numel(ph)
-        write_posthoc_one(fid, rs, ph(i), i, nperm);
+    fprintf(fid, ['  <div class="head"><h2>Notes on this run</h2>' ...
+        '<span class="sub">Read before interpreting the maps</span></div>\n']);
+    fprintf(fid, ['  <div class="legend" style="border-color:#b8862a;background:#fdf8ee;' ...
+        'display:block">\n']);
+    for i = 1:numel(R.notices)
+        n = R.notices{i};
+        fprintf(fid, ['    <div class="grp" style="align-items:flex-start;margin:6px 0">' ...
+            '<span class="k" style="color:#b8862a;white-space:nowrap">%s</span>' ...
+            '<span>%s</span></div>\n'], n.title, n.body);
     end
-    fprintf(fid, '</section>\n');
+    fprintf(fid, '  </div>\n</section>\n\n');
 end
 
-% One pairwise contrast: a Cluster / TFCE / Uncorrected toggle whose panels
-% reuse the omnibus channel-list helpers. Pairwise contrasts are 2-group t
-% tests, so the statistic shown is t.
-function write_posthoc_one(fid, rs, phe, idx, nperm, prefix)
-    if nargin < 6 || isempty(prefix)
-        gid = sprintf('ph%d', idx);
-    else
-        gid = sprintf('%s_ph%d', prefix, idx);
+function write_legend(fid, R)
+    signed = false; unsigned = false;
+    for k = 1:numel(R.effects)
+        if R.effects{k}.signed, signed = true; else, unsigned = true; end
     end
-    lab = '';
-    if isfield(phe,'label') && ~isempty(phe.label), lab = phe.label; end
+    fprintf(fid, '<section class="section">\n');
+    fprintf(fid, ['  <div class="head"><h2>Legend</h2><span class="sub">Statistics, colour ' ...
+        'scales &amp; markers</span></div>\n']);
+    fprintf(fid, '  <div class="legend">\n');
+    if signed
+        lab = 'Signed t';
+        if strcmp(R.statName,'r'), lab = 'Correlation r'; end
+        fprintf(fid, '%s\n', ['    <div class="grp"><span class="k">' lab '</span>' ...
+            '<span class="tmapbar" style="background:linear-gradient(90deg,#2f6db0,#eef2f6 50%,#c2543a)"></span>' ...
+            '<span style="color:var(--cool)">&minus;</span><span style="color:var(--warm)">+</span></div>']);
+        fprintf(fid, '    <span class="sep"></span>\n');
+    end
+    if unsigned
+        fprintf(fid, '%s\n', ['    <div class="grp"><span class="k">Omnibus statistic</span>' ...
+            '<span class="tmapbar" style="background:linear-gradient(90deg,#f3f6f8,#f4b63a 45%,#c2543a 78%,#7a1f10)"></span>' ...
+            '<span style="color:var(--muted)">low</span><span style="color:var(--warm)">high</span></div>']);
+        fprintf(fid, '    <span class="sep"></span>\n');
+    end
+    fprintf(fid, '%s\n', ['    <div class="grp"><span class="k">Channel dots</span>' ...
+        '<span style="display:inline-flex;align-items:center;gap:6px"><span class="dd" style="background:#1b2733"></span>uncorrected</span>' ...
+        '<span style="display:inline-flex;align-items:center;gap:6px"><span class="dd" style="background:#fff;border:1px solid var(--ink-2)"></span>corrected</span></div>']);
+    fprintf(fid, '    <span class="sep"></span>\n');
+    fprintf(fid, ['    <div class="grp"><span class="k">Cluster number</span><span class="cnum">1</span>' ...
+        '<span>at cluster centroid, matches the table</span></div>\n']);
+    fprintf(fid, '  </div>\n</section>\n\n');
+end
 
-    unc  = getfield_or(phe, 'uncorrsigch', []);
-    tfce = getfield_or(phe, 'correctTFCEsigch', []);
-    clu  = getfield_or(phe, 'SnPMsigch', []);
-    nU = numel(unc); nT = numel(tfce); nC = numel(clu);
+% =========================================================================
+% DESCRIPTIVE BLOCK
+% =========================================================================
+function write_descriptive(fid, R)
+    D = R.descriptive;
+    if strcmp(D.kind,'none'), return; end
+    fprintf(fid, '<section class="section">\n');
+    fprintf(fid, '  <div class="head"><h2>%s</h2><span class="sub">%s</span></div>\n', D.title, D.sub);
+    switch D.kind
+        case 'cells'
+            fprintf(fid, '  <div class="desc-flex">\n');
+            write_cellgrid(fid, D);
+            for i = 1:numel(D.figs), write_fig(fid, D.figs{i}, 4); end
+            fprintf(fid, '  </div>\n');
+        case 'circ'
+            fprintf(fid, '  <div class="desc-flex" style="grid-template-columns:1fr 1fr">\n');
+            write_circ_table(fid, R);
+            for i = 1:numel(D.figs), write_fig(fid, D.figs{i}, 4); end
+            fprintf(fid, '  </div>\n');
+        otherwise
+            n = max(numel(D.figs), 1);
+            fprintf(fid, '  <div class="desc-flex" style="grid-template-columns:repeat(%d,1fr)">\n', n);
+            for i = 1:numel(D.figs), write_fig(fid, D.figs{i}, 4); end
+            fprintf(fid, '  </div>\n');
+    end
+    fprintf(fid, '</section>\n\n');
+end
 
-    % Mini results struct so the existing table helpers work unchanged: they
-    % read .T.real_T, .p.real/.correctedTFCE, .Clusters, .chanlocs.
-    phrs = struct();
-    if isfield(phe,'T'),        phrs.T = phe.T;               end
-    if isfield(phe,'p'),        phrs.p = phe.p;               end
-    if isfield(phe,'Clusters'), phrs.Clusters = phe.Clusters; end
-    if isfield(rs,'chanlocs'),  phrs.chanlocs = rs.chanlocs;  end
-
-    statSym = 't';
-    % Base name of the per-contrast significance maps: "<base> Cluster.png" /
-    % "<base> TFCE.png", produced by TopoplotSignificant_single (black dots =
-    % uncorrected-sig, white dots = correction-sig). Empty -> table-only.
-    mbase = getfield_or(phe, 'map_base', '');
-
-    fprintf(fid, '  <div style="margin-top:30px">\n');
-    fprintf(fid, ['    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:12px">' ...
-        '<span style="font-family:var(--serif);font-size:16px;font-weight:600;color:var(--ink)">%s</span>' ...
-        '<span style="font-size:12px;color:var(--muted)">pairwise t-contrast</span></div>\n'], esc(lab));
-
-    fprintf(fid, '    <div class="seg" id="seg_%s">\n', gid);
-    fprintf(fid, '      <button id="btn_%s_clu" class="on" onclick="showViewG(''%s'',''clu'')">Cluster <span class="ct%s">%d</span></button>\n', gid, gid, none_cls(nC), nC);
-    fprintf(fid, '      <button id="btn_%s_tfce" onclick="showViewG(''%s'',''tfce'')">TFCE <span class="ct%s">%d</span></button>\n', gid, gid, none_cls(nT), nT);
-    fprintf(fid, '      <button id="btn_%s_unc" onclick="showViewG(''%s'',''unc'')">Uncorrected <span class="ct%s">%d</span></button>\n', gid, gid, none_cls(nU), nU);
-    fprintf(fid, '    </div>\n');
-
-    % Cluster panel (default shown): significance map beside the cluster table.
-    fprintf(fid, '    <div id="panel_%s_clu" class="vpanel" data-view-name="%s &mdash; Cluster-corrected">\n      <div class="vbody">\n', gid, esc(lab));
-    if ~isempty(mbase), write_posthoc_map_card(fid, [mbase ' Cluster.png'], 'cluster-corrected', lab); end
-    write_cluster_table(fid, phrs, clu, statSym, nperm);
+% Group x condition cell means. Any grid size: rows/cols come from the engine.
+function write_cellgrid(fid, D)
+    rows = D.rows; cols = D.cols;
+    pngs = {}; labs = {};
+    if numel(D.cells) == 2, pngs = D.cells{1}; labs = D.cells{2}; end
+    if isempty(rows) || isempty(cols) || isempty(pngs), return; end
+    fprintf(fid, '    <div class="fig">\n');
+    fprintf(fid, ['      <div class="cap"><span class="t">Cell mean topographies</span>' ...
+        '<span class="f">&hellip;_cell_&lt;row&gt;_&lt;col&gt;.png</span></div>\n']);
+    fprintf(fid, '      <div class="cellgrid" style="grid-template-columns:56px repeat(%d,1fr)">\n', numel(cols));
+    fprintf(fid, '        <span></span>');
+    for c = 1:numel(cols), fprintf(fid, '<span class="ch">%s</span>', esc(cols{c})); end
+    fprintf(fid, '\n');
+    for r = 1:numel(rows)
+        fprintf(fid, '        <span class="rh">%s</span>\n', esc(rows{r}));
+        for c = 1:numel(cols)
+            want = sprintf('%s / %s', rows{r}, cols{c});
+            png = '';
+            for i = 1:numel(labs)
+                if strcmp(labs{i}, want) && i <= numel(pngs), png = pngs{i}; break; end
+            end
+            fprintf(fid, '        %s\n', slot_html(png, ''));
+        end
+    end
     fprintf(fid, '      </div>\n    </div>\n');
-    % TFCE panel
-    fprintf(fid, '    <div id="panel_%s_tfce" class="vpanel" data-view-name="%s &mdash; TFCE-corrected" style="display:none">\n      <div class="vbody">\n', gid, esc(lab));
-    if ~isempty(mbase), write_posthoc_map_card(fid, [mbase ' TFCE.png'], 'TFCE-corrected', lab); end
-    write_flat_table(fid, phrs, tfce, get_pvec(phrs,'correctedTFCE'), statSym, 'TFCE-corrected', nperm);
-    fprintf(fid, '      </div>\n    </div>\n');
-    % Uncorrected panel: no map (its channels already show as black dots on the
-    % Cluster / TFCE maps), full-width channel list.
-    fprintf(fid, '    <div id="panel_%s_unc" class="vpanel" data-view-name="%s &mdash; Uncorrected" style="display:none">\n', gid, esc(lab));
-    write_flat_table(fid, phrs, unc, get_pvec(phrs,'real'), statSym, 'uncorrected', nperm);
-    fprintf(fid, '    </div>\n');
-
-    fprintf(fid, '  </div>\n');
 end
 
-function v = getfield_or(s, f, dflt)
-    if isfield(s,f) && ~isempty(s.(f)), v = s.(f); else, v = dflt; end
-end
-
-% =========================================================================
-% CIRCULAR DESCRIPTIVE PANEL (no inference)
-% The circular tier deliberately has NO whole-head omnibus test, so rs never
-% carries global_stat/global_pval and the Global-test card below is skipped
-% entirely. This panel replaces it with per-group descriptives. Rendered only
-% when rs.circ_descriptive exists, so every other analysis is unaffected.
-% =========================================================================
-function write_circ_descriptive(fid, rs)
-    if ~isfield(rs, 'circ_descriptive') || ~isstruct(rs.circ_descriptive), return; end
-    d = rs.circ_descriptive;
-    if ~isfield(d, 'group') || isempty(d.group), return; end
-    fprintf(fid, '<section class="section">\n');
-    fprintf(fid, ['  <div class="head"><h2>Circular summary</h2>' ...
-        '<span class="sub">Descriptive only &mdash; no whole-head test</span></div>\n']);
-    fprintf(fid, '  <div class="tablewrap"><table class="sum">\n');
-    fprintf(fid, ['    <thead><tr><th>Group</th><th>n angles</th><th>Mean direction (deg)</th>' ...
-        '<th>Circular SD (deg)</th><th>R</th><th>Rayleigh z</th><th>Rayleigh p</th></tr></thead>\n']);
-    fprintf(fid, '    <tbody>\n');
+function write_circ_table(fid, R)
+    d = R.rs.circ_descriptive;
+    if ~isfield(d,'group') || isempty(d.group), return; end
+    fprintf(fid, '    <div class="tablewrap">\n');
+    fprintf(fid, ['      <div class="thead-note"><span>Per-group circular descriptives</span>' ...
+        '<span>no inference &mdash; the maps carry the test</span></div>\n']);
+    fprintf(fid, ['      <table class="sum"><thead><tr><th>Group</th><th>n</th>' ...
+        '<th>Mean dir (deg)</th><th>SD (deg)</th><th>R</th><th>Rayleigh z</th>' ...
+        '<th>Rayleigh p</th></tr></thead><tbody>\n']);
     for k = 1:numel(d.group)
         g = d.group(k);
-        fprintf(fid, ['      <tr><td class="band">%s</td><td>%d</td><td>%.1f</td>' ...
+        fprintf(fid, ['        <tr><td class="band">%s</td><td>%d</td><td>%.1f</td>' ...
             '<td>%.1f</td><td>%.3f</td><td>%.2f</td><td>%s</td></tr>\n'], ...
             esc(g.label), g.n, g.mean_deg, g.sd_deg, g.R, g.rayleigh_z, fmt_p(g.rayleigh_p, 0));
     end
-    fprintf(fid, '    </tbody>\n  </table></div>\n');
-    if isfield(d, 'note') && ~isempty(d.note)
-        fprintf(fid, '  <p class="methods" style="margin-top:8px">%s</p>\n', esc(d.note));
+    fprintf(fid, '      </tbody></table>\n');
+    if isfield(d,'note') && ~isempty(d.note)
+        fprintf(fid, '      <div class="empty-note" style="padding:12px 16px;text-align:left">%s</div>\n', ...
+            esc(char(d.note)));
     end
-    if isfield(rs, 'circ') && isfield(rs.circ, 'rotation_deg')
-        fprintf(fid, ['  <p class="methods">Angles were rotated by <b>%+.1f deg</b> ' ...
-            '(declared convention <b>%s</b>) so that 0 is the slow-oscillation ' ...
-            'up-state peak. Cluster statistic: <b>mass</b>.</p>\n'], ...
-            rs.circ.rotation_deg, esc(rs.circ.convention));
-    end
-    fprintf(fid, '</section>\n');
+    fprintf(fid, '    </div>\n');
 end
 
 % =========================================================================
-% GLOBAL TEST : statistic + p on the channel-averaged signal (all good chans)
+% ONE EFFECT SECTION
 % =========================================================================
-function write_global(fid, rs, statName, nperm)
-    hasS = isfield(rs,'global_stat') && ~isempty(rs.global_stat);
-    hasP = isfield(rs,'global_pval') && ~isempty(rs.global_pval);
-    if ~hasS && ~hasP, return; end
+function write_effect(fid, R, e)
+    opencls = ''; if e.lamp, opencls = ' open'; end
+    fprintf(fid, '<section class="effect%s" id="fx-%s">\n', opencls, e.key);
+    fprintf(fid, '  <div class="ehead" onclick="toggleFx(''fx-%s'')">\n', e.key);
+    fprintf(fid, ['    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' ...
+        'stroke-width="2"><path d="m9 6 6 6-6 6"/></svg>\n']);
+    fprintf(fid, '    <h2>%s</h2><span class="esub">%s</span>\n', e.title, e.subtitle);
+    fprintf(fid, ['    <span class="lamp %s"></span><span class="ecount">Clu %d &middot; ' ...
+        'TFCE %d &middot; Unc %d</span>\n'], lamp_cls(e.lamp), numel(e.sclu), numel(e.stfce), numel(e.sunc));
+    fprintf(fid, '  </div>\n  <div class="ebody">\n');
 
-    switch statName
-        case 'F',    slab = 'F-statistic';
-        case 'r',    slab = 'correlation r';
-        case 'circ', slab = 'statistic';
-        otherwise,   slab = 't-statistic';
+    if ~isempty(e.excl_html), fprintf(fid, '%s', e.excl_html); end
+
+    if ~isempty(e.eff_png)
+        fprintf(fid, '    <div class="blk">\n      <div class="bh">Effect map</div>\n');
+        fprintf(fid, '      <div class="effect-map">\n');
+        write_fig(fid, fig_spec(e.eff_png, e.eff_title, effect_map_note(e), ''), 8);
+        fprintf(fid, '      </div>\n    </div>\n');
     end
 
-    if hasS, sval = fmt_stat(rs.global_stat(1)); else, sval = '&mdash;'; end
-    if hasP
-        pv = rs.global_pval(1);
-        pval = fmt_p(pv, nperm);
-        if pv <= 0.05, pcls = ' p-sig'; else, pcls = ''; end
+    fprintf(fid, '    <div class="blk">\n      <div class="bh">Significant channels</div>\n');
+    write_seg(fid, e.key, numel(e.sclu), numel(e.stfce), numel(e.sunc));
+    write_cluster_view(fid, R, e);
+    write_tfce_view(fid, R, e);
+    write_unc_view(fid, R, e);
+    fprintf(fid, '    </div>\n');
+
+    write_posthoc(fid, R, e);
+
+    fprintf(fid, '  </div>\n</section>\n\n');
+end
+
+function s = effect_map_note(e)
+    if e.signed
+        s = map_note_signed(sprintf('%s &lt; 0', e.sym), sprintf('%s &gt; 0', e.sym));
     else
-        pval = '&mdash;'; pcls = '';
+        s = ['<span class="dl"><span class="dd" style="background:#f4b63a"></span>low</span>' ...
+             '<span class="dl"><span class="dd" style="background:#7a1f10"></span>high</span>'];
     end
+end
 
-    % HOW MANY channels the average was actually taken over. The global is the
-    % mean over the channels usable in EVERY analysed unit of both arms (see
-    % global_stat_test's common-channel rule), which is not the same as the whole
-    % montage as soon as anything is missing. Claiming "all N good channels" when
-    % the average rests on K < N is a different scientific statement, so K is
-    % printed when the engine reports it and the montage size is given as the
-    % reference.
-    nch = [];
-    if isfield(rs,'T') && isfield(rs.T,'real_T') && ~isempty(rs.T.real_T)
-        nch = numel(rs.T.real_T);
-    elseif isfield(rs,'chanlocs')
-        nch = numel(rs.chanlocs);
+function s = map_note_signed(lo, hi)
+    s = ['<span class="dl"><span class="dd" style="background:#2f6db0"></span>' lo '</span>' ...
+         '<span class="dl"><span class="dd" style="background:#c2543a"></span>' hi '</span>'];
+end
+
+function write_seg(fid, fx, nC, nT, nU)
+    fprintf(fid, '      <div class="seg">\n');
+    fprintf(fid, ['        <button id="btn_%s_clu" class="on" onclick="showView(''%s'',''clu'')">' ...
+        'Cluster <span class="ct%s">%d</span></button>\n'], fx, fx, none_cls(nC), nC);
+    fprintf(fid, ['        <button id="btn_%s_tfce" onclick="showView(''%s'',''tfce'')">' ...
+        'TFCE <span class="ct%s">%d</span></button>\n'], fx, fx, none_cls(nT), nT);
+    fprintf(fid, ['        <button id="btn_%s_unc" onclick="showView(''%s'',''unc'')">' ...
+        'Uncorrected <span class="ct%s">%d</span></button>\n'], fx, fx, none_cls(nU), nU);
+    fprintf(fid, '      </div>\n');
+end
+
+function write_cluster_view(fid, R, e)
+    fprintf(fid, '      <div id="panel_%s_clu" class="vpanel" data-view-name="Cluster-corrected">\n', e.key);
+    [ord, sgn] = snpm_order_clusters(e.Clusters, e.T, R.alpha);
+    if isempty(ord)
+        fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
+            sprintf(['<b>No significant clusters</b> at &alpha; = %s%s. The effect map above ' ...
+            'shows the uncorrected pattern.'], fmt_alpha(R.alpha), ...
+            smallest_clause(min_cluster_p(e.Clusters), R.nperm, 'cluster p')));
+        fprintf(fid, '      </div>\n');
+        return;
     end
-    kch = [];
-    if isfield(rs,'global_n_channels') && ~isempty(rs.global_n_channels)
-        kch = rs.global_n_channels;
-        if isfield(rs,'global_n_channels_total') && ~isempty(rs.global_n_channels_total)
-            nch = rs.global_n_channels_total;
+    fprintf(fid, '        <div class="vbody">\n');
+    if ~isempty(e.map_base)
+        write_fig(fid, fig_spec([e.map_base ' Cluster.png'], 'Cluster significance map', ...
+            ['<span class="dl"><span class="cnum" style="width:14px;height:14px;font-size:9px">1</span>' ...
+             'cluster number at centroid</span><span class="dl"><span class="dd" style="background:#fff">' ...
+             '</span>cluster-corrected</span>'], ''), 10);
+    end
+    write_cluster_table(fid, R, e, ord, sgn);
+    fprintf(fid, '        </div>\n      </div>\n');
+end
+
+function write_cluster_table(fid, R, e, ord, sgn)
+    total = 0;
+    for j = 1:numel(ord), total = total + numel(cluster_chs(e.Clusters, ord(j))); end
+    if e.signed, right = 'positive and negative clusters listed separately';
+    else,        right = 'grouped by cluster, ascending cluster p'; end
+    fprintf(fid, '          <div class="tablewrap">\n');
+    fprintf(fid, ['            <div class="thead-note"><span><b>%d</b> channels in <b>%d</b> ' ...
+        'significant cluster(s)</span><span>%s</span></div>\n'], total, numel(ord), right);
+    fprintf(fid, ['            <table class="sum"><thead><tr><th>Channel</th><th>%s</th>' ...
+        '<th>cluster p</th></tr></thead><tbody>\n'], e.sym);
+    shown_pos = false; shown_neg = false;
+    for j = 1:numel(ord)
+        ci = ord(j);
+        if e.signed && sgn(j) > 0 && ~shown_pos
+            fprintf(fid, ['              <tr class="sign-row"><td colspan="3">Positive clusters ' ...
+                '<span class="sgn">(%s &gt; 0)</span></td></tr>\n'], e.sym);
+            shown_pos = true;
+        elseif e.signed && sgn(j) < 0 && ~shown_neg
+            fprintf(fid, ['              <tr class="sign-row"><td colspan="3">Negative clusters ' ...
+                '<span class="sgn">(%s &lt; 0)</span></td></tr>\n'], e.sym);
+            shown_neg = true;
+        end
+        ch = cluster_chs(e.Clusters, ci);
+        cp = cluster_p(e.Clusters, ci);
+        sv = arrayfun(@(c) abs(stat_at(e, c)), ch);
+        [~, o] = sort(sv, 'descend'); ch = ch(o);
+        fprintf(fid, ['              <tr class="grp-row"><td colspan="3"><span class="cnum">%d' ...
+            '</span>Cluster %d<span class="cp">%s &middot; %d ch</span></td></tr>\n'], ...
+            j, j, p_phrase(cp, R.nperm), numel(ch));
+        for k = 1:numel(ch)
+            fprintf(fid, ['              <tr><td class="band"><span class="dotkey cor"></span>%s' ...
+                '</td><td class="stat-v">%s</td><td class="p-sig">%s</td></tr>\n'], ...
+                esc(chan_label(R.rs, ch(k))), fmt_stat(stat_at(e, ch(k))), fmt_p(cp, R.nperm));
         end
     end
-    if ~isempty(kch) && ~isempty(nch)
-        if kch == nch
-            note = sprintf(['Computed on the mean across all <b>%d</b> analysed channels ' ...
-                '&mdash; a single whole-head test, complementary to the channel-wise maps above.'], nch);
+    fprintf(fid, '            </tbody></table>\n          </div>\n');
+end
+
+function write_tfce_view(fid, R, e)
+    fprintf(fid, ['      <div id="panel_%s_tfce" class="vpanel" data-view-name="TFCE-corrected" ' ...
+        'style="display:none">\n'], e.key);
+    if isempty(e.stfce)
+        fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
+            sprintf('<b>No TFCE-corrected significant channels</b> at &alpha; = %s%s.', ...
+            fmt_alpha(R.alpha), smallest_clause(min_finite(e.ptfce), R.nperm, 'p')));
+        fprintf(fid, '      </div>\n');
+        return;
+    end
+    fprintf(fid, '        <div class="vbody">\n');
+    if ~isempty(e.map_base)
+        write_fig(fid, fig_spec([e.map_base ' TFCE.png'], 'TFCE significance map', ...
+            ['<span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span>' ...
+             '<span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span>'], ''), 10);
+    end
+    write_flat_table(fid, R, e, e.stfce, e.ptfce, 'TFCE-corrected', 'sorted by ascending p', ...
+        'cor', Inf, 10);
+    fprintf(fid, '        </div>\n      </div>\n');
+end
+
+function write_unc_view(fid, R, e)
+    fprintf(fid, ['      <div id="panel_%s_unc" class="vpanel" data-view-name="Uncorrected" ' ...
+        'style="display:none">\n'], e.key);
+    if isempty(e.sunc)
+        fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
+            sprintf('<b>No uncorrected significant channels</b> at &alpha; = %s%s.', ...
+            fmt_alpha(R.alpha), smallest_clause(min_finite(e.punc), R.nperm, 'p')));
+    else
+        write_flat_table(fid, R, e, e.sunc, e.punc, 'uncorrected', ...
+            'sorted by ascending p &middot; full list in the results CSV', 'unc', 20, 8);
+    end
+    fprintf(fid, '      </div>\n');
+end
+
+% Channel | statistic | p, ascending p. CAP caps the visible rows (extra rows
+% become tr.xrow behind the "Show all N channels" button); Inf = never capped
+% (cluster and TFCE tables are complete by design).
+function write_flat_table(fid, R, e, chs, pv, label, right, dotcls, cap, ind)
+    pad = repmat(' ', 1, ind);
+    chs = chs(:).';
+    ps = arrayfun(@(c) p_at(pv, c), chs);
+    [ps, o] = sort(ps); chs = chs(o);
+    fprintf(fid, '%s<div class="tablewrap">\n', pad);
+    fprintf(fid, '%s  <div class="thead-note"><span><b>%d</b> %s significant channels</span><span>%s</span></div>\n', ...
+        pad, numel(chs), label, right);
+    fprintf(fid, '%s  <table class="sum"><thead><tr><th>Channel</th><th>%s</th><th>p</th></tr></thead><tbody>\n', ...
+        pad, e.sym);
+    for k = 1:numel(chs)
+        xcls = ''; if k > cap, xcls = ' class="xrow"'; end
+        fprintf(fid, ['%s    <tr%s><td class="band"><span class="dotkey %s"></span>%s</td>' ...
+            '<td class="stat-v">%s</td><td class="p-sig">%s</td></tr>\n'], ...
+            pad, xcls, dotcls, esc(chan_label(R.rs, chs(k))), fmt_stat(stat_at(e, chs(k))), ...
+            fmt_p(ps(k), R.nperm));
+    end
+    fprintf(fid, '%s  </tbody></table>\n', pad);
+    if numel(chs) > cap
+        fprintf(fid, '%s  <button class="morebtn" onclick="expandTable(this)">Show all %d channels</button>\n', ...
+            pad, numel(chs));
+    end
+    fprintf(fid, '%s</div>\n', pad);
+end
+
+% ---- post-hoc pairwise contrasts as tabs --------------------------------
+function write_posthoc(fid, R, e)
+    P = e.posthoc;
+    if isempty(P), return; end
+    grp = ['ph' e.key];
+    names = cell(1, numel(P));
+    for i = 1:numel(P), names{i} = P{i}.name; end
+    nlist = ['[''' strjoin(names, ''',''') ''']'];
+    fprintf(fid, '    <div class="blk">\n');
+    fprintf(fid, ['      <div class="bh">Post-hoc pairwise contrasts &mdash; signed t per ' ...
+        'comparison</div>\n']);
+    fprintf(fid, '      <div class="tabs">\n');
+    for i = 1:numel(P)
+        oncls = ''; if i == 1, oncls = ' class="on"'; end
+        n = numel(P{i}.stfce);
+        fprintf(fid, ['        <button id="tbtn_%s_%s"%s onclick="showTab(''%s'',''%s'',%s)">' ...
+            '%s <span class="ct%s">%d</span></button>\n'], ...
+            grp, P{i}.name, oncls, grp, P{i}.name, nlist, esc(P{i}.label), none_cls(n), n);
+    end
+    fprintf(fid, '      </div>\n');
+    for i = 1:numel(P)
+        q = P{i};
+        hide = ' style="display:none"'; if i == 1, hide = ''; end
+        fprintf(fid, '      <div id="tab_%s_%s" class="tabpanel" data-tab-name="Post-hoc: %s"%s>\n', ...
+            grp, q.name, esc(q.label), hide);
+        if isempty(q.stfce)
+            fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
+                sprintf(['<b>No significant channels</b> for %s after TFCE correction%s. ' ...
+                'Uncorrected results are in the CSV.'], esc(q.label), ...
+                smallest_clause(min_finite(q.ptfce), R.nperm, 'p')));
         else
-            note = sprintf(['Computed on the mean across the <b>%d of %d</b> channels that are ' ...
-                'complete in every analysed unit of both arms &mdash; not the whole head. ' ...
-                'Averaging each unit over its own available channels would let a scalp power ' ...
-                'gradient masquerade as an effect, so the incomplete channels are left out of ' ...
-                'this average; the channel-wise maps above are unaffected.'], kch, nch);
+            fprintf(fid, '        <div class="vbody">\n');
+            if ~isempty(q.map_base)
+                write_fig(fid, fig_spec([q.map_base ' TFCE.png'], ...
+                    sprintf('%s &mdash; TFCE map', esc(q.label)), ...
+                    [map_note_signed('t &lt; 0', 't &gt; 0') ...
+                     '<span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span>'], ''), 10);
+            end
+            qe = q; qe.sym = 't'; qe.signed = true;
+            write_flat_table(fid, R, qe, q.stfce, q.ptfce, 'TFCE-corrected', ...
+                'pairwise contrast &mdash; read alongside the omnibus effect', 'cor', Inf, 10);
+            fprintf(fid, '        </div>\n');
         end
-    elseif ~isempty(nch)
-        note = sprintf('Computed on the mean across all <b>%d</b> good channels &mdash; a single whole-head test, complementary to the channel-wise maps above.', nch);
-    else
-        note = 'Computed on the mean across all good channels &mdash; a single whole-head test, complementary to the channel-wise maps above.';
+        fprintf(fid, '      </div>\n');
     end
-
-    % A global the engine has declared uninterpretable (correlation +
-    % datatype 'normalize': the channel average of a per-subject z-scored row is
-    % analytically zero, so the statistic is rounding noise) must not be shown
-    % as a headline number with no caveat. Say so first, in the amber style used
-    % for the other validity banners, and grey the card's note.
-    bad_global = isfield(rs, 'global_not_interpretable') && rs.global_not_interpretable;
-    if bad_global
-        gnote = ['The channel-averaged signal is analytically zero under this transform, so ' ...
-            'the value below is floating-point noise rather than a whole-head result.'];
-        if isfield(rs, 'global_note') && ~isempty(rs.global_note)
-            gnote = char(rs.global_note);
-        end
-        note = ['<b>Not interpretable.</b> ' esc(gnote)];
-        pcls = '';   % never paint a noise p-value as significant
-    end
-
-    fprintf(fid, '<section class="section">\n');
-    fprintf(fid, '  <div class="head"><h2>Global test</h2><span class="sub">Channel-averaged statistic</span></div>\n');
-    if bad_global
-        fprintf(fid, ['  <div class="legend" style="border-color:var(--amber);background:#fdf8ee">' ...
-            '<div class="grp"><span class="k" style="color:var(--amber)">Global test not ' ...
-            'interpretable</span><span>%s</span></div></div>\n'], esc(gnote));
-    end
-    fprintf(fid, '  <div class="global-card">\n');
-    fprintf(fid, '    <div class="gstat"><div class="gk">%s</div><div class="gv">%s</div></div>\n', slab, sval);
-    fprintf(fid, '    <div class="gsep"></div>\n');
-    fprintf(fid, '    <div class="gstat"><div class="gk">p-value</div><div class="gv%s">%s</div></div>\n', pcls, pval);
-    fprintf(fid, '    <div class="gnote">%s</div>\n', note);
-    fprintf(fid, '  </div>\n</section>\n');
+    fprintf(fid, '    </div>\n');
 end
 
 % =========================================================================
-% FOOTER
+% GLOBAL TEST CARD + FOOTER
 % =========================================================================
+function write_global(fid, R)
+    fprintf(fid, '<section class="section" id="global" style="scroll-margin-top:70px">\n');
+    fprintf(fid, ['  <div class="head"><h2>Global test</h2><span class="sub">Whole-head ' ...
+        'statistic on the channel-averaged signal</span></div>\n']);
+    fprintf(fid, '  <div class="global-card">\n');
+    if R.has_global
+        first = true;
+        for k = 1:numel(R.effects)
+            g = R.effects{k}.global;
+            if isempty(g), continue; end
+            if ~first, fprintf(fid, '    <div class="gsep"></div>\n'); end
+            first = false;
+            fprintf(fid, ['    <div class="gstat"><span class="gk">%s</span>' ...
+                '<span class="gv">%s = %s</span><span class="gp%s">%s</span></div>\n'], ...
+                g.label, g.sym, fmt_stat(g.stat), psig_cls(g, R.alpha), p_phrase(g.p, R.nperm));
+        end
+        fprintf(fid, '    <div class="gnote">%s</div>\n', global_note(R));
+    else
+        fprintf(fid, '    <div class="gnote" style="margin-left:0">%s</div>\n', R.global_note);
+    end
+    fprintf(fid, '  </div>\n</section>\n\n');
+end
+
+% What the channel average was actually taken over. NOT cosmetic: the global is
+% a whole-head claim only when it rests on the whole montage, and in a
+% multi-effect report each effect is averaged over ITS OWN evaluable set (the
+% group main effect is computed on subject means and can keep a channel the
+% within-subject effects drop), so one number would be wrong for at least one
+% of them. Equal counts collapse to one sentence; unequal counts are listed.
+function s = global_note(R)
+    nch = effect_nchannels(R.rs);
+    labs = {}; cnts = []; flagged = false;
+    for k = 1:numel(R.effects)
+        g = R.effects{k}.global;
+        if isempty(g), continue; end
+        if ~isempty(g.flag), flagged = true; end
+        if ~isnan(g.nch)
+            labs{end+1} = R.effects{k}.title; %#ok<AGROW>
+            cnts(end+1) = g.nch;              %#ok<AGROW>
+        end
+    end
+    if flagged
+        s = ['<b>Not interpretable.</b> The value(s) above are stated only because the run ' ...
+            'computed them &mdash; see the note near the top of this report.'];
+        return;
+    end
+    if isempty(cnts)
+        s = ['One whole-head test on the <b>channel-averaged</b> signal &mdash; the omnibus ' ...
+            'answer before any per-channel localisation.'];
+        return;
+    end
+    if isscalar(unique(cnts))
+        if nch > 0 && cnts(1) < nch
+            s = sprintf(['Computed on the mean across the <b>%d of %d</b> channels complete in ' ...
+                'every analysed unit &mdash; not the whole head. Averaging each unit over its ' ...
+                'own available channels would let a scalp gradient masquerade as an effect; ' ...
+                'the channel-wise maps are unaffected.'], cnts(1), nch);
+        else
+            s = sprintf(['Computed on the mean across all <b>%d</b> analysed channels &mdash; ' ...
+                'a single whole-head test, complementary to the channel-wise maps.'], cnts(1));
+        end
+        return;
+    end
+    parts = cell(1, numel(cnts));
+    for i = 1:numel(cnts), parts{i} = sprintf('%s %d', labs{i}, cnts(i)); end
+    s = sprintf(['Each effect is averaged over the channels <b>it</b> can evaluate, so the ' ...
+        'counts differ (of %d): %s. Averaging every unit over one common set is what keeps a ' ...
+        'scalp gradient out of the whole-head number; the channel-wise maps are unaffected.'], ...
+        nch, strjoin(parts, ' &middot; '));
+end
+
 function write_footer(fid)
-    fprintf(fid, '<footer class="foot"><span>Self-contained report &mdash; keep the PNG images in the same folder as this HTML.</span><span>Generated %s</span></footer>\n', esc(datestr(now)));
+    fprintf(fid, ['<footer class="foot"><span>Self-contained report &mdash; keep the PNG images ' ...
+        'in the same folder as this HTML.</span><span>Generated %s</span></footer>\n'], ...
+        esc(char(datetime('now','Format','dd-MMM-uuuu HH:mm'))));
+end
+
+% =========================================================================
+% FIGURE / SLOT PRIMITIVES  (the mock's .fig card + onerror placeholder)
+% =========================================================================
+function write_fig(fid, F, ind)
+    pad = repmat(' ', 1, ind);
+    note_only = isfield(F,'emptynote') && ~isempty(F.emptynote);
+    fprintf(fid, '%s<div class="fig">\n', pad);
+    if note_only
+        fprintf(fid, '%s  <div class="cap"><span class="t">%s</span><span class="f">%s</span></div>\n', ...
+            pad, F.title, '(not produced)');
+        fprintf(fid, '%s  <div class="empty-note">%s</div>\n', pad, F.emptynote);
+        fprintf(fid, '%s</div>\n', pad);
+        return;
+    end
+    fprintf(fid, '%s  <div class="cap"><span class="t">%s</span><span class="f">%s</span></div>\n', ...
+        pad, F.title, esc(F.png));
+    fprintf(fid, '%s  %s\n', pad, slot_html(F.png, F.cls));
+    if ~isempty(F.note)
+        fprintf(fid, '%s  <div class="map-note">%s</div>\n', pad, F.note);
+    end
+    fprintf(fid, '%s</div>\n', pad);
+end
+
+function s = slot_html(png, cls)
+    if ~isempty(cls), cls = [' ' cls]; end
+    if isempty(png), png = '(not produced)'; end
+    s = sprintf(['<figure class="slot%s"><img src="%s" alt="" onerror="this.classList.add(''err'')">' ...
+        '<figcaption class="ph"><span class="nd">No data</span><span class="fn">%s</span>' ...
+        '</figcaption></figure>'], cls, url(png), esc(png));
 end
 
 % =========================================================================
 % DATA HELPERS
 % =========================================================================
-function v = get_pvec(rs, fieldname)
+function v = gf(s, f, dflt)
+    if isstruct(s) && isfield(s, f) && ~isempty(s.(f)), v = s.(f); else, v = dflt; end
+end
+
+function v = statvec(s)
     v = [];
-    if isfield(rs,'p') && isfield(rs.p, fieldname), v = rs.p.(fieldname); end
-end
-
-function p = get_p(pvec, ch)
-    p = NaN;
-    if ~isempty(pvec) && ch >= 1 && ch <= numel(pvec), p = pvec(ch); end
-end
-
-function v = stat_val(rs, ch)
-    v = NaN;
-    if isfield(rs,'T') && isfield(rs.T,'real_T')
-        t = rs.T.real_T;
-        if ch >= 1 && ch <= numel(t), v = t(ch); end
+    if ~isstruct(s) || ~isfield(s,'T'), return; end
+    T = s.T;
+    if isstruct(T) && isfield(T,'real_T'), v = double(T.real_T(:).');
+    elseif isnumeric(T),                   v = double(T(:).');
     end
+end
+
+function v = pvec(s, fieldname)
+    v = [];
+    if isstruct(s) && isfield(s,'p') && isstruct(s.p) && isfield(s.p, fieldname)
+        v = double(s.p.(fieldname)(:).');
+    end
+end
+
+function v = idxvec(x)
+    if isempty(x), v = []; else, v = double(x(:).'); end
+end
+
+function v = stat_at(e, ch)
+    v = NaN;
+    if ch >= 1 && ch <= numel(e.T), v = e.T(ch); end
+end
+
+function p = p_at(pv, ch)
+    p = NaN;
+    if ~isempty(pv) && ch >= 1 && ch <= numel(pv), p = pv(ch); end
 end
 
 function lab = chan_label(rs, ch)
     lab = sprintf('Ch %d', ch);
-    if isfield(rs,'chanlocs') && numel(rs.chanlocs) >= ch && isfield(rs.chanlocs,'labels')
+    if isstruct(rs) && isfield(rs,'chanlocs') && numel(rs.chanlocs) >= ch && isfield(rs.chanlocs,'labels')
         l = rs.chanlocs(ch).labels;
         if ~isempty(l), lab = l; end
     end
@@ -905,7 +1662,7 @@ end
 
 function pv = cluster_p(C, i)
     pv = NaN;
-    if isfield(C,'p')
+    if isstruct(C) && isfield(C,'p')
         v = C(i).p;
         if ~isempty(v), pv = v(1); end
     end
@@ -913,15 +1670,48 @@ end
 
 function ch = cluster_chs(C, i)
     ch = [];
-    if isfield(C,'channels')
+    if isstruct(C) && isfield(C,'channels')
         v = C(i).channels;
         if ~isempty(v), ch = double(v(:).'); end
     end
 end
 
+function p = min_cluster_p(C)
+    p = NaN;
+    if isempty(C) || ~isstruct(C) || ~isfield(C,'p'), return; end
+    v = [];
+    for i = 1:numel(C)
+        q = C(i).p;
+        if ~isempty(q), v(end+1) = q(1); end %#ok<AGROW>
+    end
+    p = min_finite(v);
+end
+
+function m = min_finite(v)
+    m = NaN;
+    v = v(isfinite(v));
+    if ~isempty(v), m = min(v); end
+end
+
+% " (smallest cluster p = .11)" -- the honest headline when a panel is empty.
+function s = smallest_clause(p, nperm, what)
+    if isnan(p), s = ''; return; end
+    s = sprintf(' (smallest %s = %s)', what, fmt_p(p, nperm));
+end
+
 % =========================================================================
 % FORMATTING HELPERS
 % =========================================================================
+% "p = .004" / "p &lt; .001" -- the equals sign is wrong in front of a bound.
+function s = p_phrase(p, nperm)
+    v = fmt_p(p, nperm);
+    if strncmp(v, '&lt;', 4)
+        s = ['p &lt; ' strtrim(v(5:end))];
+    else
+        s = ['p = ' v];
+    end
+end
+
 function s = fmt_p(p, nperm)
     if isempty(p) || isnan(p)
         s = '&mdash;'; return;
@@ -950,336 +1740,279 @@ function s = fmt_int(n)
     s = sprintf('%d', round(double(n)));
 end
 
+% The run's significance level in the report's own style (no leading zero), so
+% every "at alpha = ..." sentence quotes the value the maps were actually
+% thresholded at rather than a hard-coded .05.
+function s = fmt_alpha(a)
+    if isempty(a) || ~isfinite(a), a = 0.05; end
+    s = sprintf('%.3g', double(a));
+    if strncmp(s, '0.', 2), s = s(2:end); end
+end
+
 function c = none_cls(n)
     if n > 0, c = ''; else, c = ' none'; end
+end
+
+function c = lamp_cls(tf)
+    if tf, c = 'sig'; else, c = 'ns'; end
+end
+
+% Highlight class for a global (whole-head) p-value. Thresholded at the RUN's
+% alpha, not a hard-coded .05 -- a run at alpha = .01 must not paint a p = .03
+% global as significant while every map card says otherwise.
+function c = psig_cls(g, alpha)
+    if nargin < 2 || isempty(alpha) || ~isfinite(alpha), alpha = 0.05; end
+    c = '';
+    if isstruct(g) && isfield(g,'p') && ~isempty(g.p) && ~isnan(g.p) && g.p <= alpha ...
+            && (~isfield(g,'flag') || isempty(g.flag))
+        c = ' p-sig';
+    end
 end
 
 function t = has(s, sub)
     t = ischar(s) && ~isempty(strfind(s, sub)); %#ok<STREMP>
 end
 
+% Sanitised, unique tab id fragment (letters/digits only -- it goes into an
+% element id and a JS string list).
+function n = tab_name(label, i)
+    n = regexprep(char(string(label)), '[^A-Za-z0-9]', '');
+    if numel(n) > 16, n = n(1:16); end
+    n = sprintf('%s%d', n, i);
+end
+
+% HTML-escape. The double quote is escaped too: engine strings (a behavioural
+% column name, a group level, a dataset basename) reach attribute contexts such
+% as the effect-map alt text and the chip title, where a bare " closes the
+% attribute and everything after it becomes markup.
 function s = esc(s)
     if ~ischar(s) && ~isstring(s), s = char(string(s)); end
     s = char(s);
     s = strrep(s, '&', '&amp;');
     s = strrep(s, '<', '&lt;');
     s = strrep(s, '>', '&gt;');
+    s = strrep(s, '"', '&quot;');
+end
+
+% Like esc, but leaves an already-formed HTML entity (&mdash;, &#183;) alone --
+% used for the model-card values, which mix engine strings with entities this
+% file wrote itself.
+function s = esc_soft(s)
+    s = char(string(s));
+    s = regexprep(s, '&(?!([A-Za-z]+|#[0-9]+);)', '&amp;');
+    s = strrep(s, '<', '&lt;');
+    s = strrep(s, '>', '&gt;');
+    s = strrep(s, '"', '&quot;');
+end
+
+% Filename -> URL for src/href. Report filenames legitimately contain spaces
+% ("<a> VS <b> Cluster.png"), which must be percent-encoded in an attribute.
+function s = url(s)
+    s = char(string(s));
+    s = strrep(s, '%', '%25');
+    s = strrep(s, ' ', '%20');
+    s = strrep(s, '#', '%23');
+    s = strrep(s, '?', '%3F');
+    % A quote in a filename would close the src="..."/href="..." attribute it is
+    % written into; percent-encode it rather than letting it become markup.
+    s = strrep(s, '"', '%22');
+    s = strrep(s, '&', '&amp;');
 end
 
 % =========================================================================
-% MULTI-EFFECT REPORT (two-way mixed ANOVA): group / condition / interaction
+% STATIC ASSETS
+% Lines 5-166 (<style>...</style>) and 167-185 (<script>...</script>) of
+% templates/snpm_report_v2_master.html, ported BYTE-FOR-BYTE. The template is
+% the source of truth for the design; a test diffs these against it. If you
+% need a style change, change the template and re-port -- do not edit here.
 % =========================================================================
-function write_legend_multi(fid)
-    fprintf(fid, '<div class="legend">\n');
-    fprintf(fid, '  <div class="grp"><span class="k">Report</span><span>Two-way mixed ANOVA &mdash; group &amp; condition main effects and their interaction</span></div>\n');
-    fprintf(fid, '  <span class="sep"></span>\n');
-    fprintf(fid, '  <div class="grp"><span class="k">Maps</span><span>each effect has its own statistic map and colour scale</span></div>\n');
-    fprintf(fid, '  <span class="sep"></span>\n');
-    fprintf(fid, ['  <div class="grp"><span class="k">Dots</span>' ...
-        '<span class="chip"><span style="width:11px;height:11px;border-radius:50%%;background:#1b2733;display:inline-block"></span>uncorrected</span>' ...
-        '<span class="chip"><span style="width:11px;height:11px;border-radius:50%%;background:#fff;border:1px solid #bbb;display:inline-block"></span>corrected</span></div>\n']);
-    fprintf(fid, '</div>\n');
+function s = v2_css()
+    c = {};
+    c{end+1} = '<style>';
+    c{end+1} = ':root{--ink:#1b2733;--ink-2:#445261;--muted:#7c8a98;--line:#e3e9ef;--line-2:#eef2f6;--bg:#f5f7f9;--panel:#ffffff;--accent:#1f6f8b;--accent-soft:#e8f1f4;--sig:#1f8a5b;--sig-soft:#e7f4ec;--warm:#c2543a;--cool:#2f6db0;--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--serif:Charter,"Iowan Old Style",Georgia,"Times New Roman",serif}';
+    c{end+1} = '*{box-sizing:border-box}html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}';
+    c{end+1} = 'body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}';
+    c{end+1} = 'a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}';
+    c{end+1} = '.wrap{max-width:1100px;margin:0 auto;padding:40px 32px 96px}';
+    c{end+1} = '.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}';
+    c{end+1} = '.masthead{display:flex;justify-content:space-between;align-items:flex-start;gap:32px;flex-wrap:wrap;padding-bottom:26px;border-bottom:1px solid var(--line)}';
+    c{end+1} = '.masthead h1{font-family:var(--serif);font-weight:600;font-size:29px;line-height:1.2;letter-spacing:-.01em;margin:9px 0 11px;max-width:760px}';
+    c{end+1} = '.methods{color:var(--ink-2);font-size:13.5px;max-width:820px;margin:0}.methods b{color:var(--ink);font-weight:600}';
+    c{end+1} = '.actions{display:flex;gap:8px;flex-shrink:0}';
+    c{end+1} = '.btn{font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:border-color .15s,color .15s;text-decoration:none}';
+    c{end+1} = '.btn:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}.btn svg{width:14px;height:14px}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- sticky per-effect summary strip ---- */';
+    c{end+1} = '.strip{position:sticky;top:0;z-index:20;background:rgba(245,247,249,.94);backdrop-filter:blur(6px);margin:0 -32px;padding:10px 32px;border-bottom:1px solid var(--line);display:flex;gap:10px;flex-wrap:wrap}';
+    c{end+1} = '.chipfx{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 14px;font-size:12px;color:var(--ink-2);text-decoration:none;transition:border-color .15s;box-shadow:0 1px 2px rgba(20,40,60,.04)}';
+    c{end+1} = '.chipfx:hover{border-color:var(--accent);text-decoration:none}';
+    c{end+1} = '.chipfx .lamp{width:9px;height:9px;border-radius:50%;flex:none}';
+    c{end+1} = '.lamp.sig{background:var(--sig)}.lamp.ns{background:#c3ccd4}';
+    c{end+1} = '.chipfx .nm{font-weight:650;color:var(--ink)}';
+    c{end+1} = '.chipfx .cts{font-family:var(--mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}';
+    c{end+1} = '.chipfx .gp{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink-2)}';
+    c{end+1} = '.chipfx .gp.p-sig{color:var(--sig);font-weight:700}';
+    c{end+1} = '';
+    c{end+1} = '.section{margin-top:40px}';
+    c{end+1} = '.section>.head{display:flex;align-items:baseline;gap:14px;margin-bottom:16px;flex-wrap:wrap}';
+    c{end+1} = '.section>.head h2{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0}';
+    c{end+1} = '.section>.head .sub{font-size:12.5px;color:var(--muted)}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- model card ---- */';
+    c{end+1} = '.model-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(20,40,60,.04);overflow:hidden}';
+    c{end+1} = '.formula{padding:22px 26px;border-bottom:1px solid var(--line-2);background:linear-gradient(180deg,#fbfdfe,#fff)}';
+    c{end+1} = '.formula .fk{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;display:block;margin-bottom:9px}';
+    c{end+1} = '.formula code{font-family:var(--mono);font-size:19px;color:var(--ink);font-weight:500}';
+    c{end+1} = '.formula code .v{color:var(--accent)}.formula code .r{color:var(--warm)}';
+    c{end+1} = '.specs{display:grid;grid-template-columns:repeat(2,1fr)}';
+    c{end+1} = '@media(max-width:680px){.specs{grid-template-columns:1fr}}';
+    c{end+1} = '.specs .row{display:flex;justify-content:space-between;gap:16px;padding:11px 26px;border-bottom:1px solid var(--line-2);font-size:13.5px}';
+    c{end+1} = '.specs .row:nth-child(odd){border-right:1px solid var(--line-2)}';
+    c{end+1} = '.specs .k{color:var(--ink-2)}';
+    c{end+1} = '.specs .val{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);font-weight:500;text-align:right}';
+    c{end+1} = '.specs .val.tag{font-family:var(--sans);font-weight:600}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- legend ---- */';
+    c{end+1} = '.legend{display:flex;flex-wrap:wrap;gap:12px 26px;align-items:center;padding:14px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px;font-size:12.5px;color:var(--ink-2)}';
+    c{end+1} = '.legend .grp{display:flex;align-items:center;gap:9px}.legend .grp .k{font-weight:600;color:var(--ink)}';
+    c{end+1} = '.tmapbar{width:120px;height:13px;border-radius:3px;border:1px solid rgba(0,0,0,.12)}';
+    c{end+1} = '.legend .sep{width:1px;height:26px;background:var(--line)}';
+    c{end+1} = '.legend .dd{width:10px;height:10px;border-radius:50%;flex:none}';
+    c{end+1} = '.cnum{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:#fff;border:1.5px solid var(--accent);color:var(--accent);font-family:var(--mono);font-size:10px;font-weight:700;flex:none}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- figures ---- */';
+    c{end+1} = '.fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(20,40,60,.04)}';
+    c{end+1} = '.fig>.cap{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line-2)}';
+    c{end+1} = '.fig>.cap .t{font-size:13px;font-weight:650}.fig>.cap .f{font-family:var(--mono);font-size:10.5px;color:var(--muted)}';
+    c{end+1} = '.slot{position:relative;margin:0;background:#f1f5f7;aspect-ratio:1/1}';
+    c{end+1} = '.slot.wide{aspect-ratio:16/10}';
+    c{end+1} = '.slot img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;display:block}';
+    c{end+1} = '.slot img.err{display:none}.slot img.err + .ph{display:flex}';
+    c{end+1} = '.slot .ph{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#9fb0bd;text-align:center;padding:12px}';
+    c{end+1} = '.slot .ph .nd{font-size:12px;font-weight:600;color:#8b9aa7}';
+    c{end+1} = '.slot .ph .fn{font-family:var(--mono);font-size:9px;color:#a7b6c2;word-break:break-all;max-width:92%}';
+    c{end+1} = '.map-note{padding:9px 16px;border-top:1px solid var(--line-2);font-size:11px;color:var(--muted);display:flex;align-items:center;gap:14px;flex-wrap:wrap}';
+    c{end+1} = '.map-note .dl{display:inline-flex;align-items:center;gap:6px}';
+    c{end+1} = '.map-note .dd{width:9px;height:9px;border-radius:50%;border:1px solid rgba(0,0,0,.25);flex:none}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- descriptive means grid ---- */';
+    c{end+1} = '.cellgrid{display:grid;grid-template-columns:56px repeat(3,1fr);gap:8px;align-items:center;padding:18px}';
+    c{end+1} = '.cellgrid .ch{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);font-weight:650;text-align:center}';
+    c{end+1} = '.cellgrid .rh{font-size:12px;font-weight:650;color:var(--ink-2);text-align:right;padding-right:6px}';
+    c{end+1} = '.cellgrid .slot{border-radius:6px;overflow:hidden}';
+    c{end+1} = '.desc-flex{display:grid;grid-template-columns:1.4fr 1fr;gap:22px;align-items:start}';
+    c{end+1} = '@media(max-width:900px){.desc-flex{grid-template-columns:1fr}}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- effect sections (collapsible) ---- */';
+    c{end+1} = '.effect{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(20,40,60,.04);margin-top:26px;overflow:hidden;scroll-margin-top:70px}';
+    c{end+1} = '.effect>.ehead{display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;user-select:none}';
+    c{end+1} = '.effect>.ehead:hover{background:#fbfdfe}';
+    c{end+1} = '.effect>.ehead .chev{width:20px;height:20px;flex:none;color:var(--muted);transition:transform .2s}';
+    c{end+1} = '.effect.open>.ehead .chev{transform:rotate(90deg)}';
+    c{end+1} = '.effect>.ehead h2{font-family:var(--serif);font-size:18px;font-weight:600;margin:0}';
+    c{end+1} = '.effect>.ehead .esub{font-size:12px;color:var(--muted)}';
+    c{end+1} = '.effect>.ehead .lamp{width:9px;height:9px;border-radius:50%;flex:none;margin-left:auto}';
+    c{end+1} = '.effect>.ehead .ecount{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}';
+    c{end+1} = '.effect>.ebody{display:none;padding:6px 20px 24px;border-top:1px solid var(--line-2)}';
+    c{end+1} = '.effect.open>.ebody{display:block}';
+    c{end+1} = '.blk{margin-top:20px}';
+    c{end+1} = '.blk>.bh{font-size:12px;font-weight:650;color:var(--ink-2);margin-bottom:10px;letter-spacing:.02em}';
+    c{end+1} = '.effect-map{max-width:380px}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- segmented toggles ---- */';
+    c{end+1} = '.seg{display:inline-flex;background:var(--line-2);border-radius:9px;padding:4px;gap:3px;flex-wrap:wrap}';
+    c{end+1} = '.seg button{font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);background:transparent;border:0;border-radius:6px;padding:8px 16px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:8px}';
+    c{end+1} = '.seg button.on{background:var(--panel);color:var(--accent);box-shadow:0 1px 2px rgba(20,40,60,.1)}';
+    c{end+1} = '.seg button .ct{font-family:var(--mono);font-size:11px;font-weight:600;color:#fff;background:var(--muted);border-radius:20px;padding:1px 8px;min-width:22px;text-align:center}';
+    c{end+1} = '.seg button.on .ct{background:var(--accent)}.seg button .ct.none{background:var(--line);color:var(--muted)}';
+    c{end+1} = '.vpanel{margin-top:18px}';
+    c{end+1} = '.vbody{display:grid;grid-template-columns:340px 1fr;gap:20px;align-items:start}';
+    c{end+1} = '@media(max-width:860px){.vbody{grid-template-columns:1fr}}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- tables ---- */';
+    c{end+1} = '.tablewrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}';
+    c{end+1} = '.tablewrap .thead-note{padding:11px 16px;border-bottom:1px solid var(--line-2);font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}';
+    c{end+1} = '.tablewrap .thead-note b{color:var(--ink)}';
+    c{end+1} = 'table.sum{border-collapse:collapse;width:100%;font-size:13.5px}';
+    c{end+1} = 'table.sum th,table.sum td{padding:8px 16px;text-align:right;border-bottom:1px solid var(--line-2)}';
+    c{end+1} = 'table.sum th:first-child,table.sum td:first-child{text-align:left}';
+    c{end+1} = 'table.sum thead th{font-size:11px;letter-spacing:.03em;color:var(--ink-2);font-weight:650;background:#fafcfd}';
+    c{end+1} = 'table.sum tbody td{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink-2)}';
+    c{end+1} = 'table.sum tbody td.band{font-family:var(--sans);color:var(--ink);font-weight:600;display:flex;align-items:center;gap:8px}';
+    c{end+1} = 'table.sum tbody tr:last-child td{border-bottom:0}';
+    c{end+1} = 'table.sum .p-sig{color:var(--sig);font-weight:700}table.sum .stat-v{color:var(--ink);font-weight:600}';
+    c{end+1} = '.dotkey{width:9px;height:9px;border-radius:50%;flex:none}';
+    c{end+1} = '.dotkey.unc{background:#1b2733}.dotkey.cor{background:#fff;border:1px solid var(--ink-2)}';
+    c{end+1} = 'tr.sign-row td{background:#f3f6f9;color:var(--ink-2);font-family:var(--sans);font-weight:650;font-size:11px;text-align:left;letter-spacing:.06em;text-transform:uppercase}';
+    c{end+1} = 'tr.sign-row td .sgn{font-family:var(--mono);text-transform:none;letter-spacing:0}';
+    c{end+1} = 'tr.grp-row td{background:var(--accent-soft);color:var(--accent);font-family:var(--sans);font-weight:650;font-size:12px;text-align:left}';
+    c{end+1} = 'tr.grp-row td .cp{font-family:var(--mono);font-weight:600;color:var(--ink-2);margin-left:8px}';
+    c{end+1} = 'tr.grp-row td .cnum{margin-right:8px;vertical-align:-3px}';
+    c{end+1} = 'tr.xrow{display:none}.tablewrap.expanded tr.xrow{display:table-row}';
+    c{end+1} = '.morebtn{display:block;width:100%;font:inherit;font-size:12px;font-weight:600;color:var(--accent);background:#fbfdfe;border:0;border-top:1px solid var(--line-2);padding:10px;cursor:pointer}';
+    c{end+1} = '.morebtn:hover{background:var(--accent-soft)}';
+    c{end+1} = '.empty-note{padding:26px 18px;text-align:center;color:var(--muted);font-size:13px}';
+    c{end+1} = '.empty-note b{color:var(--ink-2)}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- post-hoc tabs ---- */';
+    c{end+1} = '.tabs{display:flex;gap:0;border-bottom:1px solid var(--line);flex-wrap:wrap}';
+    c{end+1} = '.tabs button{font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);background:transparent;border:0;border-bottom:2px solid transparent;padding:9px 16px;cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:-1px}';
+    c{end+1} = '.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}';
+    c{end+1} = '.tabs button .ct{font-family:var(--mono);font-size:10.5px;font-weight:600;color:#fff;background:var(--muted);border-radius:20px;padding:1px 7px}';
+    c{end+1} = '.tabs button.on .ct{background:var(--accent)}.tabs button .ct.none{background:var(--line);color:var(--muted)}';
+    c{end+1} = '.tabpanel{margin-top:18px}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- global test ---- */';
+    c{end+1} = '.global-card{display:flex;align-items:stretch;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;flex-wrap:wrap;box-shadow:0 1px 2px rgba(20,40,60,.04)}';
+    c{end+1} = '.gstat{padding:20px 26px;display:flex;flex-direction:column;gap:6px;min-width:140px}';
+    c{end+1} = '.gstat .gk{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}';
+    c{end+1} = '.gstat .gv{font-family:var(--mono);font-size:24px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1.1}';
+    c{end+1} = '.gstat .gp{font-family:var(--mono);font-size:13px;color:var(--muted)}';
+    c{end+1} = '.gstat .gp.p-sig{color:var(--sig);font-weight:700}';
+    c{end+1} = '.gsep{width:1px;background:var(--line)}';
+    c{end+1} = '.gnote{margin-left:auto;align-self:center;padding:18px 26px;font-size:12.5px;color:var(--ink-2);max-width:340px}.gnote b{color:var(--ink)}';
+    c{end+1} = '.foot{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}';
+    c{end+1} = '@media(max-width:820px){.wrap{padding:28px 18px 72px}.masthead h1{font-size:24px}.strip{margin:0 -18px;padding:10px 18px}}';
+    c{end+1} = '';
+    c{end+1} = '/* ---- print ---- */';
+    c{end+1} = '@media print{';
+    c{end+1} = '  body{background:#fff}.wrap{max-width:none;padding:0}';
+    c{end+1} = '  .actions,.seg,.morebtn,.tabs{display:none !important}';
+    c{end+1} = '  .strip{position:static;background:#fff;margin:0;padding:10px 0}';
+    c{end+1} = '  .effect>.ebody{display:block !important}';
+    c{end+1} = '  .effect>.ehead .chev{display:none}';
+    c{end+1} = '  .vpanel{display:block !important;margin-top:16px;page-break-inside:avoid}';
+    c{end+1} = '  .vpanel::before{content:attr(data-view-name);display:block;font-weight:700;font-size:12px;color:var(--accent);margin-bottom:8px}';
+    c{end+1} = '  .tabpanel{display:block !important;margin-top:16px;page-break-inside:avoid}';
+    c{end+1} = '  .tabpanel::before{content:attr(data-tab-name);display:block;font-weight:700;font-size:12px;color:var(--accent);margin-bottom:8px}';
+    c{end+1} = '  tr.xrow{display:none !important}';
+    c{end+1} = '  .fig,.tablewrap,.model-card,.global-card,.legend,.effect{box-shadow:none;break-inside:avoid}';
+    c{end+1} = '  .section{break-inside:avoid}';
+    c{end+1} = '}';
+    c{end+1} = '</style>';
+    s = strjoin(c, newline);
 end
 
-% =========================================================================
-% EXCLUDED CHANNELS, MULTI-EFFECT
-% The three effects of a two-way mixed ANOVA do NOT share an exclusion set:
-% the group main effect is computed on subject means (omitnan), so a channel
-% missing in one row of a subject still has a finite subject mean and is
-% tested, while the within-subject condition/interaction effects drop it. A
-% single unqualified banner over all three sections therefore contradicts the
-% figures below it — and in the dangerous direction, since it over-states
-% exclusion and invites the reader to dismiss a real group finding. So: the
-% top banner reports the UNION and says the set differs, and every effect
-% section states its own set (write_excluded_effect).
-% =========================================================================
-function write_excluded_multi(fid, rs)
-    [idx, labs] = union_excluded(rs);
-    if isempty(idx), return; end
-    nch = effect_nchannels(rs);
-    fprintf(fid, '<div class="legend" style="border-color:var(--amber);background:#fdf8ee">\n');
-    fprintf(fid, ['  <div class="grp"><span class="k" style="color:var(--amber)">Excluded channels</span>' ...
-        '<span><b>%d</b> of %d channel(s) were not tested in <b>at least one</b> effect.</span></div>\n'], ...
-        numel(idx), nch);
-    fprintf(fid, ['  <div class="grp"><span>The excluded set <b>differs per effect</b> and is stated in ' ...
-        'each section below: the group main effect is computed on subject means, so it can test ' ...
-        'channels the within-subject effects cannot. A channel excluded for an effect carries no ' ...
-        'statistic and no p-value in that effect''s maps.</span></div>\n']);
-    fprintf(fid, '  <div class="grp"><span class="k">Union</span><span style="font-family:var(--mono);font-size:11.5px">%s</span></div>\n', ...
-        esc(strjoin(labs, ', ')));
-    fprintf(fid, '</div>\n');
-end
-
-% Per-effect (or per-simple-effect) exclusion notice, rendered inside the
-% section so the statement always sits next to the maps it describes. When the
-% report excludes something somewhere but NOT here, that is said explicitly —
-% otherwise the top banner would be read as applying to this section too.
-function write_excluded_effect(fid, rs, eff, what)
-    [uidx, ~] = union_excluded(rs);
-    ex = [];
-    if isfield(eff, 'excluded_channels') && isstruct(eff.excluded_channels)
-        ex = eff.excluded_channels;
-    end
-    n = 0; labs = {};
-    if ~isempty(ex) && isfield(ex, 'n'), n = ex.n; end
-    if n > 0 && isfield(ex, 'labels')
-        labs = ex.labels;
-        if ~iscell(labs), labs = cellstr(string(labs)); end
-        labs = labs(:)';
-    end
-    nch = effect_nchannels(rs);
-    if n == 0
-        if isempty(uidx), return; end   % nothing excluded anywhere: stay silent
-        fprintf(fid, ['  <p class="methods" style="margin:2px 0 14px"><b>Channels:</b> all %d ' ...
-            'channels were tested for this %s (the exclusions listed at the top of the report ' ...
-            'apply to other effects).</p>\n'], nch, what);
-        return;
-    end
-    fprintf(fid, ['  <p class="methods" style="margin:2px 0 14px;color:var(--amber)"><b>Excluded ' ...
-        'for this %s:</b> %d of %d channel(s) &mdash; %s. They carry no statistic and no p-value ' ...
-        'in the maps and tables below.</p>\n'], what, n, nch, esc(strjoin(labs, ', ')));
-end
-
-function n = effect_nchannels(rs)
-    n = 0;
-    if isfield(rs, 'chanlocs'), n = numel(rs.chanlocs); end
-    if n == 0 && isfield(rs, 'effects') && ~isempty(rs.effects)
-        e = rs.effects(1);
-        if isfield(e, 'excluded_channels') && isfield(e.excluded_channels, 'n_channels')
-            n = e.excluded_channels.n_channels;
-        end
-    end
-end
-
-% Union of every exclusion set carried by the report (effects and their simple
-% effects), as channel indices plus display labels.
-function [idx, labs] = union_excluded(rs)
-    idx = [];
-    if isfield(rs, 'effects')
-        for k = 1:numel(rs.effects)
-            idx = [idx, eff_excl_idx(rs.effects(k))]; %#ok<AGROW>
-            se = [];
-            if isfield(rs.effects(k), 'simple_effects'), se = rs.effects(k).simple_effects; end
-            for s = 1:numel(se)
-                idx = [idx, eff_excl_idx(se(s))]; %#ok<AGROW>
-            end
-        end
-    end
-    idx = unique(idx(:)');
-    labs = cell(1, numel(idx));
-    for i = 1:numel(idx)
-        labs{i} = chan_label(rs, idx(i));
-    end
-end
-
-function v = eff_excl_idx(eff)
-    v = [];
-    if isfield(eff, 'excluded_channels') && isstruct(eff.excluded_channels) && ...
-            isfield(eff.excluded_channels, 'index')
-        v = reshape(eff.excluded_channels.index, 1, []);
-    end
-end
-
-function write_descriptive(fid, rs)
-    if ~isfield(rs, 'descriptive'), return; end
-    d = rs.descriptive;
-    fprintf(fid, '<section class="section">\n  <div class="head"><h2>Descriptive means</h2><span class="sub">Group &times; condition cell means and the interaction plot</span></div>\n');
-    if isfield(d, 'cellmean_png') && ~isempty(d.cellmean_png)
-        fprintf(fid, '  <div class="topo-grid">\n');
-        for i = 1:numel(d.cellmean_png)
-            lab = '';
-            if isfield(d, 'cellmean_labels') && i <= numel(d.cellmean_labels), lab = d.cellmean_labels{i}; end
-            write_fig_card(fid, d.cellmean_png{i}, esc(lab));
-        end
-        fprintf(fid, '  </div>\n');
-    end
-    if isfield(d, 'interaction_png') && ~isempty(d.interaction_png)
-        nch = 0; if isfield(d, 'interaction_channels'), nch = numel(d.interaction_channels); end
-        fprintf(fid, '  <div style="margin-top:20px;max-width:640px">\n');
-        write_fig_card(fid, d.interaction_png, 'Group &times; condition interaction');
-        if nch > 0
-            fprintf(fid, '    <p class="methods" style="margin-top:8px">Mean &plusmn; SE power averaged over <b>%d</b> channel(s) &mdash; the interaction cluster, else TFCE-significant, else all channels.</p>\n', nch);
-        end
-        fprintf(fid, '  </div>\n');
-    end
-    fprintf(fid, '</section>\n');
-end
-
-function write_effect_one(fid, rs, eff, k, nperm)
-    gid = sprintf('eff%d', k);
-    [~, statSym] = eff_stat_info(eff);
-    fprintf(fid, '<section class="section">\n');
-    fprintf(fid, '  <div class="head"><h2>%s</h2><span class="sub">%s-statistic &middot; %s permutation</span></div>\n', ...
-        esc(eff_title(eff)), statSym, esc(perm_word(eff)));
-
-    write_excluded_effect(fid, rs, eff, 'effect');
-    write_effect_topographies(fid, eff);
-
-    effrs = mini_rs(rs, eff);
-    write_significance_grouped(fid, effrs, eff.map_base, gid, statSym, nperm, ...
-        eff.uncorrsigch, eff.correctTFCEsigch, eff.SnPMsigch);
-
-    if isfield(eff, 'posthoc') && ~isempty(eff.posthoc)
-        fprintf(fid, '  <div style="margin-top:30px"><span style="font-family:var(--serif);font-size:16px;font-weight:600">Pairwise post-hoc</span></div>\n');
-        for i = 1:numel(eff.posthoc)
-            write_posthoc_one(fid, rs, eff.posthoc(i), i, nperm, gid);
-        end
-    end
-
-    if isfield(eff, 'simple_effects') && ~isempty(eff.simple_effects)
-        fprintf(fid, '  <div style="margin-top:34px"><div class="head"><h2 style="font-size:16px">Simple effects</h2><span class="sub">Condition within each group</span></div></div>\n');
-        for s = 1:numel(eff.simple_effects)
-            se = eff.simple_effects(s);
-            sgid = sprintf('%s_se%d', gid, s);
-            [~, sSym] = eff_stat_info(se);
-            selab = eff_title(se);
-            fprintf(fid, '  <div style="margin-top:22px"><span style="font-family:var(--serif);font-size:15px;font-weight:600">%s</span></div>\n', esc(selab));
-            write_excluded_effect(fid, rs, se, 'simple effect');
-            sers = mini_rs(rs, se);
-            write_significance_grouped(fid, sers, se.map_base, sgid, sSym, nperm, ...
-                se.uncorrsigch, se.correctTFCEsigch, se.SnPMsigch);
-            if isfield(se, 'posthoc') && ~isempty(se.posthoc)
-                for i = 1:numel(se.posthoc)
-                    write_posthoc_one(fid, rs, se.posthoc(i), i, nperm, sgid);
-                end
-            end
-        end
-    end
-    fprintf(fid, '</section>\n');
-end
-
-function write_effect_topographies(fid, eff)
-    fprintf(fid, '  <div class="topo-grid">\n');
-    if strcmpi(eff.contrast_type, 'F')
-        pngs = {}; labels = {};
-        if isfield(eff, 'group_mean_png'), pngs = eff.group_mean_png; end
-        if isfield(eff, 'group_labels'),   labels = eff.group_labels; end
-        for i = 1:numel(pngs)
-            lab = sprintf('Level %d', i);
-            if i <= numel(labels) && ~isempty(labels{i}), lab = labels{i}; end
-            write_fig_card(fid, pngs{i}, sprintf('Mean &mdash; %s', esc(lab)));
-        end
-        if isfield(eff, 'fmap_png') && ~isempty(eff.fmap_png)
-            write_fig_card(fid, eff.fmap_png, 'F-map');
-        end
-    else
-        if isfield(eff, 'data1_png') && ~isempty(eff.data1_png)
-            labels = {}; if isfield(eff, 'group_labels'), labels = eff.group_labels; end
-            la = 'A'; lb = 'B';
-            if numel(labels) >= 2, la = labels{1}; lb = labels{2}; end
-            write_fig_card(fid, eff.data1_png, sprintf('Mean &mdash; %s', esc(la)));
-            write_fig_card(fid, eff.data2_png, sprintf('Mean &mdash; %s', esc(lb)));
-            if isfield(eff, 'diff_png') && ~isempty(eff.diff_png)
-                write_fig_card(fid, eff.diff_png, 't-map');
-            end
-        elseif isfield(eff, 'diff_png') && ~isempty(eff.diff_png)
-            write_fig_card(fid, eff.diff_png, sprintf('%s (t-map)', esc(eff.effect_label)));
-        end
-    end
-    fprintf(fid, '  </div>\n');
-end
-
-% Grouped three-way significance toggle (reuses showViewG + panel_<gid>_<w>).
-function write_significance_grouped(fid, rs, map_base, gid, statSym, nperm, unc, tfce, clu)
-    nU = numel(unc); nT = numel(tfce); nC = numel(clu);
-    fprintf(fid, '  <div class="seg" id="seg_%s">\n', gid);
-    fprintf(fid, '    <button id="btn_%s_clu" class="on" onclick="showViewG(''%s'',''clu'')">Cluster <span class="ct%s">%d</span></button>\n', gid, gid, none_cls(nC), nC);
-    fprintf(fid, '    <button id="btn_%s_tfce" onclick="showViewG(''%s'',''tfce'')">TFCE <span class="ct%s">%d</span></button>\n', gid, gid, none_cls(nT), nT);
-    fprintf(fid, '    <button id="btn_%s_unc" onclick="showViewG(''%s'',''unc'')">Uncorrected <span class="ct%s">%d</span></button>\n', gid, gid, none_cls(nU), nU);
-    fprintf(fid, '  </div>\n');
-
-    fprintf(fid, '  <div id="panel_%s_clu" class="vpanel" data-view-name="Cluster-corrected">\n    <div class="vbody">\n', gid);
-    if ~isempty(map_base), write_map_card(fid, [map_base ' Cluster.png'], 'cluster-corrected'); end
-    write_cluster_table(fid, rs, clu, statSym, nperm);
-    fprintf(fid, '    </div>\n  </div>\n');
-
-    fprintf(fid, '  <div id="panel_%s_tfce" class="vpanel" data-view-name="TFCE-corrected" style="display:none">\n    <div class="vbody">\n', gid);
-    if ~isempty(map_base), write_map_card(fid, [map_base ' TFCE.png'], 'TFCE-corrected'); end
-    write_flat_table(fid, rs, tfce, get_pvec(rs,'correctedTFCE'), statSym, 'TFCE-corrected', nperm);
-    fprintf(fid, '    </div>\n  </div>\n');
-
-    fprintf(fid, '  <div id="panel_%s_unc" class="vpanel" data-view-name="Uncorrected" style="display:none">\n', gid);
-    write_flat_table(fid, rs, unc, get_pvec(rs,'real'), statSym, 'uncorrected', nperm);
-    fprintf(fid, '  </div>\n');
-end
-
-% Per-effect global (whole-head, channel-averaged) parametric test table.
-function write_global_multi(fid, rs, nperm)
-    if ~isfield(rs, 'effects') || isempty(rs.effects), return; end
-    nch = [];
-    if isfield(rs, 'chanlocs'), nch = numel(rs.chanlocs); end
-    fprintf(fid, '<section class="section">\n  <div class="head"><h2>Global test</h2><span class="sub">Whole-head mixed ANOVA on the channel-averaged signal</span></div>\n');
-    fprintf(fid, '  <div class="tablewrap">\n');
-    if ~isempty(nch)
-        fprintf(fid, '    <div class="thead-note"><span>Parametric test on the mean across the channels each effect can evaluate (montage: <b>%d</b>)</span><span>complementary to the maps</span></div>\n', nch);
-    end
-    % "channels" column: each effect is averaged over ITS OWN evaluable set
-    % (see core_snpm_glm's global_average), so the three globals in one report
-    % can legitimately rest on three different channel counts. A single header
-    % figure would be wrong for at least one of them, hence a per-row count.
-    fprintf(fid, '    <table class="sum"><thead><tr><th>Effect</th><th>stat</th><th>value</th><th>df</th><th>channels</th><th>p</th></tr></thead><tbody>\n');
-    for k = 1:numel(rs.effects)
-        eff = rs.effects(k);
-        [~, sSym] = eff_stat_info(eff);
-        kch = '&mdash;';
-        if isfield(eff,'global_n_channels') && ~isempty(eff.global_n_channels) && ...
-                ~isnan(eff.global_n_channels)
-            if ~isempty(nch)
-                kch = sprintf('%d of %d', eff.global_n_channels, nch);
-            else
-                kch = sprintf('%d', eff.global_n_channels);
-            end
-        end
-        val = '&mdash;';
-        if isfield(eff,'global_stat') && ~isempty(eff.global_stat) && ~isnan(eff.global_stat)
-            val = fmt_stat(eff.global_stat);
-        end
-        dfs = '&mdash;';
-        if isfield(eff,'global_df1') && ~isnan(eff.global_df1) && isfield(eff,'global_df2') && ~isnan(eff.global_df2)
-            if strcmpi(sSym,'F'), dfs = sprintf('%g, %g', eff.global_df1, eff.global_df2);
-            else,                 dfs = sprintf('%g', eff.global_df2); end
-        end
-        pcls = ''; ps = '&mdash;';
-        if isfield(eff,'global_pval') && ~isempty(eff.global_pval) && ~isnan(eff.global_pval)
-            ps = fmt_p(eff.global_pval, nperm);
-            if eff.global_pval <= 0.05, pcls = 'p-sig'; end
-        end
-        fprintf(fid, '      <tr class="sig"><td class="band">%s</td><td class="stat-v">%s</td><td class="stat-v">%s</td><td>%s</td><td>%s</td><td class="%s">%s</td></tr>\n', ...
-            esc(eff_title(eff)), sSym, val, dfs, kch, pcls, ps);
-    end
-    fprintf(fid, '    </tbody></table>\n  </div>\n</section>\n');
-end
-
-function [name, sym] = eff_stat_info(eff)
-    name = 'F';
-    if isfield(eff,'contrast_type') && strcmpi(eff.contrast_type,'t'), name = 't'; end
-    if strcmpi(name,'F'), sym = 'F'; else, sym = 't'; end
-end
-
-function t = eff_title(eff)
-    key = ''; if isfield(eff,'key'), key = eff.key; end
-    switch lower(key)
-        case 'group',       t = 'Group main effect';
-        case 'condition',   t = 'Condition main effect';
-        case 'interaction', t = 'Interaction (group by condition)';
-        otherwise
-            if isfield(eff,'effect_label') && ~isempty(eff.effect_label), t = eff.effect_label; else, t = key; end
-    end
-end
-
-function w = perm_word(eff)
-    pt = ''; if isfield(eff,'perm_type'), pt = eff.perm_type; end
-    switch lower(pt)
-        case 'free',   w = 'between-subjects';
-        case 'within', w = 'within-subject';
-        otherwise,     w = pt;
-    end
-end
-
-function m = mini_rs(rs, eff)
-    m = struct();
-    if isfield(eff,'T'),        m.T = eff.T;               end
-    if isfield(eff,'p'),        m.p = eff.p;               end
-    if isfield(eff,'Clusters'), m.Clusters = eff.Clusters; end
-    if isfield(rs,'chanlocs'),  m.chanlocs = rs.chanlocs;  end
+function s = v2_js()
+    c = {};
+    c{end+1} = '<script>';
+    c{end+1} = 'function showView(fx,w){';
+    c{end+1} = '  var v=["clu","tfce","unc"];';
+    c{end+1} = '  for(var i=0;i<v.length;i++){';
+    c{end+1} = '    var p=document.getElementById("panel_"+fx+"_"+v[i]); if(p)p.style.display=(v[i]===w)?"block":"none";';
+    c{end+1} = '    var b=document.getElementById("btn_"+fx+"_"+v[i]);   if(b)b.className=(v[i]===w)?"on":"";';
+    c{end+1} = '  }';
+    c{end+1} = '}';
+    c{end+1} = 'function showTab(grp,w,names){';
+    c{end+1} = '  for(var i=0;i<names.length;i++){';
+    c{end+1} = '    var p=document.getElementById("tab_"+grp+"_"+names[i]); if(p)p.style.display=(names[i]===w)?"block":"none";';
+    c{end+1} = '    var b=document.getElementById("tbtn_"+grp+"_"+names[i]); if(b)b.className=(names[i]===w)?"on":"";';
+    c{end+1} = '  }';
+    c{end+1} = '}';
+    c{end+1} = 'function toggleFx(id){document.getElementById(id).classList.toggle("open");}';
+    c{end+1} = 'function expandTable(btn){';
+    c{end+1} = '  var tw=btn.closest(".tablewrap"); tw.classList.add("expanded"); btn.style.display="none";';
+    c{end+1} = '}';
+    c{end+1} = '</script>';
+    s = strjoin(c, newline);
 end

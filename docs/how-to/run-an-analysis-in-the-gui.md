@@ -75,8 +75,10 @@ Every run writes to the output path, per analysis (per band×stage cell in spect
 - `<base>_<timestamp>.mat` — `results_struct` (`T`, `p`, `Clusters`, `correctTFCEsigch`,
   `SnPMsigch`, `chanlocs`, …).
 - `<base>_<timestamp>.xlsx` — significant-channel table.
-- `<base>_<timestamp>_report.html` — one self-contained report with a TFCE / Cluster toggle,
-  stat-aware (t-map for t-tests; F-map + post-hoc for the omnibus ANOVA presets).
+- `<base>_<timestamp>_report.html` — one self-contained report: summary strip, model card,
+  descriptive maps, one section per effect with a Cluster / TFCE / Uncorrected toggle and
+  numbered clusters (post-hoc pairwise tabs for the omnibus ANOVA presets), and a Global test
+  card. Its **Results CSV** button opens the sibling `<base>_<timestamp>_report.csv`.
 - Topoplot PNGs.
 
 See the [Analysis catalog](../reference/ANALYSIS_CATALOG.md) for the exact fields per analysis.

@@ -142,7 +142,7 @@ was matched is recorded in **`results_struct.data2_matched`**, one of three mode
   `e1..e256` or `E1_density..`, or a behavioural file with a stray extra column). If the
   data-column count **equals** Data 1's, the table is matched to Data 1 **by position** — the
   pre-existing behaviour — with a warning (`snpm:correlation:unrecognisedData2Columns`), an
-  amber caveat banner in the HTML report and a results-text note: the run cannot verify that
+  entry in the HTML report's amber notice block and a results-text note: the run cannot verify that
   column *i* really is the same channel in both files. If the count **differs**, the run errors
   (`snpm:correlation:widthMismatch`) naming the columns actually found and describing both
   accepted formats. (The former `snpm:behavior:multipleColumns` error is **retired** — the
@@ -254,7 +254,19 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
 
 ## Outputs (every analysis, via `core_snpm_analysis`)
 - `<base>_<timestamp>.mat` — `results_struct` with `T` (incl. `real_T`), `p`, `Clusters`,
-  `uncorrsigch`, `correctTFCEsigch` (TFCE-corrected), `SnPMsigch` (cluster-corrected), `chanlocs`.
+  `uncorrsigch`, `correctTFCEsigch` (TFCE-corrected), `SnPMsigch` (cluster-corrected), `chanlocs`,
+  and **`alpha`** (the run's significance level, published by every core — legacy, GLM, LMM,
+  circular — so the report never has to assume 0.05). The GLM presets add
+  `glm.n_subjects` (distinct subjects) and `glm.group_sizes` / `glm.group_size_labels`
+  (per-level counts; empty when the preset has no grouping factor), which is what the model
+  card's Observations row prints (`16 vs 16 (32 subjects)` for a two-arm design). The
+  correlations add `descriptive.scatter_png` (file name of the scatter), `descriptive.scatter_channels`
+  (the channels averaged for each axis) and `descriptive.scatter_is_rank` (true for
+  `correlationS`: the axes are ranks and the caption says so). The scatter is **suppressed** —
+  `scatter_png` not set, `descriptive.scatter_skipped_reason` set instead and rendered as a
+  "Correlation scatter skipped" note in the descriptive card — when an axis has no usable spread, e.g.
+  `datatype = 'normalize'` with a broadcast behaviour score (the per-subject z-scored row has a
+  channel mean of ~0 for every subject).
 - `<base>_<timestamp>.xlsx` — significant-channel table (`func_genSnpmTable`).
 - **Excluded channels.** A channel that cannot be evaluated in *every* permutation is not tested
   at all: the GLM presets and the circular tier require a channel to be complete (no missing cell)
@@ -269,7 +281,39 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   `df = n − 2 − k` (`k` = number of covariates). Since the 2026-08 fix `per_channel_n` is the n
   **after** the completeness mask — full n for a retained channel, 0 for an excluded one — not the
   old pairwise matched-pair count.
-- `<base>_<timestamp>_report.html` — one self-contained report with a **TFCE/Cluster toggle**, stat-aware (t-map for the t-tests, **F-map + post-hoc** table for the omnibus ANOVA presets), the mean topographies and both significance maps. (Replaced the former separate `_TFCE_report.html` / `_Cluster_report.html`.)
+- `<base>_<timestamp>_report.html` — one self-contained HTML report (inline CSS and script, no
+  external resources; a **Print / PDF** button prints it). Every analysis except `mixedmodel`
+  uses the same layout (`mixedmodel` still renders through `generateAnalysisReport_lmm`, with
+  its own layout, un-numbered clusters and a fixed α = 0.05; it moves to the v2 report in a
+  later release), top to bottom:
+  - a sticky **summary strip** with one chip per effect: a traffic light (lit when any
+    corrected channel is significant), the counts `Clu n · TFCE n · Unc n`, the global
+    statistic and p, and a jump link to the effect's section;
+  - a **model card** (formula, design, factors and levels, subjects per group, data type,
+    montage, permutations and α, correction);
+  - one amber **notice block**, present only when it has content: excluded channels (see
+    above), Data 2 matched by position, the `normalize` caveat, covariate or behaviour rows
+    dropped;
+  - a **descriptive block** per analysis: group/condition mean topographies for the t-tests,
+    a scatter plot for the correlations (omitted when an axis has no spread, see above), the
+    cell-mean grid plus interaction plot for `mixed2way`;
+  - one collapsible **effect section** per effect (opened when it has a corrected-significant
+    channel), each with a three-way **Cluster / TFCE / Uncorrected** toggle. Cluster tables are
+    grouped per cluster; signed (t or r) effects are split into positive and negative
+    clusters, numbered continuously across the two, and **the same cluster numbers are drawn
+    on the Cluster PNG** at each cluster's centroid (not for `mixedmodel`, see above). Uncorrected tables show the first 20
+    channels with a **Show all** button. The omnibus presets add **post-hoc pairwise tabs**;
+    each post-hoc map is max-statistic FWE-corrected over channels only — there is no
+    Bonferroni (or other) adjustment across the pairwise contrasts. An effect with nothing significant states the smallest p instead of a
+    table;
+  - a **Global test** card (one entry per effect; the circular tier prints a note explaining
+    why there is none);
+  - a footer with the generation timestamp.
+  A **Results CSV** button in the masthead opens the sibling `<base>_<timestamp>_report.csv`
+  (written by `dependencies/export_results_csv.m`; its `Global statistic` / `Global p-value`
+  rows are stable names). `results_struct.effects(k)` is what the per-effect sections are
+  built from. The spectral reports written by `export_report.m` are a separate path and are
+  unchanged.
 - Topoplot PNGs.
 
 **Source-space runs (`source2447`) instead of a scalp topoplot:** a 2-D scalp disc is

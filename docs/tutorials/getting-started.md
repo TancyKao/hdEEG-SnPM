@@ -75,8 +75,9 @@ channels at once. With 500 permutations this takes seconds to a minute.
 
 Open your output folder. You should see three files sharing a timestamped base name:
 
-- `<base>_<timestamp>_report.html` — open this first. It has a **TFCE / Cluster** toggle and
-  shows the group-mean topographies and the significance map.
+- `<base>_<timestamp>_report.html` — open this first. The summary strip at the top tells you
+  at a glance whether anything survived correction; below it are the group-mean topographies
+  and the significance map with a **Cluster / TFCE / Uncorrected** toggle.
 - `<base>_<timestamp>.xlsx` — the significant channels in a table.
 - `<base>_<timestamp>.mat` — the full `results_struct` if you want to inspect it in MATLAB.
 

@@ -259,7 +259,11 @@ function [results_struct, results_text] = core_snpm_circ(params)
         end
     end
     try
-        TopoplotSignificant_single(T.real_T, uncorrsigch, correctTFCEsigch, SnPMsigch, ...
+        % struct('Clusters',{...},'alpha',...): the run's alpha travels with the
+        % clusters so the numbers drawn on the Cluster PNG are the same set the
+        % HTML table numbers. The cell stops struct() expanding the array.
+        TopoplotSignificant_single(T.real_T, uncorrsigch, correctTFCEsigch, ...
+            struct('Clusters',{Clusters},'alpha',alpha), ...
             chanlocs, insidegoodch, comparison, params.output_path, base_filename, select_mode);
     catch ME
         warning(ME.identifier, 'Could not generate significance topology plots: %s', ME.message);
@@ -271,6 +275,10 @@ function [results_struct, results_text] = core_snpm_circ(params)
     results_struct.uncorrsigch = uncorrsigch;
     results_struct.correctTFCEsigch = correctTFCEsigch;
     results_struct.SnPMsigch = SnPMsigch;
+    % The significance level the maps, clusters and TFCE sets above were built
+    % at. Published so the report numbers its clusters with the SAME threshold
+    % the run used, rather than a second hard-coded .05 that could drift.
+    results_struct.alpha = alpha;
     results_struct.chanlocs = chanlocs;
     results_struct.excluded_channels = excluded_channels;
     results_struct.hide_condition_b  = is_corr;   % no "group B" topography

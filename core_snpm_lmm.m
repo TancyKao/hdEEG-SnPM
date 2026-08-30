@@ -213,6 +213,12 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     % list with coordinates is emitted after the .mat/.xlsx below).
     if ~is_source
         try
+            % Flat channel list (unnumbered cluster PNG) on purpose: the LMM tier
+            % still renders through generateAnalysisReport_lmm, whose cluster table
+            % numbers by ascending p with no positive/negative split, so a
+            % sign-ordered PNG number would disagree with the table number. Pass the
+            % struct('Clusters',...,'alpha',...) form here when the LMM tier moves to
+            % the v2 report generator (phase 2).
             TopoplotSignificant_single(T.real_T, uncorrsigch, correctTFCEsigch, SnPMsigch, ...
                 chanlocs, insidegoodch, params.comparison, savepath, base_filename, select_mode);
         catch ME
@@ -230,6 +236,10 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     results_struct.uncorrsigch      = uncorrsigch;
     results_struct.correctTFCEsigch = correctTFCEsigch;
     results_struct.SnPMsigch        = SnPMsigch;
+    % The significance level the maps, clusters and TFCE sets above were built
+    % at. Published so the report numbers its clusters with the SAME threshold
+    % the run used, rather than a second hard-coded .05 that could drift.
+    results_struct.alpha = alpha;
     results_struct.chanlocs         = chanlocs;
     results_struct.is_source        = is_source;   % source-space run (topoplot bypassed)
     % Channel-exclusion surface shared with the GLM tier: .mat field ->

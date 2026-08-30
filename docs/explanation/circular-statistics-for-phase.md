@@ -261,7 +261,7 @@ That distinction is not academic. Helfrich's published topographic result depend
 the parieto-occipital estimates *not* differing between groups — a claim that is unavailable to
 you if those channels were never tested.
 
-The excluded-channel list is how you check this. It appears as a banner in the HTML report and as
+The excluded-channel list is how you check this. It appears in the amber notice block of the HTML report and as
 an `excludedChannels` sheet in the Excel output. **Read it before you look at the topoplot, not
 after**, and look at *where* the exclusions are, not just how many.
 

@@ -75,7 +75,10 @@ Every run writes to the output path, per analysis (per band×stage cell in spect
 - `<base>_<timestamp>.mat` — `results_struct` (`T`, `p`, `Clusters`, `correctTFCEsigch`,
   `SnPMsigch`, `chanlocs`, …).
 - `<base>_<timestamp>.xlsx` — significant-channel table.
-- `<base>_<timestamp>_report.html` — one self-contained report: summary strip, model card,
+- `<base>_<timestamp>_report.html` — one self-contained report (images embedded as
+  `data:image/png;base64,` URIs, so the single file can be moved, emailed or imported into
+  Notion; the PNGs are still written beside it, and `params.report_embed_images = false`
+  switches back to relative filenames): summary strip, model card,
   descriptive maps, one section per effect with a Cluster / TFCE / Uncorrected toggle and
   numbered clusters (post-hoc pairwise tabs for the omnibus ANOVA presets), and a Global test
   card. Its **Results CSV** button opens the sibling `<base>_<timestamp>_report.csv`.

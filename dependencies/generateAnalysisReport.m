@@ -37,6 +37,19 @@ function generateAnalysisReport(results_struct, params, base_filename, outputSna
 % TopoplotSignificant_single uses to number the discs it draws on the Cluster
 % PNG, so a "Cluster 2" in the table is the "2" on the map.
 
+    % Images are embedded as base64 data URIs by default, so the single .html
+    % file survives being moved, emailed or imported into Notion. Set
+    % params.report_embed_images = false to go back to relative <img src>
+    % filenames (smaller file, PNGs must travel with it). The PNGs are written
+    % next to outputSname, so that folder is where the encoder looks.
+    embed_dir = fileparts(outputSname);
+    embed_on  = true;
+    if isstruct(params) && isfield(params, 'report_embed_images') ...
+            && ~isempty(params.report_embed_images)
+        embed_on = logical(params.report_embed_images(1));
+    end
+    embed_ctx(embed_dir, embed_on);
+
     report_filename = [outputSname '_report.html'];
     fid = fopen(report_filename, 'w');
     if fid == -1
@@ -1579,9 +1592,14 @@ function s = global_note(R)
 end
 
 function write_footer(fid)
-    fprintf(fid, ['<footer class="foot"><span>Self-contained report &mdash; keep the PNG images ' ...
-        'in the same folder as this HTML.</span><span>Generated %s</span></footer>\n'], ...
-        esc(char(datetime('now','Format','dd-MMM-uuuu HH:mm'))));
+    [~, embed_on] = embed_ctx();
+    if embed_on
+        note = 'Self-contained report &mdash; images are embedded; the PNG files beside it are copies.';
+    else
+        note = 'Self-contained report &mdash; keep the PNG images in the same folder as this HTML.';
+    end
+    fprintf(fid, '<footer class="foot"><span>%s</span><span>Generated %s</span></footer>\n', ...
+        note, esc(char(datetime('now','Format','dd-MMM-uuuu HH:mm'))));
 end
 
 % =========================================================================
@@ -1610,9 +1628,50 @@ end
 function s = slot_html(png, cls)
     if ~isempty(cls), cls = [' ' cls]; end
     if isempty(png), png = '(not produced)'; end
+    % src is either the base64 payload of the PNG (default: the report is one
+    % portable file) or the relative filename (report_embed_images = false, or
+    % the PNG is missing -- in which case the src 404s and the onerror handler
+    % below reveals the "No data" placeholder, exactly as before). The .fn
+    % caption always names the real file, embedded or not.
+    src = embed_src(png);
     s = sprintf(['<figure class="slot%s"><img src="%s" alt="" onerror="this.classList.add(''err'')">' ...
         '<figcaption class="ph"><span class="nd">No data</span><span class="fn">%s</span>' ...
-        '</figcaption></figure>'], cls, url(png), esc(png));
+        '</figcaption></figure>'], cls, src, esc(png));
+end
+
+% Per-report image-embedding context, set once by generateAnalysisReport and
+% read by embed_src. Held here rather than threaded through the ~10 write_fig
+% call sites, which take only (fid, F, ind).
+function [dirpath, on] = embed_ctx(setdir, seton)
+    persistent D ON
+    if nargin == 2
+        D = setdir; ON = logical(seton);
+    end
+    if isempty(D),  D  = '';    end
+    if isempty(ON), ON = false; end
+    dirpath = D; on = ON;
+end
+
+% Filename -> value for the img src attribute.
+function src = embed_src(png)
+    src = url(png);
+    [dirpath, on] = embed_ctx();
+    if ~on || isempty(png), return; end
+    f = png;
+    if ~isfile(f), f = fullfile(dirpath, png); end
+    if ~isfile(f), return; end          % missing -> relative src -> onerror
+    b = read_bytes(f);
+    if isempty(b), return; end
+    b64 = reshape(char(matlab.net.base64encode(b(:)')), 1, []);
+    src = ['data:image/png;base64,' b64];
+end
+
+function b = read_bytes(f)
+    b = uint8([]);
+    fidp = fopen(f, 'r');
+    if fidp == -1, return; end
+    c = onCleanup(@() fclose(fidp));
+    b = fread(fidp, Inf, '*uint8');
 end
 
 % =========================================================================

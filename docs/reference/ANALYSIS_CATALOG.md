@@ -281,8 +281,12 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   `df = n − 2 − k` (`k` = number of covariates). Since the 2026-08 fix `per_channel_n` is the n
   **after** the completeness mask — full n for a retained channel, 0 for an excluded one — not the
   old pairwise matched-pair count.
-- `<base>_<timestamp>_report.html` — one self-contained HTML report (inline CSS and script, no
-  external resources; a **Print / PDF** button prints it). Every analysis except `mixedmodel`
+- `<base>_<timestamp>_report.html` — one self-contained HTML report (inline CSS and script, and
+  every topoplot/scatter image **embedded as a `data:image/png;base64,` URI**, so the file has no
+  external resources and can be moved, emailed or imported into Notion on its own; a
+  **Print / PDF** button prints it). The PNGs are still written beside it. Set
+  `params.report_embed_images = false` (default `true`) to reference the PNGs by relative
+  filename instead, which keeps the HTML small but ties it to its folder. Every analysis except `mixedmodel`
   uses the same layout (`mixedmodel` still renders through `generateAnalysisReport_lmm`, with
   its own layout, un-numbered clusters and a fixed α = 0.05; it moves to the v2 report in a
   later release), top to bottom:

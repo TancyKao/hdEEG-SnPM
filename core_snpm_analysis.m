@@ -1398,6 +1398,12 @@ function [results_struct, results_text] = core_snpm_analysis(params)
                 '(the map equals partialcorr(x,y,Z,''Type'',''Spearman'')).\n']);
         end
 
+        % The values the zero-variance rule (below) compares the residual sum
+        % of squares against: the pre-residual matrices, i.e. the RANKS for
+        % partial Spearman (ranked just above), the raw values for Pearson.
+        novar_pre_x = data_x;
+        novar_pre_y = data_y;
+
         % Residualize both data matrices against [1, covariates], per channel.
         % Initialised to NaN, NOT zeros: with zeros a cell that was missing
         % survived residualization as a finite 0 -- exactly the residual mean --
@@ -1443,6 +1449,92 @@ function [results_struct, results_text] = core_snpm_analysis(params)
         fprintf('Residualization complete. Running permutation analysis on residuals.\n');
     end
 
+    % ------------------------------------------------------------------
+    % ZERO-VARIANCE RULE 1 (Method Spec, biostatistician round 3, approved by
+    % Tancy 2026-10-14). A channel with nothing to permute is excluded ONCE,
+    % here, before the global test and both permutation engines, and reported
+    % with a reason. Added ON TOP of the missing-data rules above (complete-
+    % column for correlation, the degeneracy-under-relabelling count for the
+    % t-tests), which are unchanged; it is evaluated on the values those rules
+    % left usable. The tolerance is snpm_zero_ss (SS <= 1e-20 * sum(v.^2)).
+    %
+    %   pairedT     every difference zero (sum(d.^2) == 0)
+    %                 -> 'identical values in both conditions'
+    %   onesampleT  every value zero      -> 'every value is zero'
+    %       A CONSTANT NON-ZERO difference is NOT excluded: sign flips change
+    %       it, so it has a null. Its degenerate labellings (all signs equal)
+    %       are handled inside the engines by rule 2 (t = 0), and if the
+    %       OBSERVED labelling is one of them the engines report it as
+    %       'perfect separation, t undefined' (rule 3, merged below).
+    %   unpairedT   pooled values constant by the tolerance
+    %                 -> 'same value in every subject'
+    %   correlation centred SS of the column on EITHER side, on the matrices
+    %       actually correlated (raw for Pearson, ranks for Spearman, the
+    %       residuals with covariates -- against the pre-residual sum(v.^2))
+    %                 -> 'constant across subjects' or, when only the
+    %                    residuals are degenerate, 'fully explained by the
+    %                    covariates'. The denominator of r does not change
+    %       under row permutation, so correlation needs no rule 2.
+    % The reason strings are shared with the Python port; do not reword.
+    % ------------------------------------------------------------------
+    novar = false(1, size(data_x, 2));
+    novar_reason = cell(1, size(data_x, 2));
+    if is_ttest
+        if strcmp(params.comparison, 'unpairedT')
+            pooled = [data_x; data_y];
+            novar = col_zero_var(pooled);
+            novar_reason(novar) = {'same value in every subject'};
+        else
+            d = data_x - data_y;
+            ok = isfinite(d);
+            d(~ok) = 0;
+            novar = sum(d.^2, 1) == 0 & any(ok, 1);
+            if strcmp(params.comparison, 'onesampleT')
+                novar_reason(novar) = {'every value is zero'};
+            else
+                novar_reason(novar) = {'identical values in both conditions'};
+            end
+        end
+    elseif is_correlation
+        if use_covariates && ~isempty(covariates)
+            % Pre-residual: constant before the covariates were removed.
+            const_pre = col_zero_var(novar_pre_x) | col_zero_var(novar_pre_y);
+            % Residual SS (an intercept is in the design, so the residuals
+            % are centred) against the PRE-residual sum(v.^2).
+            res_zero = res_zero_var(data_x, novar_pre_x) | res_zero_var(data_y, novar_pre_y);
+            novar_reason(const_pre) = {'constant across subjects'};
+            novar_reason(res_zero & ~const_pre) = {'fully explained by the covariates'};
+            novar = const_pre | res_zero;
+        else
+            if strcmp(stat_comparison, 'correlationS')
+                vx = tiedrank(data_x); vy = tiedrank(data_y);
+            else
+                vx = data_x; vy = data_y;
+            end
+            novar = col_zero_var(vx) | col_zero_var(vy);
+            novar_reason(novar) = {'constant across subjects'};
+        end
+    end
+    novar = novar & evaluable_or_all(evaluable, size(data_x, 2));
+    if any(novar)
+        for r = unique(novar_reason(novar), 'stable')
+            excluded_channels = snpm_excluded_add(excluded_channels, ...
+                novar & strcmp(novar_reason, r{1}), r{1}, chanlocs);
+        end
+        evaluable = evaluable_or_all(evaluable, size(data_x, 2)) & ~novar;
+        if ~any(evaluable)
+            error('snpm:noEvaluableChannels', ...
+                ['No channel can be tested: every channel left after the missing-data rule ' ...
+                 'has no variation to permute (%s). A constant single behavioural score ' ...
+                 'does this to every channel.'], strjoin(unique(novar_reason(novar), 'stable'), '; '));
+        end
+        data_x(:, novar) = NaN;
+        data_y(:, novar) = NaN;
+        % The post-mask n is 0 on an excluded channel.
+        if ~isempty(n_analysed), n_analysed(novar) = 0; end
+        exclusion_spatial = snpm_exclusion_spatial_profile(evaluable, chanlocs);
+    end
+
     % Global statistical analysis (channel-averaged). Computed AFTER any
     % covariate residualization so the correlation global p reflects the partial
     % correlation; ncov shrinks its df to n-2-ncov (descriptive p only).
@@ -1472,6 +1564,7 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     % and the cluster engine must score the same functional or the global p and
     % the map describe different estimators. params.comparison is untouched and
     % still names the analysis in the filename, the topoplot and the report.
+    snpm_perm_tap('record', 'legacy:engine_inputs', struct('data_x', data_x, 'data_y', data_y, 'comparison', stat_comparison, 'tail', params.tail, 'ncov', ncov, 'alpha', alpha, 'threshold', threshold));
     res = global_stat_test(data_x, data_y, alpha, stat_comparison, params.tail, ncov);
 
     % ------------------------------------------------------------------
@@ -1509,6 +1602,20 @@ function [results_struct, results_text] = core_snpm_analysis(params)
 
     % Cluster analysis
     [Clusters] = snpm_cluster_analysis(data_x,data_y,threshold,neighbors,alpha,stat_comparison,params.tail,params.permutations);
+
+    % ZERO-VARIANCE RULE 3 (t-tests). A channel whose OBSERVED labelling has a
+    % zero error term (every value identical within each group, or every
+    % paired difference identical and non-zero) had t defined as 0 by rule 2;
+    % it stayed in every permuted map, which keeps the test exact, and the TFCE
+    % engine has already returned it as NaN. Here it joins the exclusion report
+    % so it does not leave the analysis silently. Approved by Tancy 2026-10-14:
+    % reported as undefined and left untested, not scored as a maximal effect.
+    if is_ttest && isfield(T, 'undefined_channels') && ~isempty(T.undefined_channels)
+        und = false(1, numel(T.real_T));
+        und(T.undefined_channels) = true;
+        excluded_channels = snpm_excluded_add(excluded_channels, und, ...
+            'perfect separation, t undefined', chanlocs);
+    end
 
     % Find significant channels/clusters. One rule for every analysis: the
     % uncorrected set is the channels whose uncorrected p is at or below alpha.
@@ -2013,7 +2120,18 @@ function [results_struct, results_text] = core_snpm_analysis(params)
             % are degenerate under some labelling (a power fix). Print it so a
             % reader is not left to assume the t-test map was masked for
             % missingness, which it was not.
-            results_text{end+1} = ['Reason: ' excluded_channels.reason];
+            % With the zero-variance rule one run can exclude for more than one
+            % reason, so print one line per reason with its channels.
+            if isfield(excluded_channels, 'reasons') && ...
+                    numel(excluded_channels.reasons) == numel(excluded_channels.index)
+                for r = unique(excluded_channels.reasons, 'stable')
+                    hit = strcmp(excluded_channels.reasons, r{1});
+                    results_text{end+1} = sprintf('Reason: %s - %s', r{1}, ...
+                        strjoin(excluded_channels.labels(hit), ', ')); %#ok<AGROW>
+                end
+            else
+                results_text{end+1} = ['Reason: ' excluded_channels.reason];
+            end
         end
         % WHERE the exclusions fell. A count is a power statement; the pattern is
         % a validity statement -- see snpm_exclusion_spatial_profile.
@@ -2230,4 +2348,30 @@ function tf = scatter_axis_degenerate(v)
     if numel(v) < 3, return; end
     scale = max(1, max(abs(v)));
     tf = std(v) <= 1e-9 * scale;
+end
+
+% ---- zero-variance rule 1 helpers (Method Spec 2026-10-14) ---------------
+function tf = col_zero_var(v)
+% Per column: the centred sum of squares of the usable (finite) values counts
+% as zero against their uncentred sum of squares (snpm_zero_ss). A column with
+% no usable value is never flagged -- the missing-data rule owns it.
+    ok = isfinite(v);
+    n  = sum(ok, 1);
+    v(~ok) = 0;
+    m  = sum(v, 1) ./ max(n, 1);
+    ss = sum(((v - m) .* ok).^2, 1);
+    tf = snpm_zero_ss(ss, sum(v.^2, 1)) & n > 0;
+end
+
+function tf = res_zero_var(res, pre)
+% Per column: the residual sum of squares (residuals of a fit that includes an
+% intercept, so already centred) against the PRE-residual sum(v.^2).
+    ok = isfinite(res) & isfinite(pre);
+    res(~ok) = 0; pre(~ok) = 0;
+    tf = snpm_zero_ss(sum(res.^2, 1), sum(pre.^2, 1)) & any(ok, 1);
+end
+
+function ev = evaluable_or_all(ev, nCh)
+    if isempty(ev), ev = true(1, nCh); end
+    ev = reshape(logical(ev), 1, []);
 end

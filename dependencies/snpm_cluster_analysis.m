@@ -31,6 +31,12 @@ sparse_channel_adjacency_matrix = make_neighbors_sparse(neighbors,size(neighbors
 
 real_stat = [];   % second output; set from REALSTATS once the switch has run
 
+% Zero-variance rule (see snpm_single_threshold_with_TFCE and snpm_ttest_novar):
+% at every labelling a t whose error sum of squares counts as zero is 0, so a
+% cluster is never formed through it; undef_obs marks the observed channels
+% that hit the rule, which real_stat returns as NaN (rule 3).
+undef_obs = false(1, size(data_x, 2));
+
 if nargin < 5
     alpha = 0.05;
     disp('using default alpha value of 0.05');
@@ -109,6 +115,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,STATS] = ttest(data_x_temp,data_y_temp,alpha,'right');
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             % find clusters above threshold
             for ti = 1:length(thresholds)
                 temp_clusters = snpm_find_clusters_graphalgs(STATS.tstat,thresholds(ti),sparse_channel_adjacency_matrix);
@@ -120,6 +127,7 @@ switch compstring
         
         % calculate real ttest
         [~,~,~,REALSTATS] = ttest(data_x,data_y,alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
     case 'pairedTright'
 
         nSubj=size(data_x,1);
@@ -152,6 +160,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,STATS] = ttest(data_x_temp,data_y_temp,alpha,'right');
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             
             % find clusters above threshold
             for ti = 1:length(thresholds)
@@ -164,6 +173,7 @@ switch compstring
         
         %Calculate real ttest
         [~,~,~,REALSTATS] = ttest(data_x,data_y,alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
     case 'pairedTboth'
 
         nSubj=size(data_x,1);
@@ -196,6 +206,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,REALSTATS] = ttest(data_x_temp,data_y_temp,alpha,'both');
+            REALSTATS.tstat = snpm_ttest_novar(REALSTATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             
             % find clusters above threshold
             for ti = 1:length(thresholds)
@@ -208,6 +219,7 @@ switch compstring
         
         % find real ttest  values
         [~,~,~,REALSTATS] = ttest(data_x,data_y);    
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
         
     case 'onesampleTboth'
 
@@ -241,6 +253,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,REALSTATS] = ttest(data_x_temp,data_y_temp,alpha,'both');
+            REALSTATS.tstat = snpm_ttest_novar(REALSTATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             
             % find clusters above threshold
             for ti = 1:length(thresholds)
@@ -253,6 +266,7 @@ switch compstring
         
         % find real ttest  values
         [~,~,~,REALSTATS] = ttest(data_x,data_y); 
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
     case 'unpairedTleft'
 
         nSubj=size(data_x,1)+size(data_y,1);
@@ -288,6 +302,7 @@ switch compstring
 
             %Calculate T value for this grouping (ttest2 is unpaired ttest)
             [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
+            REALSTATS.tstat = snpm_ttest_novar(REALSTATS.tstat, data(group1,:), data(group2,:), 'unpaired');   % zero-variance rule 2
 
             % find clusters above threshold
             for ti = 1:length(thresholds)
@@ -299,6 +314,7 @@ switch compstring
         end
         % find real tvalue
         [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data(1:nGrp,:), data(nGrp+1:end,:), 'unpaired');   % rule 2 on the observed labelling
     case 'unpairedTright'
 
         nSubj=size(data_x,1)+size(data_y,1);
@@ -333,6 +349,7 @@ switch compstring
 
             %Calculate T value for this grouping (ttest2 is unpaired ttest)
             [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
+            REALSTATS.tstat = snpm_ttest_novar(REALSTATS.tstat, data(group1,:), data(group2,:), 'unpaired');   % zero-variance rule 2
 
             % find clusters above threshold
             for ti = 1:length(thresholds)
@@ -344,6 +361,7 @@ switch compstring
         end
         % find real tvalue
         [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data(1:nGrp,:), data(nGrp+1:end,:), 'unpaired');   % rule 2 on the observed labelling
     case 'unpairedTboth'
 
         nSubj=size(data_x,1)+size(data_y,1);
@@ -377,6 +395,7 @@ switch compstring
 
             %Calculate T value for this grouping (ttest2 is unpaired ttest)
             [~,~,~,REALSTATS] = ttest2(data(group1,:),data(group2,:),alpha);
+            REALSTATS.tstat = snpm_ttest_novar(REALSTATS.tstat, data(group1,:), data(group2,:), 'unpaired');   % zero-variance rule 2
 
             % find clusters above threshold
             for ti = 1:length(thresholds)
@@ -389,6 +408,7 @@ switch compstring
 
         % real t
         [~,~,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:));
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data(1:nGrp,:), data(nGrp+1:end,:), 'unpaired');   % rule 2 on the observed labelling
     case 'correlationPboth'
 
         nSubj=size(data_x,1);
@@ -610,4 +630,10 @@ else
     end
 
 end
+% Rule 3: the observed map this engine exposes shows a t that is 0 by
+% definition as undefined, the same as the TFCE engine's T.real_T. The
+% clusters above were formed from the 0 (never above a non-zero threshold).
+real_stat(reshape(logical(undef_obs), 1, [])) = NaN;
+
+snpm_perm_tap('record', 'legacy:cluster_null', struct('null_sorted', max_cluster_sizes, 'thresholds', thresholds, 'threshold', threshold));
 

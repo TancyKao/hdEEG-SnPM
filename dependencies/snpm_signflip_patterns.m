@@ -37,10 +37,12 @@ if exact_count <= requested_permutations
         patterns(k+1, :) = logical(bitget(k, 1:nSubj));
     end
     % k = 0 leaves row 1 all-false; the all-true identity is at k = exact_count-1.
+    snpm_perm_tap('record', 'signflip:exact', patterns);
 else
     % Random sampling of the sign-flip group. Each entry is an independent
     % fair coin; row 1 is the observed (all-keep) labelling.
     patterns = rand(requested_permutations, nSubj) > 0.5;
     patterns(1, :) = true;
+    snpm_perm_tap('record', 'signflip:random', patterns);
 end
 end

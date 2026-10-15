@@ -57,13 +57,90 @@ repo root, which is in the repository — there is nothing to generate.
 | **Circular phase, 2 groups** `circ_phase_group` | Do 2 independent groups couple at a different phase? | 2 wide angle files in **radians** (**disjoint** Subject ids) **+ 2 wide event-count files** (GUI: *Event Count File*) | `circ_units`, `circ_convention`, `count1_file`, `count2_file` | covariate-adjusted Hotelling T² on (cos,sin), F(2, N−q−3) | `circ_phase_groupA.csv`, `circ_phase_groupB.csv` + `circ_phase_countsA.csv`, `circ_phase_countsB.csv` |
 | **Circular phase, 2 groups (U²)** `circ_phase_group_u2` | As above, omnibus over the whole distribution | as above (**no whole-degree input**) | as above | Watson's U² (no covariate slot) | as above; also `circ_conc_groupA.csv`, `circ_conc_groupB.csv` + `circ_conc_countsA.csv`, `circ_conc_countsB.csv` |
 | **Circular–linear** `circ_corrAngLinear` | Does a behavioural measure vary with phase? | 1 wide angle file + 1 measure file, **matched** Subject ids | `circ_units`, `circ_convention`, `measure_col` | circular–linear correlation (Mardia 1976), model F | `circ_anglinear_angles.csv` + `circ_anglinear_measure.csv` |
-| **One-way ANOVA** `anova1` | 3+ groups differ? | 1 file | `group_col` (≥2 lvls) | F vs `anova1` | `glm_anova1.csv` |
-| **ANCOVA** `ancova` | Groups differ adjusting covariates? | 1 file | `group_col` + `covariate_cols` | t (2 groups) / F (≥3, Freedman–Lane) | `glm_ancova.csv` (2 groups → t); `glm_ancova3.csv` (3 groups → F + pairwise post-hoc) |
+| **One-way ANOVA** `anova1` | 3+ groups differ? | 1 file | `group_col` (≥2 lvls) | F vs `anova1`; with ≥3 groups, a pairwise post-hoc t per pair (two-group test on those two groups) | `glm_anova1.csv` |
+| **ANCOVA** `ancova` | Groups differ adjusting covariates? | 1 file | `group_col` + `covariate_cols` | t (2 groups) / F (≥3, Freedman–Lane); with ≥3 groups, a pairwise post-hoc t per pair (covariate slopes from those two groups) | `glm_ancova.csv` (2 groups → t); `glm_ancova3.csv` (3 groups → F + pairwise post-hoc) |
 | **Regression** `regression` | Scales with a predictor? | 1 file | `predictor_col` (+ `covariate_cols`) | t on slope vs `fitlm` | `glm_regression.csv` |
-| **RM-ANOVA** `rmanova` | 3+ within conditions differ? | 1 file, long | `subject_col` + `condition_col` | F (within perm) | `glm_rmanova.csv` |
-| **Two-way mixed ANOVA** `mixed2way` | Condition effect differs between groups? | 1 file, long | `group_col` + `subject_col` + `condition_col` | F on interaction | `glm_mixed2way.csv` (2×2); `glm_mixed2way_2x3.csv` (2×3) |
+| **RM-ANOVA** `rmanova` | 3+ within conditions differ? | 1 file, long | `subject_col` + `condition_col` | F (within perm); with ≥3 conditions, a pairwise post-hoc t per pair (two-condition test on subjects who have both) | `glm_rmanova.csv` |
+| **Two-way mixed ANOVA** `mixed2way` | Condition effect differs between groups? | 1 file, long, **balanced**: every subject has exactly one row per condition and one group | `group_col` + `subject_col` + `condition_col` | three effects in one report: group F (subject means), condition F and interaction F (full model, within perm); details below | `glm_mixed2way.csv` (2×2); `glm_mixed2way_2x3.csv` (2×3) |
 | **Mixed model** `mixedmodel` | Trial-level effect (many obs/subject)? | 1 long file | `Subject` + DV + fixed + effect | `fitlme` t/F (Stephan 2021) | `lmm_long.csv` |
 | **Source-level t** (any wide t-test with Recording system `source2447`) | Which cortical voxels differ? | wide file(s), cols `src0001..src2447` (magnitudes) | — (same as the scalp t-test) | permutation t + TFCE + cluster-**extent**, on the source graph | none ships — source input comes from your own GeoSource export (see the [how-to](../how-to/run-a-source-level-analysis.md)) |
+
+**Pairwise post-hoc comparisons (`anova1`, `ancova`, `rmanova`, `mixed2way`).** When the tested
+factor has three or more levels the statistic is an omnibus F, and the run adds one signed t map
+per pair of levels ("a vs b", the mean of a minus the mean of b, levels in order of first
+appearance in the file). Set `params.posthoc = false` to skip them. Since 14 October 2026 each
+pair is a **separate two-level test on the rows of those two levels only**:
+
+| Property | Rule |
+|---|---|
+| Rows used | Only the rows of the two levels compared. The other levels are neither fitted nor permuted. |
+| Model | The preset's own design, rebuilt on those rows. `anova1`: two-group test. `ancova`: two-group test with the covariates, which are re-centred and whose **slopes are estimated from those two groups only**; a covariate that is constant in the two groups is dropped. `rmanova`: two-condition within-subject test. |
+| Permutation | Freedman–Lane, drawn afresh for each pair, with every column except the two-level column as nuisance. Whole rows are relabelled for the between-subject presets; rows are shuffled within each subject for the within-subject presets. |
+| Error term | Estimated from the two levels only. It does not pool the other levels. |
+| Channels | A channel is tested in a post-hoc only if the omnibus tested it **and** it has a value in every row of the pair, so a post-hoc never reports a channel its omnibus did not test. |
+| Within-subject pairs | A subject who has only one of the two levels is left out of that comparison, with a warning naming the subject (`snpm_glm_pair:singleLevelSubjects`). Fewer than 6 complete subjects raises `snpm_glm_pair:fewSubjects`, because the smallest two-sided permutation p is then 2/2ⁿ. |
+| Between-subject pairs | Fewer than 4 subjects in the smaller group raises `snpm_glm_pair:smallGroup`. |
+| A pair that cannot be estimated | Skipped with the warning `snpm_glm_pair:skipped` (fewer than 2 subjects with both levels, a covariate that coincides with the two groups, or no error degrees of freedom). **The report can therefore show fewer post-hoc maps than there are pairs.** |
+| Correction | Each post-hoc map is corrected across channels (TFCE and cluster mass). There is **no correction across pairs**. |
+
+The scheme this replaced tested each pair as a contrast inside the omnibus model, which left the
+other levels' effects in the residuals that were permuted. Measured by simulation with a = b at
+a nominal 0.05: with a third level raised across the whole head the cluster test for "a vs b"
+rejected 0.17 to 0.59 of the time and TFCE about 0.02; with a third level that was only less
+variable both rejected 0.19 to 0.33. Under the current scheme all of these are 0.036 to 0.060.
+The cost is power, because the error term no longer pools the other levels: about 0.05 less TFCE
+power for between-subject pairs and about 0.15 less for within-subject pairs in the simulated
+designs. **Omnibus results are unchanged; post-hoc maps from runs before 14 October 2026 will
+differ and should be re-run.** `export_glm_report.m` follows the same rule.
+
+**Two-way mixed ANOVA (`mixed2way`): input requirement and the three effects.** The report
+always covers all three effects (`params.effect` is ignored).
+
+- **Balanced input is required.** Every subject must have exactly one row per condition and
+  belong to exactly one group. Otherwise the run stops before any statistic is computed with
+  `core_snpm_glm:mixed2wayUnbalanced`, naming the subjects and what each is missing or has
+  twice. Remove or complete those subjects, or use `mixedmodel` for unbalanced or trial-level
+  data. Group sizes may differ. **The GUI applies the same check before Run**: once the file
+  and the Subject and Condition roles are set (and Group, if set), Run stays disabled and the
+  "Before you can run" list names the subjects without exactly one row per condition, the
+  subjects in more than one group, and any empty Condition cells. A file the GUI cannot read
+  does not block Run; the engine then reports. The reason for the rule: a subject short of a
+  condition would have its mean taken over fewer conditions, and the condition effect then
+  enters the group test. Measured on data with no group effect, a condition effect present and 7 of 20 subjects
+  missing a condition, the group effect rejected 0.61 of the time at a nominal 0.05.
+- **One channel set for the whole report.** A channel is analysed only if it has a value in
+  **every row** of the table. That one set is used for the group, condition and interaction
+  effects, the simple effects, every post-hoc and the three whole-head tests, so the channels
+  excluded for missing data are the same for every effect. Each test can additionally exclude
+  channels with no variation left in that test (zero-variance rule, below), so a section can
+  list a channel another section tested; the whole-head averages are over the missing-data set
+  only.
+- **Error degrees of freedom.** With one subject per group every effect has zero error degrees
+  of freedom and the run is refused (`core_snpm_glm:noErrorDF`). A simple effect needs at least
+  2 subjects in its group; otherwise it is not run and is listed in `effects(k).simple_skipped`
+  with label `simple effect: condition within <group>` and reason `only <n> subject in this
+  group; a within-group test needs at least 2`, which also reaches the results text, the
+  workbook and the HTML report.
+
+| Effect | Model and statistic | Permutation | Error degrees of freedom |
+|---|---|---|---|
+| Group main effect | One-way design on **subject means** (the plain mean of each subject's rows over all conditions). t for 2 groups, F for ≥3. | whole subjects relabelled | subjects − groups |
+| Condition main effect | Full model `[1, Ds, Dc, Dxc]`: intercept, subject columns, condition columns, and the group-by-condition columns as **nuisance**, with group coded to sum to zero. | within subject | (subjects − groups) × (conditions − 1) |
+| Interaction | Full model `[1, Ds, Dc, Dx]`; the group-by-condition columns are tested, everything else is nuisance. | within subject | (subjects − groups) × (conditions − 1) |
+| Simple effects | Condition within each group: an `rmanova` design on that group's rows. Maps only, no whole-head test. Needs ≥ 2 subjects in the group, else skipped with a reason. | within subject | (subjects in the group − 1) × (conditions − 1) |
+
+The condition F equals the F of a standard mixed analysis of variance: on a check table of 8 + 14
+subjects × 3 conditions it reproduces MATLAB's `ranova`, F(2,40) = 30.9004. With unequal group
+sizes it is the condition effect averaged over groups with **equal weight per group**, which is
+the default of standard software. Until 14 October 2026 the condition effect was tested in the
+reduced model `[1, Ds, Dc]`, which left a real interaction in the permuted residuals; in
+simulation with a crossover interaction a planted condition effect was then detected 0.00 of the
+time, against 0.93 in the full model. **The condition statistic and its degrees of freedom differ
+from earlier runs.**
+
+Post-hocs inside `mixed2way` follow the pairwise rule above: group pairs are two-group tests on
+the subject means of those two groups, condition pairs use the condition model above on the rows
+of those two conditions, and simple-effect pairs are two-condition tests within one group.
 
 **Circular tier (`core_snpm_circ`).** Routed from `core_snpm_analysis` by an early guard, like the
 GLM and LMM tiers — the three keys above are **not** `compstring` cases and must not be added to
@@ -190,6 +267,17 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   reportable value is `~1/(N+1)` (the legacy tiers force the observed labeling into the null,
   so their floor is `~2/(N+1)`). A result cannot clear α unless `N` is large enough — e.g.
   `N = 100` floors p near 0.01–0.02, so use `permutations ≥ 5000–10000` for final inference.
+- **Ties are counted within a relative 10⁻¹²** (since 14 October 2026). `b` counts null values
+  `≥ obs − 10⁻¹²·|obs|` (after orienting for the tail: absolute values for two-sided), in one
+  helper, `dependencies/snpm_count_at_least.m`, used by the legacy TFCE and single-threshold
+  counts, the shared GLM/circular correction (TFCE and cluster mass) and the LMM TFCE and
+  cluster-mass counts. In the GLM, LMM and circular tiers the observed map is computed from `Y`
+  while an equivalent permuted labelling is computed from fitted values plus permuted
+  residuals; the two are equal mathematically but differ in the last bits, either way, so a
+  strict `>=` dropped about half the true ties and **made p too small** (in one acceptance case
+  a simple effect got p = 0.01 where the tie-aware p is 0.035). Only results where such a tie
+  occurred change. The legacy cluster-extent count compares integers and stays strict; the
+  uncorrected p is parametric and is never counted against a null.
 - **Exact vs Monte-Carlo (legacy `unpairedT` and correlation).** When the requested
   `permutations` meets or exceeds the exchangeability-group size — `nchoosek(nSubj, nGrp)` for
   the unpaired two-group relabeling, `nSubj!` for correlation — the engine runs an **exact**
@@ -251,6 +339,57 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   `regression`, which use `free` permutation) **error** (`core_snpm_glm:repeatedMeasures`) if a
   subject appears in more than one row, and direct you to `rmanova` or `mixedmodel`. Feed them
   one row per subject.
+- **Balance guard for `mixed2way`.** The run **errors** (`core_snpm_glm:mixed2wayUnbalanced`)
+  if any subject lacks a condition, has a condition more than once, or appears in more than one
+  group, and directs you to `mixedmodel`. The GUI runs the same check as a readiness item and
+  keeps Run disabled until it passes. See the `mixed2way` paragraph under the catalog table.
+- **Channels with no variation (zero-variance rule, since 14 October 2026).** One rule for every
+  tier. (1) A channel with nothing to permute is excluded once, before the loop, with a reason.
+  (2) At any labelling whose error sum of squares is zero the statistic is defined as 0 (p = 1),
+  observed and permuted alike, so the test stays exact. (3) A channel whose **observed**
+  labelling hit (2) is reported NaN and listed as undefined; it stays in every permuted map.
+  "Zero" means `SS ≤ 10⁻²⁰ · sum(v.²)` over the uncentred values `v` the statistic uses
+  (relative SD 10⁻¹⁰; `dependencies/snpm_zero_ss.m`). In the GLM presets rules (1) and (3) are
+  applied per test (omnibus, each post-hoc pair, each `mixed2way` effect and simple effect), on
+  that test's rows and nuisance model. The listed reasons, identical in the Python port:
+
+  | Analysis | Condition | Reason |
+  |---|---|---|
+  | `pairedT` | every difference zero | `identical values in both conditions` |
+  | `onesampleT` | every value zero | `every value is zero` |
+  | `unpairedT` | same value in every subject (both groups) | `same value in every subject` |
+  | t-tests, observed labelling | every value identical within each group, or every paired difference identical and non-zero | `perfect separation, t undefined` |
+  | `correlationP` / `correlationS` | column constant on either side (ranks for Spearman) | `constant across subjects` |
+  | correlation with covariates | column constant after the covariates are removed | `fully explained by the covariates` |
+  | GLM presets, per test | nuisance-model residuals all zero | `no variation left after the nuisance model` |
+  | GLM presets, per test, observed fit | full-model residuals all zero | `perfect fit, statistic undefined` |
+
+  A constant non-zero paired difference is **not** excluded by (1), because sign flips change
+  it. Before this rule, such channels stopped the run inside `ClusterEnhancement`
+  (`MATLAB:pmaxsize` or `MATLAB:array:SizeLimitExceeded`) or were silently tested with t = 0 or
+  r = 0. A constant single behavioural score is refused earlier (`snpm:behavior:constant`); if
+  every channel is excluded the run stops with `snpm:noEvaluableChannels`. Why the rule is exact
+  and why perfect separation is left untested:
+  [Channels with no variation](../explanation/missing-data-and-excluded-channels.md#channels-with-no-variation).
+- **Saturated GLM designs are refused.** When rows − rank(design matrix) < 1 the run errors
+  before any statistic with `core_snpm_glm:noErrorDF`, message `no error degrees of freedom left
+  after fitting the design` (for example `anova1` with one subject per group, or an `rmanova`
+  table whose subject and condition columns fit every row). For `mixed2way` with one subject per
+  group the whole run is refused. Sub-tests skip instead: a `mixed2way` simple effect with one
+  subject in its group (reason above), and a post-hoc pair (`too few rows for these two levels to
+  leave any error degrees of freedom`). One error degree of freedom is allowed.
+- **Undefined whole-head tests.** The GLM whole-head global is parametric, so the zero rule does
+  not apply to it: a perfectly fitted channel average is reported with statistic and p **NaN**
+  and `global_reason = 'perfect fit, statistic undefined'` (`results_struct.effects(k).global_reason`
+  for `mixed2way`, top-level `global_reason` for the interaction), and the global card is still
+  rendered with the reason. `global_reason` is empty otherwise.
+- **Very large statistics.** A design with one error degree of freedom gives t or F values with
+  very heavy tails (a permuted 9 × 10⁶ is a legitimate value). `ClusterEnhancement` used to build
+  a threshold ladder up to the largest value (about 130 GB for that one). It now switches above
+  10 000 levels (|statistic| above about 1000 at the step 0.1) to a closed-form computation of
+  the same integral, equal to the original up to rounding, whose memory and time do not depend
+  on the value; below that it is unchanged, bit for bit. No
+  statistic or p-value moved on any stored reference map.
 
 ## Outputs (every analysis, via `core_snpm_analysis`)
 - `<base>_<timestamp>.mat` — `results_struct` with `T` (incl. `real_T`), `p`, `Clusters`,
@@ -276,6 +415,12 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   HTML report, and in `results_struct.excluded_channels`. The behaviour this replaced was
   **anti-conservative** — measured family-wise error **0.066** against a nominal 0.05, now
   **0.054**. Read the excluded list, and *where* the exclusions fall, before reading the topoplot.
+  For `mixed2way` the missing-data set is the same for every effect in the report (a channel must
+  have a value in every row of the table), and a pairwise post-hoc never tests a channel its
+  omnibus excluded. Channels with no variation (zero-variance rule above) are excluded per test,
+  each with its own reason: `results_struct.excluded_channels.reasons` (one entry per excluded
+  channel, parallel to `.index`; `.reason` joins the distinct reasons), one `excludedChannels`
+  row per test and channel with its reason, and in the HTML a per-effect list.
 - **Correlation runs also emit** each channel's effective N as `results_struct.per_channel_n` and
   a guarded **`effectiveN`** sheet in the `.xlsx`; the partial-correlation global p uses
   `df = n − 2 − k` (`k` = number of covariates). Since the 2026-08 fix `per_channel_n` is the n
@@ -306,12 +451,14 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
     grouped per cluster; signed (t or r) effects are split into positive and negative
     clusters, numbered continuously across the two, and **the same cluster numbers are drawn
     on the Cluster PNG** at each cluster's centroid (not for `mixedmodel`, see above). Uncorrected tables show the first 20
-    channels with a **Show all** button. The omnibus presets add **post-hoc pairwise tabs**;
-    each post-hoc map is max-statistic FWE-corrected over channels only — there is no
+    channels with a **Show all** button. The omnibus presets add **post-hoc pairwise tabs**,
+    one per pair that could be estimated (a skipped pair has no tab; see the pairwise post-hoc
+    rules above). Each post-hoc is a two-level test on the rows of its two levels, and its map
+    is max-statistic FWE-corrected over channels only — there is no
     Bonferroni (or other) adjustment across the pairwise contrasts. An effect with nothing significant states the smallest p instead of a
     table;
   - a **Global test** card (one entry per effect; the circular tier prints a note explaining
-    why there is none);
+    why there is none; an undefined global shows NaN with its `global_reason`);
   - a footer with the generation timestamp.
   A **Results CSV** button in the masthead opens the sibling `<base>_<timestamp>_report.csv`
   (written by `dependencies/export_results_csv.m`; its `Global statistic` / `Global p-value`

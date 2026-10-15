@@ -41,12 +41,15 @@ function meta_perm = snpm_lmm_permute_meta(meta, spec, scheme)
             dv = meta.(spec.dv);
             subj = meta.(subj_col);
             [~, ~, gidx] = unique(subj, 'stable');
+            pe = (1:numel(gidx))';      % row index actually applied (for snpm_perm_tap)
             for g = 1:max(gidx)
                 rows = find(gidx == g);
                 if numel(rows) > 1
-                    dv(rows) = dv(rows(randperm(numel(rows))));
+                    pe(rows) = rows(randperm(numel(rows)));
+                    dv(rows) = dv(pe(rows));
                 end
             end
+            snpm_perm_tap('record', 'lmm:within_subject', pe);
             meta_perm.(spec.dv) = dv;
 
         case 'group_label'
@@ -59,6 +62,7 @@ function meta_perm = snpm_lmm_permute_meta(meta, spec, scheme)
             [usubj, ia, sidx] = unique(subj, 'stable');
             subj_groups = grp(ia);                      % each subject's group label
             perm = randperm(numel(usubj));
+            snpm_perm_tap('record', 'lmm:group_label', perm);
             meta_perm.(grp_col) = subj_groups(perm(sidx)); % permuted labels per trial
 
         otherwise

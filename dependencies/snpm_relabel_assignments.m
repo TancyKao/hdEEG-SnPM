@@ -32,6 +32,7 @@ function assignments = snpm_relabel_assignments(nSubj, nGrp, requested_permutati
         % Exact test: every distinct two-group assignment exactly once. Row 1 of
         % enumerate_combinations is [1:nGrp | nGrp+1:nSubj] (the observed split).
         assignments = enumerate_combinations(nSubj, nGrp);
+        snpm_perm_tap('record', 'relabel:exact', assignments);
     else
         % Monte-Carlo WITH REPLACEMENT (no uniqueness loop -> cannot hang).
         assignments = zeros(requested_permutations, nSubj);
@@ -39,5 +40,6 @@ function assignments = snpm_relabel_assignments(nSubj, nGrp, requested_permutati
         for r = 2:requested_permutations
             assignments(r, :) = randperm(nSubj);
         end
+        snpm_perm_tap('record', 'relabel:random', assignments);
     end
 end

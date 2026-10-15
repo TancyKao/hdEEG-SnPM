@@ -75,9 +75,17 @@ function export_glm_report(DATA, OUT, opts)
                      'in every permutation): %s'], stg, pw, bd, sum(~flctx.evaluable), ...
                     numel(flctx.evaluable), strjoin(labels(~flctx.evaluable), ', '));
             end
-            [stat, pm] = snpm_glm_stat(Y, D.X, D.C);
+            [stat, pm, ~, ~, zobs] = snpm_glm_stat(Y, D.X, D.C);
+            % Zero-variance rule 1 (2026-10-14): no variation left after the
+            % nuisance model -> not tested in this loop (core_snpm_glm does the
+            % same and reports it in the workbook/HTML; here, as for missing
+            % data, the report is the warning).
+            ev = flctx.evaluable & ~flctx.no_variation;
+            warn_novar(flctx.no_variation, labels, sprintf('%s/%s/%s', stg, pw, bd), ...
+                'no variation left after the nuisance model');
             [T, p, Cl] = snpm_perm_correction(stat, pm, @() permstat(flctx, D.X, D.C), ...
-                neighbors, E, H, alpha, nperm, D.contrast_type, flctx.evaluable);
+                neighbors, E, H, alpha, nperm, D.contrast_type, ev);
+            [T, p] = undefined_to_nan(T, p, zobs & ev, labels, sprintf('%s/%s/%s', stg, pw, bd));
             iU = find(p.real <= alpha); iT = find(p.correctedTFCE <= alpha);
             iC = [Cl([Cl.p] <= alpha).channels]; minp = min([Cl.p]);
             VAL.(pw).(stg).(bd) = [numel(iU) numel(iT) numel(iC) minp];
@@ -109,13 +117,37 @@ function export_glm_report(DATA, OUT, opts)
                 fullfile(OUT, sprintf('%s_%s_%s_stat.png', stg, pw, bd)));
 
             % post-hoc pairwise t-maps (F presets only)
-            phlist = struct('label',{},'token',{},'tfce',{},'clu',{},'p',{},'ch',{});
+            % .skipped: '' for a pair that was run, else the reason it was not.
+            % .run_on : what a run pair was tested on (its own two groups).
+            phlist = struct('label',{},'token',{},'tfce',{},'clu',{},'p',{},'ch',{}, ...
+                'skipped',{},'run_on',{});
             if isF
                 for k = 1:numel(D.posthoc)
-                    Cph = pad_contrast(D.posthoc(k).C, size(D.X,2));
-                    [ts, tp] = snpm_glm_stat(Y, D.X, Cph);
-                    [Tk, pk, Ck] = snpm_perm_correction(ts, tp, @() permstat(flctx, D.X, Cph), ...
-                        neighbors, E, H, alpha, nperm, 't', flctx.evaluable);
+                    % Each pair is its own two-level test on the rows of those
+                    % two levels (snpm_glm_pair; same rule as core_snpm_glm),
+                    % masked with the omnibus evaluable set.
+                    pr = snpm_glm_pair(preset, meta, dopts, D.factor_col, ...
+                        D.posthoc(k).a, D.posthoc(k).b, D.posthoc(k).label);
+                    if ~pr.ok
+                        % Not run: keep the pair in the list WITH its reason, so
+                        % the report shows that it is absent and why. A silent
+                        % skip would read as "nothing significant".
+                        phlist(end+1) = struct('label',D.posthoc(k).label,'token','', ...
+                            'tfce',0,'clu',0,'p',NaN, ...
+                            'ch',struct('u',{{}},'tfce',{{}},'cluster',{{}}), ...
+                            'skipped',pr.reason,'run_on',''); %#ok<AGROW>
+                        continue
+                    end
+                    Yk  = Y(pr.rows, :);
+                    flk = snpm_glm_fl_context(Yk, pr.D);
+                    [ts, tp, ~, ~, zk] = snpm_glm_stat(Yk, pr.D.X, pr.C);
+                    evk = flk.evaluable & flctx.evaluable & ~flk.no_variation;
+                    ctx = sprintf('%s/%s/%s post-hoc %s', stg, pw, bd, D.posthoc(k).label);
+                    warn_novar(flk.no_variation & flctx.evaluable, labels, ctx, ...
+                        'no variation left after the nuisance model');
+                    [Tk, pk, Ck] = snpm_perm_correction(ts, tp, @() permstat(flk, pr.D.X, pr.C), ...
+                        neighbors, E, H, alpha, nperm, 't', evk);
+                    [Tk, pk] = undefined_to_nan(Tk, pk, zk & evk, labels, ctx);
                     iUp = find(pk.real <= alpha); iTp = find(pk.correctedTFCE <= alpha);
                     iCp = [Ck([Ck.p] <= alpha).channels];
                     tok = ['ph_' matlab.lang.makeValidName(D.posthoc(k).label)];
@@ -123,7 +155,8 @@ function export_glm_report(DATA, OUT, opts)
                         fullfile(OUT, sprintf('%s_%s_%s_%s.png', stg, pw, bd, tok)));
                     ch = struct('u',{labels(iUp)},'tfce',{labels(iTp)},'cluster',{labels(iCp)});
                     phlist(end+1) = struct('label',D.posthoc(k).label,'token',tok, ...
-                        'tfce',numel(iTp),'clu',numel(iCp),'p',min([Ck.p]),'ch',ch); %#ok<AGROW>
+                        'tfce',numel(iTp),'clu',numel(iCp),'p',min([Ck.p]),'ch',ch, ...
+                        'skipped','','run_on',pr.run_on); %#ok<AGROW>
                 end
                 PH.(pw).(stg).(bd) = phlist;
             end
@@ -236,9 +269,6 @@ function out = ternary(c, a, b), if c, out=a; else, out=b; end, end
 % ---- GLM Freedman-Lane helpers (context builder shared with core_snpm_glm.m) ----
 function [stat, pm] = permstat(flctx, X, C)
     Yp = snpm_glm_permute(flctx); [stat, pm] = snpm_glm_stat(Yp, X, C);
-end
-function Cpad = pad_contrast(C, p)
-    Cpad = zeros(size(C,1), p); Cpad(:, 1:size(C,2)) = C;
 end
 
 % ---- topo plotting helpers (copied from export_report.m; de-dup later) ----
@@ -370,10 +400,17 @@ function s = ph_fmt(ph)
     for i = 1:numel(ph)
         e = ph(i);
         chs = sprintf('{u:%s,tfce:%s,cluster:%s}', jarr(e.ch.u), jarr(e.ch.tfce), jarr(e.ch.cluster));
-        items{i} = sprintf('{label:"%s", token:"%s", tfce:%d, clu:%d, p:%.3f, ch:%s}', ...
-            e.label, e.token, e.tfce, e.clu, e.p, chs);
+        if ~isempty(e.skipped)
+            items{i} = sprintf('{label:"%s", skipped:"%s", ch:%s}', e.label, jesc(e.skipped), chs);
+        else
+            items{i} = sprintf('{label:"%s", token:"%s", tfce:%d, clu:%d, p:%.3f, run_on:"%s", ch:%s}', ...
+                e.label, e.token, e.tfce, e.clu, e.p, jesc(e.run_on), chs);
+        end
     end
     s = ['[' strjoin(items, ', ') ']'];
+end
+function s = jesc(s)
+    s = strrep(strrep(char(s), '\', '\\'), '"', '\"');
 end
 function s = jarr(c)
     if isempty(c), s='[]'; return; end
@@ -404,4 +441,22 @@ function inject_report(htmlin, htmlout, js)
 end
 function write_utf8(fname, txt)
     fid = fopen(fname, 'w', 'n', 'UTF-8'); fwrite(fid, unicode2native(txt, 'UTF-8')); fclose(fid);
+end
+
+% ---- zero-variance rule (Method Spec 2026-10-14), spectral GLM report ----
+function warn_novar(mask, labels, ctx, reason)
+    mask = reshape(logical(mask), 1, []);
+    if ~any(mask), return; end
+    warning('export_glm_report:channelsExcluded', '%s: %d of %d channels excluded (%s): %s', ...
+        ctx, sum(mask), numel(mask), reason, strjoin(labels(mask), ', '));
+end
+
+function [T, p] = undefined_to_nan(T, p, und, labels, ctx)
+% Rule 3: an observed fit with a zero error term had its statistic defined as
+% 0 (it stayed in every permuted map); it is shown as NaN and named.
+    und = reshape(logical(und), 1, []);
+    if ~any(und), return; end
+    T.real_T(und) = NaN; T.real_TFCE(und) = NaN;
+    p.real(und) = NaN;   p.correctedTFCE(und) = NaN;
+    warn_novar(und, labels, ctx, 'perfect fit, statistic undefined');
 end

@@ -116,20 +116,36 @@ function [results_struct, results_text] = core_snpm_glm(params)
         guard_between_subject_rows(meta, opts, preset);
     end
 
+    % Saturated design (round-4 spec 3b, approved 2026-10-14): with no error
+    % degrees of freedom every channel would hit zero-variance rule 2 and rule
+    % 3 would mislabel the whole montage "perfect fit". That is a property of
+    % the design, not the data, so it is refused up front. Rank, not columns.
+    require_error_df(D.X);
+
     alpha = 0.05; E = 0.5; H = 2;
     fprintf('Effect: %s | statistic: %s | permutation: %s\n', ...
         D.effect_label, D.contrast_type, D.perm_type);
 
     %% Real statistic + permutation correction
-    [stat, pm] = snpm_glm_stat(power, D.X, D.C);
+    [stat, pm, ~, ~, zero_obs] = snpm_glm_stat(power, D.X, D.C);
     flctx = snpm_glm_fl_context(power, D);
     % Channels that missing data makes unevaluable in some permutations are
     % dropped from the observed map as well, so observed and permuted maps are
     % defined on one channel set. Computed once, before the permutation loop.
+    % Zero-variance rule 1: channels with no variation left after the nuisance
+    % model are dropped from the loop mask too (and reported with that reason).
     excluded_channels = excluded_channel_info(flctx.evaluable, chanlocs, preset);
+    excluded_channels = snpm_excluded_add(excluded_channels, flctx.no_variation, ...
+        reason_novar(), chanlocs);
+    loop_ev = flctx.evaluable & ~flctx.no_variation;
     perm_stat_fn = @() permstat(flctx, D.X, D.C);
+    snpm_perm_tap('record', ['loop:glm:main:' D.effect_label], []);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_stat_fn, neighbors, E, H, alpha, ...
-        params.permutations, D.contrast_type, flctx.evaluable);
+        params.permutations, D.contrast_type, loop_ev);
+    % Zero-variance rule 3: an observed fit with a zero error term is reported
+    % undefined (NaN) and listed; it stayed in every permuted map.
+    [T, p, excluded_channels] = mark_undefined(T, p, zero_obs & loop_ev, ...
+        excluded_channels, chanlocs);
 
     uncorrsigch      = find(p.real <= alpha);
     correctTFCEsigch = find(p.correctedTFCE <= alpha);
@@ -137,30 +153,13 @@ function [results_struct, results_text] = core_snpm_glm(params)
     SnPMsigch        = [Clusters(sigclusters).channels];
 
     %% Post-hoc pairwise maps (omnibus F presets only)
-    posthoc_results = struct('label', {}, 'uncorrsigch', {}, 'correctTFCEsigch', {}, 'SnPMsigch', {}, ...
-        'T', {}, 'p', {}, 'Clusters', {}, 'map_base', {});
+    % Each pair is its own two-level test on the rows of those two levels
+    % (compute_posthoc / snpm_glm_pair), masked with the omnibus evaluable set.
+    posthoc_results = empty_posthoc();
+    posthoc_skipped = empty_skipped();
     if do_posthoc && strcmpi(D.contrast_type, 'F') && ~isempty(D.posthoc)
-        for ph = 1:numel(D.posthoc)
-            Cph = pad_contrast(D.posthoc(ph).C, size(D.X, 2));
-            [phstat, phpm] = snpm_glm_stat(power, D.X, Cph);
-            % nuisance for a pairwise t = everything except this contrast's columns
-            flph = flctx;   % same FL residualization (nuisance = original design nuisance)
-            phfn = @() permstat(flph, D.X, Cph);
-            [Tph, pph, Cl_ph] = snpm_perm_correction(phstat, phpm, phfn, neighbors, E, H, alpha, ...
-                params.permutations, 't', flph.evaluable);
-            posthoc_results(ph).label = D.posthoc(ph).label;
-            posthoc_results(ph).uncorrsigch = find(pph.real <= alpha);
-            posthoc_results(ph).correctTFCEsigch = find(pph.correctedTFCE <= alpha);
-            posthoc_results(ph).SnPMsigch = [Cl_ph(find([Cl_ph.p] <= alpha)).channels]; %#ok<FNDSB>
-            % Carry the full per-channel detail so the report can present each
-            % pairwise contrast as Cluster / TFCE / Uncorrected channel lists
-            % (statistic t, uncorrected p, TFCE p, cluster-level p), not counts.
-            posthoc_results(ph).T = Tph;            % Tph.real_T = per-channel t
-            posthoc_results(ph).p = pph;            % pph.real, pph.correctedTFCE
-            posthoc_results(ph).Clusters = Cl_ph;   % cluster struct (.channels, .p)
-            fprintf('  post-hoc %s: %d TFCE-sig channels\n', ...
-                D.posthoc(ph).label, numel(posthoc_results(ph).correctTFCEsigch));
-        end
+        [posthoc_results, posthoc_skipped] = compute_posthoc(power, meta, preset, opts, D, ...
+            flctx.evaluable, neighbors, alpha, E, H, params.permutations, chanlocs);
     end
 
     %% Output naming + plot
@@ -293,6 +292,10 @@ function [results_struct, results_text] = core_snpm_glm(params)
     results_struct.alpha = alpha;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = posthoc_results;
+    % Pairs that were NOT run, with the reason. A skipped pair has no map and no
+    % entry in .posthoc, so without this list an output file could not tell a
+    % reader that a comparison is absent; a console warning does not survive.
+    results_struct.posthoc_skipped = posthoc_skipped;
     results_struct.excluded_channels = excluded_channels;
     results_struct.data_summary.data1_size = size(power);
     results_struct.data_summary.data2_size = [size(power,1), numel(channel_cols)];
@@ -344,10 +347,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
         ['SnPM significant channels N = : ' num2str(numel(SnPMsigch))], ...
         '', ['Results saved to: ' outputSname '.mat'], ...
         ['Excel file saved to: ' outputSname '.xlsx'] }';
-    for ph = 1:numel(posthoc_results)
-        results_text{end+1} = sprintf('Post-hoc %s: %d TFCE-sig channels', ...
-            posthoc_results(ph).label, numel(posthoc_results(ph).correctTFCEsigch)); %#ok<AGROW>
-    end
+    results_text = [results_text; posthoc_text(posthoc_results, posthoc_skipped, '')];
 
     % params.tail is NOT set here. A GLM preset has no tail: an F contrast is a
     % non-negative omnibus statistic with no sidedness, and the 1-row t
@@ -379,6 +379,56 @@ end
 function [stat, pm] = permstat(flctx, X, C)
     Yp = snpm_glm_permute(flctx);
     [stat, pm] = snpm_glm_stat(Yp, X, C);
+end
+
+% ---- zero-variance rule (Method Spec 2026-10-14) -------------------------
+% The reason strings are compared with the Python port; do not reword.
+function s = reason_novar()
+    s = 'no variation left after the nuisance model';
+end
+
+function s = reason_undefined()
+    s = 'perfect fit, statistic undefined';
+end
+
+function s = reason_no_error_df()
+    s = 'no error degrees of freedom left after fitting the design';
+end
+
+function tf = has_error_df(X)
+% n_rows - rank(X) >= 1: at least one error degree of freedom.
+    tf = size(X, 1) - rank(X) >= 1;
+end
+
+function require_error_df(X)
+    if ~has_error_df(X)
+        error('core_snpm_glm:noErrorDF', '%s', reason_no_error_df());
+    end
+end
+
+function [T, p, excl] = mark_undefined(T, p, und, excl, chanlocs)
+% Rule 3. `und` = channels in the loop mask whose OBSERVED fit hit rule 2
+% (zero error term, statistic defined as 0). The 0 entered the observed TFCE
+% integral and the channel stayed in every permuted map, which keeps the test
+% exact; what is reported for it is NaN and an entry in the exclusion list,
+% because a 0 there is a definition, not a measurement. It cannot be in an
+% observed cluster: rule 2 also set its parametric p to 1.
+    und = reshape(logical(und), 1, []);
+    if ~any(und), return; end
+    T.real_T(und)    = NaN;
+    T.real_TFCE(und) = NaN;
+    p.real(und)      = NaN;
+    p.correctedTFCE(und) = NaN;
+    T.excluded_channels = union(reshape(T.excluded_channels, 1, []), find(und));
+    excl = snpm_excluded_add(excl, und, reason_undefined(), chanlocs);
+end
+
+function excl = loop_exclusions(finite_ev, no_var, und, chanlocs, context_label)
+% One loop's exclusion report: missing data (the finiteness mask), then rule 1
+% (no variation after the nuisance model), then rule 3 (perfect observed fit).
+    excl = excluded_channel_info(finite_ev, chanlocs, context_label);
+    excl = snpm_excluded_add(excl, no_var & finite_ev, reason_novar(), chanlocs);
+    excl = snpm_excluded_add(excl, und, reason_undefined(), chanlocs);
 end
 
 function excl = excluded_channel_info(evaluable, chanlocs, context_label)
@@ -413,18 +463,30 @@ end
 
 function txt = excluded_text(excl)
 % One results_text line per exclusion report (feeds the GUI Result box + CSV).
+% Grouped by reason: a loop can exclude for missing data, for no variation
+% left after the nuisance model, and for a perfect observed fit.
     if excl.n == 0
-        txt = sprintf('Channels excluded for missing data: none (%d/%d evaluable)', ...
+        txt = sprintf('Channels excluded: none (%d/%d evaluable)', ...
             excl.n_channels, excl.n_channels);
     else
-        txt = sprintf('Channels excluded for missing data (%s): %d of %d — %s', ...
-            excl.context, excl.n, excl.n_channels, strjoin(excl.labels, ', '));
+        txt = sprintf('Channels excluded (%s): %d of %d — %s', ...
+            excl.context, excl.n, excl.n_channels, excluded_by_reason(excl));
     end
 end
 
-function Cpad = pad_contrast(C, p)
-    Cpad = zeros(size(C,1), p);
-    Cpad(:, 1:size(C,2)) = C;
+function s = excluded_by_reason(excl)
+% 'E1, E2 (reason A); E7 (reason B)'
+    if isfield(excl, 'reasons') && numel(excl.reasons) == numel(excl.index)
+        r = excl.reasons;
+    else
+        r = repmat({char(excl.reason)}, 1, numel(excl.index));
+    end
+    u = unique(r, 'stable');
+    parts = cell(1, numel(u));
+    for k = 1:numel(u)
+        parts{k} = sprintf('%s (%s)', strjoin(excl.labels(strcmp(r, u{k})), ', '), u{k});
+    end
+    s = strjoin(parts, '; ');
 end
 
 function v = getfield_default(s, f, default)
@@ -506,71 +568,105 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     timestamp   = datestr(now, 'yyyymmdd_HHMMSS');
     outputSname = fullfile(outpath, [base_filename '_' timestamp]);
 
+    % ---- Balance (Method Spec B, approved 2026-10-14) ----
+    % Every subject must have exactly one row per condition and one group.
+    % Checked before anything is computed.
+    require_mixed2way_balance(meta, opts);
+
+    % ---- Error degrees of freedom (round-4 spec 3b) ----
+    % Balanced, the group effect (subject means, anova1) has nS - nG error df
+    % and the condition and interaction effects (full model) (nC-1)(nS - nG):
+    % one of them is saturated exactly when all three are (one subject per
+    % group). Nothing would be left to report, so the run is refused here,
+    % with the main-analysis reason, rather than producing three skipped
+    % effects.
+    for eff_name = {'condition', 'interaction'}
+        o = opts; o.effect = eff_name{1};
+        Dchk = snpm_glm_design('mixed2way', meta, o);
+        require_error_df(Dchk.X);
+    end
+
+    % ---- ONE channel set for the whole report ----
+    % A channel is analysed only if it is finite in EVERY row of the long
+    % table. The same mask is applied to the group, condition and interaction
+    % effects, the simple effects, every post-hoc, and the three whole-head
+    % averages, so the excluded-channel list is identical for every effect.
+    mask = all(isfinite(power), 1);
+
     fprintf('mixed2way: computing group, condition and interaction effects\n');
 
     % ---- (1) GROUP main effect: subject means, between-subjects ('free') ----
+    snpm_perm_tap('record', 'scope:mixed2way:group', []);
     [eG, subj_power, subj_meta] = compute_group_effect(power, meta, opts, ...
-        neighbors, alpha, E, H, nperm, do_posthoc);
+        neighbors, alpha, E, H, nperm, do_posthoc, mask, chanlocs);
     eG.key = 'group';
-    eG.excluded_channels = excluded_channel_info(eG.evaluable, chanlocs, 'mixed2way group');
     eG = gen_effect_topos(eG, subj_power, subj_meta, opts.group_col, chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_group'], ...
         [outputSname '_group'], alpha);
 
     % ---- (2) CONDITION main effect: within-subject ----
+    snpm_perm_tap('record', 'scope:mixed2way:condition', []);
     optsC = opts; optsC.effect = 'condition';
     Dc = snpm_glm_design('mixed2way', meta, optsC);
-    eC = compute_effect(power, Dc, neighbors, alpha, E, H, nperm, do_posthoc);
+    eC = compute_effect(power, Dc, neighbors, alpha, E, H, nperm, do_posthoc, ...
+        mask, meta, 'mixed2way', optsC, chanlocs, 'mixed2way condition');
     eC.key = 'condition';
-    eC.excluded_channels = excluded_channel_info(eC.evaluable, chanlocs, 'mixed2way condition');
     eC = gen_effect_topos(eC, power, meta, opts.condition_col, chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_condition'], ...
         [outputSname '_condition'], alpha);
 
     % ---- (3) INTERACTION: within-subject. Map only here (the group x condition
     %          cell pattern is the descriptive grid); simple effects follow. ----
+    snpm_perm_tap('record', 'scope:mixed2way:interaction', []);
     optsX = opts; optsX.effect = 'interaction';
     Dx = snpm_glm_design('mixed2way', meta, optsX);
-    eX = compute_effect(power, Dx, neighbors, alpha, E, H, nperm, false);
+    eX = compute_effect(power, Dx, neighbors, alpha, E, H, nperm, false, ...
+        mask, meta, 'mixed2way', optsX, chanlocs, 'mixed2way interaction');
     eX.key = 'interaction';
-    eX.excluded_channels = excluded_channel_info(eX.evaluable, chanlocs, 'mixed2way interaction');
     eX = gen_effect_topos(eX, power, meta, '', chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_interaction'], ...
         [outputSname '_interaction'], alpha);
-    eX.simple_effects = compute_simple_effects(power, meta, opts, neighbors, ...
-        alpha, E, H, nperm, chanlocs, insidegoodch, select_mode, outpath, base_filename, outputSname);
+    [eX.simple_effects, eX.simple_skipped] = compute_simple_effects(power, meta, opts, neighbors, ...
+        alpha, E, H, nperm, chanlocs, insidegoodch, select_mode, outpath, base_filename, outputSname, mask);
 
     % ---- Global whole-head mixed ANOVA (parametric, channel-averaged) ----
     %
-    % THREE DIFFERENT AVERAGES, NOT ONE. Each effect is averaged over ITS OWN
-    % evaluable set, because the three effects do not have the same one: the
-    % group effect is computed on subject means (a channel survives if it is
-    % usable in every SUBJECT), the condition and interaction effects on the
-    % trial/row matrix (a channel survives if it is usable in every ROW), and
-    % the interaction design can lose a channel the condition design keeps.
+    % ONE AVERAGE SET, NOT THREE. All three effects are averaged over the same
+    % channels: those finite in every row of the long table (the mask fixed at
+    % the top of this function, which is also every effect's evaluable set).
     %
-    % Averaging every unit over whatever channels it happens to have -- the old
-    % mean(power,2,'omitnan') -- makes the units measure different things,
-    % because scalp power has a strong spatial gradient and the channel set
-    % therefore sets a per-unit offset. Measured with NO true effect, 4000
-    % replicates, nominal 0.05: a paired contrast where a different region is
-    % missing in condition A than in condition B rejected 1.0000 of the time.
-    % Averaging both arms over one common set returns it to nominal. Same rule
-    % as global_stat_test (legacy tier) and core_snpm_lmm.m:318 (LMM tier).
+    % This comment used to say the opposite -- that each effect had its own
+    % evaluable set and its own average, because the group effect was computed
+    % on subject means taken over whatever rows a subject had
+    % (mean(...,'omitnan')). That was the defect: a subject short of a
+    % condition had its mean taken over fewer conditions, so a CONDITION effect
+    % leaked into the GROUP test (with 7 of 20 subjects missing a condition the
+    % group effect rejected 0.61 at nominal 0.05). The design is now required
+    % to be balanced and the subject means are plain means over all conditions.
+    %
+    % Why one common set matters for a channel average at all: scalp power has
+    % a strong spatial gradient, so the channel set fixes a per-unit offset.
+    % Averaging units over different channel sets made a null paired contrast
+    % reject 1.0000 of the time. Same rule as global_stat_test (legacy tier)
+    % and core_snpm_lmm (LMM tier).
     %
     % The interaction SIMPLE EFFECTS (compute_simple_effects) deliberately have
-    % no global test at all -- they emit maps only -- so there is nothing to fix
-    % there; if one is ever added it must use that simple effect's own
-    % flctx.evaluable, not this one.
-    Yg_G = global_average(subj_power, eG.evaluable, 'mixed2way group');
-    Yg_C = global_average(power,      eC.evaluable, 'mixed2way condition');
-    Yg_X = global_average(power,      eX.evaluable, 'mixed2way interaction');
-    [eG.global_stat, eG.global_pval, eG.global_df1, eG.global_df2] = compute_global_effect(Yg_G, eG.D);
-    [eC.global_stat, eC.global_pval, eC.global_df1, eC.global_df2] = compute_global_effect(Yg_C, eC.D);
-    [eX.global_stat, eX.global_pval, eX.global_df1, eX.global_df2] = compute_global_effect(Yg_X, eX.D);
-    eG.global_n_channels = sum(eG.evaluable);
-    eC.global_n_channels = sum(eC.evaluable);
-    eX.global_n_channels = sum(eX.evaluable);
+    % no global test -- they emit maps only.
+    %
+    % ZERO-VARIANCE SPEC, GLM RULE 5: the average stays over the FINITENESS
+    % mask (eff.finite_evaluable), not over each effect's loop mask. The loop
+    % masks can differ by effect once rule 1 drops channels with no variation
+    % left after that effect's nuisance model; averaging over them would give
+    % the three whole-head tests three different channel sets again.
+    Yg_G = global_average(subj_power, eG.finite_evaluable, 'mixed2way group');
+    Yg_C = global_average(power,      eC.finite_evaluable, 'mixed2way condition');
+    Yg_X = global_average(power,      eX.finite_evaluable, 'mixed2way interaction');
+    [eG.global_stat, eG.global_pval, eG.global_df1, eG.global_df2, eG.global_reason] = compute_global_effect(Yg_G, eG.D);
+    [eC.global_stat, eC.global_pval, eC.global_df1, eC.global_df2, eC.global_reason] = compute_global_effect(Yg_C, eC.D);
+    [eX.global_stat, eX.global_pval, eX.global_df1, eX.global_df2, eX.global_reason] = compute_global_effect(Yg_X, eX.D);
+    eG.global_n_channels = sum(eG.finite_evaluable);
+    eC.global_n_channels = sum(eC.finite_evaluable);
+    eX.global_n_channels = sum(eX.finite_evaluable);
 
     % ---- Descriptive figures: cell-mean grid + interaction line plot ----
     descriptive = struct('cellmean_png', {{}}, 'cellmean_labels', {{}}, ...
@@ -608,6 +704,7 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     results_struct.alpha = alpha;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = eX.posthoc;
+    results_struct.posthoc_skipped = eX.posthoc_skipped;
     results_struct.excluded_channels = eX.excluded_channels;   % top level = interaction
     results_struct.data_summary.data1_size = size(power);
     results_struct.data_summary.data2_size = [size(power,1), numel(channel_cols)];
@@ -636,6 +733,7 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     results_struct.descriptive = descriptive;
     results_struct.global_stat = eX.global_stat;
     results_struct.global_pval = eX.global_pval;
+    results_struct.global_reason = eX.global_reason;
 
     save([outputSname '.mat'], 'results_struct');
 
@@ -668,14 +766,37 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
 end
 
 % ---- one effect: real stat + FL permutation correction ------------------
-function eff = compute_effect(Y, D, neighbors, alpha, E, H, nperm, do_posthoc)
-    [stat, pm, df1, df2] = snpm_glm_stat(Y, D.X, D.C);
+function eff = compute_effect(Y, D, neighbors, alpha, E, H, nperm, do_posthoc, mask, meta, preset, opts, ...
+        chanlocs, context_label)
+% mask  : 1 x nCh logical, the channel set this effect may test (fixed by the
+%         caller before any permutation); ANDed with the design's own
+%         Freedman-Lane evaluable set.
+% meta, preset, opts : what D was built from, needed to rebuild each pairwise
+%         post-hoc as its own two-level design (compute_posthoc).
+% chanlocs, context_label : for this loop's own exclusion report.
+%
+% Masks (zero-variance spec, GLM rules 1 and 4):
+%   eff.finite_evaluable  finiteness mask (caller's mask AND the design's own
+%                         Freedman-Lane finiteness). The whole-head average
+%                         uses this one (rule 5), and so do the post-hocs as
+%                         their starting mask.
+%   eff.evaluable         the loop mask: finite_evaluable minus the channels
+%                         with no variation left after the nuisance model.
+    [stat, pm, df1, df2, zero_obs] = snpm_glm_stat(Y, D.X, D.C);
     flctx = snpm_glm_fl_context(Y, D);
+    finite_ev = flctx.evaluable & reshape(logical(mask), 1, []);
+    evaluable = finite_ev & ~flctx.no_variation;
     perm_fn = @() permstat(flctx, D.X, D.C);
+    snpm_perm_tap('record', ['loop:glm:effect:' D.effect_label], []);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_fn, neighbors, E, H, alpha, ...
-        nperm, D.contrast_type, flctx.evaluable);
+        nperm, D.contrast_type, evaluable);
+    excl = loop_exclusions(finite_ev, flctx.no_variation, false(size(finite_ev)), ...
+        chanlocs, context_label);
+    [T, p, excl] = mark_undefined(T, p, zero_obs & evaluable, excl, chanlocs);
     eff = struct();
-    eff.evaluable = flctx.evaluable;
+    eff.evaluable = evaluable;
+    eff.finite_evaluable = finite_ev;
+    eff.excluded_channels = excl;
     eff.T = T; eff.p = p; eff.Clusters = Clusters;
     eff.uncorrsigch = find(p.real <= alpha);
     eff.correctTFCEsigch = find(p.correctedTFCE <= alpha);
@@ -687,37 +808,132 @@ function eff = compute_effect(Y, D, neighbors, alpha, E, H, nperm, do_posthoc)
     eff.df1 = df1; eff.df2 = df2;
     eff.D = D; eff.flctx = flctx;
     if do_posthoc && strcmpi(D.contrast_type, 'F') && ~isempty(D.posthoc)
-        eff.posthoc = compute_posthoc(Y, D, flctx, neighbors, alpha, E, H, nperm);
+        [eff.posthoc, eff.posthoc_skipped] = compute_posthoc(Y, meta, preset, opts, D, ...
+            finite_ev, neighbors, alpha, E, H, nperm, chanlocs);
     else
         eff.posthoc = empty_posthoc();
+        eff.posthoc_skipped = empty_skipped();
     end
 end
 
 function ph = empty_posthoc()
+% One entry per pairwise comparison that was RUN. Besides the maps it carries
+% what the pair was run on, because a pair is tested on its own rows and that
+% can be fewer subjects than the effect's header states:
+%   .n_rows, .n_subjects      rows and subjects the pair used
+%   .n_subjects_total         subjects in the effect's table (within designs)
+%   .group_sizes              [n_a n_b] for between-subject pairs, [] otherwise
+%   .dropped_subjects         cellstr: left out, only one of the two levels
+%   .run_on                   the same in words, e.g. '23 of 25 subjects'
+%   .excluded_channels        this pair's own exclusion report: missing data,
+%                             no variation left after ITS nuisance model, and
+%                             a perfect observed fit (zero-variance spec rule
+%                             4: a pair can exclude a channel its omnibus
+%                             tested)
     ph = struct('label', {}, 'uncorrsigch', {}, 'correctTFCEsigch', {}, 'SnPMsigch', {}, ...
-        'T', {}, 'p', {}, 'Clusters', {}, 'map_base', {});
+        'T', {}, 'p', {}, 'Clusters', {}, 'map_base', {}, 'n_rows', {}, 'n_subjects', {}, ...
+        'n_subjects_total', {}, 'group_sizes', {}, 'dropped_subjects', {}, 'run_on', {}, ...
+        'excluded_channels', {});
 end
 
-function posthoc_results = compute_posthoc(Y, D, flctx, neighbors, alpha, E, H, nperm)
-% Pairwise post-hoc t-maps for an omnibus-F effect (same body as the legacy
-% single-effect path). Nuisance = the omnibus design's nuisance (flctx reused).
+function sk = empty_skipped()
+% One entry per pairwise comparison that was NOT run: .label, .reason.
+    sk = struct('label', {}, 'reason', {});
+end
+
+function lines = posthoc_text(posthoc, skipped, indent)
+% Results-text lines for the post-hocs of one effect: what each was run on,
+% who was left out, and every pair that was not run with its reason.
+    lines = {};
+    for k = 1:numel(posthoc)
+        q = posthoc(k);
+        s = sprintf('%sPost-hoc %s: %d TFCE-sig channels', indent, q.label, numel(q.correctTFCEsigch));
+        if ~isempty(q.run_on)
+            s = sprintf('%s. Tested on the rows of these two levels only: %s.', s, q.run_on);
+        end
+        if ~isempty(q.dropped_subjects)
+            s = sprintf('%s Left out because they have only one of the two levels: %s.', s, ...
+                strjoin(q.dropped_subjects, ', '));
+        end
+        if isfield(q, 'excluded_channels') && isstruct(q.excluded_channels) ...
+                && q.excluded_channels.n > 0
+            s = sprintf('%s Channels excluded for this pair: %s.', s, ...
+                excluded_by_reason(q.excluded_channels));
+        end
+        lines{end+1, 1} = s; %#ok<AGROW>
+    end
+    for k = 1:numel(skipped)
+        lines{end+1, 1} = sprintf('%sPost-hoc %s was not run: %s.', indent, ...
+            skipped(k).label, skipped(k).reason); %#ok<AGROW>
+    end
+end
+
+function [posthoc_results, skipped] = compute_posthoc(Y, meta, preset, opts, D, evaluable, neighbors, alpha, E, H, nperm, chanlocs)
+% Pairwise post-hoc t-maps for an omnibus-F effect (Method Spec A, approved
+% 2026-10-14; rationale and rules in dependencies/snpm_glm_pair.m).
+%
+% Each "a vs b" is its OWN two-level test: the rows of levels a and b only,
+% the preset's design rebuilt on those rows, Freedman-Lane with every column
+% but the two-level dummy as nuisance, fresh permutation draws per pair. The
+% recorded permutation index of a post-hoc loop therefore has the SUBSET's
+% row count, not the omnibus row count.
+%
+% evaluable : the omnibus effect's FINITENESS mask, fixed before any
+%             permutation. A post-hoc tests a channel only if it is in that set
+%             AND finite in every row of the pair AND has variation left after
+%             the pair's own nuisance model (zero-variance rule 1, applied per
+%             loop). The omnibus's own zero-variance exclusions are not
+%             inherited: rule 1 is a property of each loop's rows and nuisance
+%             model, so a channel can be tested in the omnibus and excluded in
+%             a pair (constant on that pair's rows), and each loop lists its own.
+%
+% A pair that cannot be tested is left out of posthoc_results, so that can
+% hold fewer entries than D.posthoc; it is returned in `skipped` with the
+% reason, and every output file states it (results text, CSV, workbook, HTML).
+% Each pair that IS run carries what it was run on (rows, subjects, who was
+% left out), for the same reason: the effect's header counts are not the
+% post-hoc's.
     posthoc_results = empty_posthoc();
+    skipped = empty_skipped();
     for ph = 1:numel(D.posthoc)
-        Cph = pad_contrast(D.posthoc(ph).C, size(D.X, 2));
-        [phstat, phpm] = snpm_glm_stat(Y, D.X, Cph);
-        phfn = @() permstat(flctx, D.X, Cph);
+        lab = D.posthoc(ph).label;
+        pr = snpm_glm_pair(preset, meta, opts, D.factor_col, D.posthoc(ph).a, D.posthoc(ph).b, lab);
+        if ~pr.ok
+            skipped(end+1) = struct('label', lab, 'reason', pr.reason); %#ok<AGROW>
+            continue
+        end
+        Yp = Y(pr.rows, :);
+        [phstat, phpm, ~, ~, zero_obs] = snpm_glm_stat(Yp, pr.D.X, pr.C);
+        flph = snpm_glm_fl_context(Yp, pr.D);
+        fin  = flph.evaluable & reshape(logical(evaluable), 1, []);
+        ev   = fin & ~flph.no_variation;
+        phfn = @() permstat(flph, pr.D.X, pr.C);
+        snpm_perm_tap('record', ['loop:glm:posthoc:' lab], []);
         [Tph, pph, Cl_ph] = snpm_perm_correction(phstat, phpm, phfn, neighbors, E, H, alpha, ...
-            nperm, 't', flctx.evaluable);
-        posthoc_results(ph).label = D.posthoc(ph).label;
-        posthoc_results(ph).uncorrsigch = find(pph.real <= alpha);
-        posthoc_results(ph).correctTFCEsigch = find(pph.correctedTFCE <= alpha);
-        posthoc_results(ph).SnPMsigch = [Cl_ph(find([Cl_ph.p] <= alpha)).channels]; %#ok<FNDSB>
-        posthoc_results(ph).T = Tph;
-        posthoc_results(ph).p = pph;
-        posthoc_results(ph).Clusters = Cl_ph;
-        posthoc_results(ph).map_base = '';
-        fprintf('  post-hoc %s: %d TFCE-sig channels\n', ...
-            D.posthoc(ph).label, numel(posthoc_results(ph).correctTFCEsigch));
+            nperm, 't', ev);
+        phex = loop_exclusions(fin, flph.no_variation, false(size(fin)), chanlocs, ...
+            ['post-hoc ' lab]);
+        [Tph, pph, phex] = mark_undefined(Tph, pph, zero_obs & ev, phex, chanlocs);
+        k = numel(posthoc_results) + 1;
+        posthoc_results(k).label = lab;
+        posthoc_results(k).uncorrsigch = find(pph.real <= alpha);
+        posthoc_results(k).correctTFCEsigch = find(pph.correctedTFCE <= alpha);
+        posthoc_results(k).SnPMsigch = [Cl_ph(find([Cl_ph.p] <= alpha)).channels]; %#ok<FNDSB>
+        % Full per-channel detail, so the report can present each pairwise
+        % contrast as Cluster / TFCE / Uncorrected channel lists.
+        posthoc_results(k).T = Tph;            % Tph.real_T = per-channel t, mean(a) - mean(b)
+        posthoc_results(k).p = pph;            % pph.real, pph.correctedTFCE
+        posthoc_results(k).Clusters = Cl_ph;   % cluster struct (.channels, .mass, .p)
+        posthoc_results(k).map_base = '';
+        posthoc_results(k).n_rows = pr.n_rows;
+        posthoc_results(k).n_subjects = pr.n_subjects;
+        posthoc_results(k).n_subjects_total = pr.n_subjects_total;
+        posthoc_results(k).group_sizes = pr.group_sizes;
+        posthoc_results(k).dropped_subjects = pr.dropped;
+        posthoc_results(k).run_on = pr.run_on;
+        posthoc_results(k).excluded_channels = phex;
+        fprintf('  post-hoc %s: %d TFCE-sig channels (%s)\n', ...
+            lab, numel(posthoc_results(k).correctTFCEsigch), pr.run_on);
     end
 end
 
@@ -813,46 +1029,144 @@ end
 
 % ---- group main effect: subject means, between-subjects test -------------
 function [eff, subj_power, subj_meta] = compute_group_effect(power, meta, opts, ...
-        neighbors, alpha, E, H, nperm, do_posthoc)
+        neighbors, alpha, E, H, nperm, do_posthoc, mask, chanlocs)
+% Subject means are PLAIN means over the subject's rows. run_mixed2way has
+% already required one row per condition for every subject, so each mean is
+% over the same conditions; a channel with any missing cell is outside `mask`
+% and is NaN here as well (mean of a NaN), which is the intended result. The
+% old mean(...,'omitnan') averaged a subject over whatever conditions it had
+% and let a condition effect leak into the group test.
     [subjIDs, ~, si] = unique(meta.(opts.subject_col), 'stable');
     nS = numel(subjIDs); nCh = size(power, 2);
     subj_power = nan(nS, nCh);
     firstRow = zeros(nS, 1);
     for k = 1:nS
         rows = (si == k);
-        subj_power(k, :) = mean(power(rows, :), 1, 'omitnan');
+        subj_power(k, :) = mean(power(rows, :), 1);
         firstRow(k) = find(rows, 1);
     end
     gcolv = meta.(opts.group_col);
     subj_group = gcolv(firstRow);                    % subject's (constant) group, original type
     subj_meta  = table(subj_group, 'VariableNames', {opts.group_col});
     Dg = snpm_glm_design('anova1', subj_meta, struct('group_col', opts.group_col));
-    eff = compute_effect(subj_power, Dg, neighbors, alpha, E, H, nperm, do_posthoc);
+    eff = compute_effect(subj_power, Dg, neighbors, alpha, E, H, nperm, do_posthoc, ...
+        mask, subj_meta, 'anova1', struct('group_col', opts.group_col), chanlocs, 'mixed2way group');
+end
+
+% ---- mixed2way balance requirement --------------------------------------
+function require_mixed2way_balance(meta, opts)
+% Every subject must have exactly one row per condition and belong to one
+% group. A subject short of a condition would have its subject mean taken over
+% fewer conditions, which biases the GROUP effect whenever conditions differ
+% (measured: 7 of 20 subjects missing a condition, a condition effect present,
+% no group effect -> the group test rejected 0.61 at nominal 0.05). A duplicated
+% cell breaks the one-row-per-cell exchangeability the within-subject
+% permutation assumes. Unbalanced data belong in the mixed model.
+    [subj, ~, si] = unique(meta.(opts.subject_col), 'stable');
+    [cond, ~, ci] = unique(meta.(opts.condition_col), 'stable');
+    counts = accumarray([si(:), ci(:)], 1, [numel(subj), numel(cond)]);
+    bad = find(any(counts ~= 1, 2));
+    if ~isempty(bad)
+        parts = cell(1, min(numel(bad), 10));
+        for k = 1:numel(parts)
+            s = bad(k);
+            miss = find(counts(s, :) == 0);
+            dup  = find(counts(s, :) > 1);
+            bits = {};
+            if ~isempty(miss)
+                bits{end+1} = ['missing ' strjoin(arrayfun(@(j) level_to_str(cond, j), miss, ...
+                    'UniformOutput', false), ', ')]; %#ok<AGROW>
+            end
+            if ~isempty(dup)
+                bits{end+1} = ['duplicated ' strjoin(arrayfun(@(j) sprintf('%s (%d rows)', ...
+                    level_to_str(cond, j), counts(s, j)), dup, 'UniformOutput', false), ', ')]; %#ok<AGROW>
+            end
+            parts{k} = sprintf('%s: %s', level_to_str(subj, s), strjoin(bits, '; '));
+        end
+        more = '';
+        if numel(bad) > numel(parts), more = sprintf(' ... and %d more', numel(bad) - numel(parts)); end
+        error('core_snpm_glm:mixed2wayUnbalanced', ...
+            ['mixed2way needs every subject to have exactly one row per condition, and %d ' ...
+             'subject(s) do not -- %s%s. A subject short of a condition would have its mean ' ...
+             'taken over fewer conditions, which biases the group effect whenever the ' ...
+             'conditions differ. Remove those subjects or complete their data; for ' ...
+             'unbalanced or trial-level data use the mixed model (comparison ''mixedmodel'', ' ...
+             'scripts/run_lmm_analysis.m).'], numel(bad), strjoin(parts, ' | '), more);
+    end
+    [~, ~, gi] = unique(meta.(opts.group_col), 'stable');
+    ngrp = accumarray(si(:), gi(:), [numel(subj), 1], @(v) numel(unique(v)));
+    multi = find(ngrp > 1);
+    if ~isempty(multi)
+        names = arrayfun(@(s) level_to_str(subj, s), multi(1:min(end, 10))', 'UniformOutput', false);
+        error('core_snpm_glm:mixed2wayUnbalanced', ...
+            ['mixed2way needs every subject to belong to exactly one group, and %d subject(s) ' ...
+             'appear in more than one: %s. Group is the between-subject factor; if the same ' ...
+             'people were measured under both "groups", that factor is within-subject and ' ...
+             'this is not a mixed design -- use ''mixedmodel''.'], numel(multi), strjoin(names, ', '));
+    end
 end
 
 % ---- interaction simple effects: condition within each group ------------
-function simples = compute_simple_effects(power, meta, opts, neighbors, alpha, E, H, nperm, ...
-        chanlocs, insidegoodch, select_mode, out_path, base_filename, outputSname)
+function [simples, skipped] = compute_simple_effects(power, meta, opts, neighbors, alpha, E, H, nperm, ...
+        chanlocs, insidegoodch, select_mode, out_path, base_filename, outputSname, mask)
+% skipped : one entry (.label, .reason) per group whose simple effect was NOT
+%           run, shaped like posthoc_skipped so every output file can say so.
+%
+% A simple effect is condition within ONE group, an rmanova on that group's
+% rows. Its error term is the subject x condition residual, which needs at
+% least 2 SUBJECTS. The guard used to count ROWS (sum(rows) < 2), so a group
+% with one subject in 2+ conditions passed it, got an rmanova with zero error
+% degrees of freedom, and was reported as "0 significant" -- a test that was
+% never possible presented as a negative result. It now counts subjects and,
+% below 2, skips the group with a reason that reaches the results text, the
+% workbook and the HTML report.
     gcol = meta.(opts.group_col);
     [glev, ~, gi] = unique(gcol, 'stable');
     simples = normalize_effect(struct()); simples(:) = [];   % 0x0 typed struct
+    skipped = empty_skipped();
     cnt = 0;
     for g = 1:numel(glev)
         rows = (gi == g);
-        if sum(rows) < 2, continue; end
+        glab = sprintf('Condition within %s', level_to_str(glev, g));
+        % Skip label and reason are compared with the Python port
+        % (glm.plan_preset); do not reword.
+        skip_label = sprintf('simple effect: condition within %s', level_to_str(glev, g));
+        nsub = numel(unique(string(meta.(opts.subject_col)(rows))));
+        if nsub < 2
+            skipped(end+1) = struct('label', skip_label, 'reason', sprintf( ...
+                'only %d subject in this group; a within-group test needs at least 2', ...
+                nsub)); %#ok<AGROW>
+            warning('core_snpm_glm:simpleEffectSkipped', 'Simple effect "%s" not run: %s.', ...
+                skip_label, skipped(end).reason);
+            continue;
+        end
+        % condition_levels: the WHOLE table's condition order, so each group's
+        % simple effect lists and signs its pairs as the condition main effect
+        % does even when that group's rows arrive in another order.
+        sopts = struct('subject_col', opts.subject_col, 'condition_col', opts.condition_col);
+        sopts.condition_levels = snpm_glm_levels(meta.(opts.condition_col));
         try
-            Dg = snpm_glm_design('rmanova', meta(rows, :), ...
-                struct('subject_col', opts.subject_col, 'condition_col', opts.condition_col));
+            Dg = snpm_glm_design('rmanova', meta(rows, :), sopts);
         catch ME
             warning(ME.identifier, 'simple-effect design failed (%s): %s', ...
                 level_to_str(glev, g), ME.message);
             continue;
         end
-        se = compute_effect(power(rows, :), Dg, neighbors, alpha, E, H, nperm, true);
-        se.key = sprintf('condition@%s', level_to_str(glev, g));
-        se.excluded_channels = excluded_channel_info(se.evaluable, chanlocs, ...
+        % Round-4 spec 3b: a sub-loop with no error df is skipped with the
+        % reason. Unreachable on a balanced design once the group has 2+
+        % subjects ((n_g - 1)(nC - 1) >= 1), kept so the rule is local.
+        if ~has_error_df(Dg.X)
+            skipped(end+1) = struct('label', skip_label, 'reason', reason_no_error_df()); %#ok<AGROW>
+            warning('core_snpm_glm:simpleEffectSkipped', 'Simple effect "%s" not run: %s.', ...
+                skip_label, skipped(end).reason);
+            continue;
+        end
+        snpm_perm_tap('record', ['scope:mixed2way:simple:' level_to_str(glev, g)], []);
+        se = compute_effect(power(rows, :), Dg, neighbors, alpha, E, H, nperm, true, ...
+            mask, meta(rows, :), 'rmanova', sopts, chanlocs, ...
             sprintf('mixed2way simple effect (%s)', level_to_str(glev, g)));
-        se.effect_label = sprintf('Condition within %s', level_to_str(glev, g));
+        se.key = sprintf('condition@%s', level_to_str(glev, g));
+        se.effect_label = glab;
         safe = matlab.lang.makeValidName(level_to_str(glev, g));
         se = gen_effect_topos(se, power(rows, :), meta(rows, :), opts.condition_col, ...
             chanlocs, insidegoodch, select_mode, out_path, ...
@@ -892,8 +1206,19 @@ function [nsub, gsizes, glabels] = design_counts(meta, opts)
 end
 
 % ---- global (whole-head, channel-averaged) parametric effect ------------
-function [stat, pval, df1, df2] = compute_global_effect(Yg, D)
-    [stat, pval, df1, df2] = snpm_glm_stat(Yg, D.X, D.C);
+function [stat, pval, df1, df2, reason] = compute_global_effect(Yg, D)
+% Parametric test on the channel average. Round-4 spec 3a: zero-variance rule
+% 2 (statistic 0, p 1 on a zero error term) is a definition for permutation
+% nulls only; a parametric p claims a place on the F/t distribution, and with
+% a perfect fit the true statistic is infinite. So a perfectly fitted
+% whole-head average is reported as undefined (NaN) with the GLM rule-3
+% reason, and the report still shows the card with that reason.
+    [stat, pval, df1, df2, zero_err] = snpm_glm_stat(Yg, D.X, D.C);
+    reason = '';
+    if any(zero_err)
+        stat = NaN; pval = NaN;
+        reason = reason_undefined();
+    end
 end
 
 % ---- channel average over ONE effect's evaluable set --------------------
@@ -937,7 +1262,10 @@ function e = normalize_effect(eff)
     e.diff_png         = getfield_default(eff, 'diff_png', '');
     e.effect_map_only  = getfield_default(eff, 'effect_map_only', false);
     e.posthoc          = getfield_default(eff, 'posthoc', empty_posthoc());
+    e.posthoc_skipped  = getfield_default(eff, 'posthoc_skipped', empty_skipped());
     e.simple_effects   = getfield_default(eff, 'simple_effects', struct([]));
+    % Simple effects that were NOT run, with the reason (.label, .reason).
+    e.simple_skipped   = getfield_default(eff, 'simple_skipped', empty_skipped());
     e.excluded_channels = getfield_default(eff, 'excluded_channels', ...
         struct('n', 0, 'n_channels', 0, 'index', [], 'labels', {{}}, ...
                'context', '', 'reason', ''));
@@ -945,10 +1273,15 @@ function e = normalize_effect(eff)
     e.global_pval      = getfield_default(eff, 'global_pval', NaN);
     e.global_df1       = getfield_default(eff, 'global_df1', NaN);
     e.global_df2       = getfield_default(eff, 'global_df2', NaN);
+    % Why the global is NaN when the engine declared it undefined (round-4
+    % spec 3a: 'perfect fit, statistic undefined'); '' otherwise.
+    e.global_reason    = getfield_default(eff, 'global_reason', '');
     % How many channels the global average was taken over. NOT cosmetic: the
-    % global is only a whole-head claim when this is the whole montage, and each
-    % effect has its own evaluable set, so the three globals in one mixed2way
-    % report can legitimately rest on three different channel counts.
+    % global is only a whole-head claim when this is the whole montage. In a
+    % mixed2way report every effect uses the one channel set fixed at the top
+    % of run_mixed2way (finite in every row of the long table), so the three
+    % globals rest on the SAME count; it is stored per effect because the
+    % report reads it per effect.
     e.global_n_channels = getfield_default(eff, 'global_n_channels', NaN);
 end
 
@@ -972,9 +1305,25 @@ function txt = mixed2way_text(effects, data_file, preset, nperm, nobs, outputSna
             end
             txt{end+1} = sprintf('    global %s = %.3f, p = %.4g%s', ...
                 e.contrast_type, e.global_stat, e.global_pval, kstr); %#ok<AGROW>
+        elseif ~isempty(e.global_reason)
+            txt{end+1} = sprintf('    global %s: %s', e.contrast_type, e.global_reason); %#ok<AGROW>
         end
         if e.excluded_channels.n > 0
             txt{end+1} = ['    ' excluded_text(e.excluded_channels)]; %#ok<AGROW>
+        end
+        txt = [txt; posthoc_text(e.posthoc, e.posthoc_skipped, '    ')]; %#ok<AGROW>
+        for s = 1:numel(e.simple_effects)
+            se = e.simple_effects(s);
+            txt{end+1} = sprintf('  %s: %d TFCE-sig, %d cluster-sig channels', ...
+                se.effect_label, numel(se.correctTFCEsigch), numel(se.SnPMsigch)); %#ok<AGROW>
+            if se.excluded_channels.n > 0
+                txt{end+1} = ['    ' excluded_text(se.excluded_channels)]; %#ok<AGROW>
+            end
+            txt = [txt; posthoc_text(se.posthoc, se.posthoc_skipped, '    ')]; %#ok<AGROW>
+        end
+        for s = 1:numel(e.simple_skipped)
+            txt{end+1} = sprintf('  %s was not run: %s.', e.simple_skipped(s).label, ...
+                e.simple_skipped(s).reason); %#ok<AGROW>
         end
     end
     txt{end+1} = ['Results saved to: ' outputSname '.mat'];

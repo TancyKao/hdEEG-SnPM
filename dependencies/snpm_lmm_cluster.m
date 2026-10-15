@@ -89,7 +89,7 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
         Clusters(cli, 1).mass     = real_clusters(cli).mass;
         % Minimum-bias FWE p (Nichols & Holmes 2001; Phipson & Smyth 2010):
         %   p = (#{max-null cluster mass >= observed} + 1)/(N + 1), never zero.
-        Clusters(cli, 1).p = (sum(max_cluster_mass >= real_clusters(cli).mass) + 1) / (possible_permutations + 1);
+        Clusters(cli, 1).p = (snpm_count_at_least(max_cluster_mass, real_clusters(cli).mass) + 1) / (possible_permutations + 1);
         Clusters(cli, 1).threshold    = alpha;
         Clusters(cli, 1).permutations = possible_permutations;
     end

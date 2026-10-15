@@ -21,6 +21,7 @@ status on error — suitable for a PBS/Slurm job. All scripts call
 | `run_spectral_report.m`| two-condition spectral report (periodograms + topo + HTML) | `export_report` |
 | `run_spectral_analysis.m`| multi-folder spectral SnPM (folder = factor level; unpairedT/pairedT/onesampleT/anova1/rmanova; band×stage sweep) | `spectral_to_snpm_params` → `core_snpm_analysis` |
 | `run_event_report.m`   | event-level (spindle/SO) report (group t-map + HTML) | `export_event_report` |
+| `export_parity_fixtures.m` | not an analysis: writes MATLAB reference results plus the exact permutation indices, for checking another implementation against MATLAB (see below) | `snpm_perm_tap` + `core_snpm_analysis` |
 
 There is **no `run_circular_analysis.m` template**. The circular (phase/angle) tier is driven by
 building a `params` struct directly — see
@@ -98,6 +99,51 @@ optionally pick/order the two levels for the 2-folder tests. Filenames must toke
 cleanly — a stray `..._condition-b-psg_...` (missing `_task-` separator) mis-parses and
 drops that subject.
 
+## Reference fixtures for another implementation (`export_parity_fixtures.m`)
+
+This script does not answer a research question. It produces reference files for checking a
+separate implementation of the same analyses (for example a Python one) against MATLAB. Two
+programs that use the same seed still draw different permutations, so the script saves the
+permutation indices MATLAB actually drew, and the other program replays them.
+
+```bash
+matlab -batch "run('scripts/export_parity_fixtures.m')"
+```
+
+For each case the script seeds the generator (`rng(SEED,'twister')`), switches on the recording
+hook `dependencies/snpm_perm_tap.m`, runs `core_snpm_analysis`, and saves one
+`<case_name>.mat` (format `-v7`, readable with `scipy.io.loadmat(path, simplify_cells=True)`)
+holding the inputs, the montage, the permutation indices and the full results; for the t-test and
+correlation analyses it also holds the matrices handed to the statistic engines, the
+cluster-size null and the channel set of the global test. It then writes a
+`README.md` in the output folder with one row per fixture and a description of every field.
+Cases cover `pairedT`, `unpairedT`, `onesampleT`, `correlationP` and `correlationS` (with and
+without covariates), `anova1`, `ancova`, `regression`, `rmanova` and `mixed2way`, using the
+files in [`example_data/`](../example_data/README.md) plus a few inputs the script builds from
+them. The circular and mixed-model tiers are not exported yet.
+
+| CONFIG field | Default | Meaning |
+|---|---|---|
+| `OUT_DIR` | `test_fixtures/parity/` under the repo root | where the fixtures and their `README.md` go (this folder is not tracked by git) |
+| `SEED` | `20261013` | generator seed set immediately before every case |
+| `PERMUTATIONS` | `500` | permutations requested per permutation loop |
+| `INPUT_SEED` | `4242` | seed for the inputs the script builds itself |
+| `ONLY_CASES` | `{}` | `{}` runs every case; a list of case names re-exports only those (the `README.md` is then left as it was) |
+| `RUN_DIR` | a folder under `tempdir` | where each run writes its own `.mat`/`.xlsx`/HTML/PNG output; keep it outside the repo, because `core_snpm_analysis` adds everything under the current folder to the MATLAB path |
+| `RESUME` | `false` | `true` keeps any fixture that already exists with the same `SEED` and `PERMUTATIONS` and runs only the missing cases, for use after an interrupted export. It checks nothing else: after editing the script or the toolbox, export with `false` |
+| `KEEP_RUN_OUTPUTS` | `false` | `false` deletes each run's own outputs once its fixture is saved |
+
+For the General Linear Model presets the pipeline does not keep its design matrices, so the
+script rebuilds every permutation loop (design, contrast, rows) with the same functions the
+pipeline calls, replays it from the recorded indices, and refuses to save a fixture whose replay
+does not match the pipeline's own statistic, uncorrected p, enhanced map and sorted enhanced-map
+null exactly. The cluster-mass null is not recomputed for the fixture: it is recorded inside the
+pipeline where it is computed, and the replay's own value is used only as a cross-check that must
+equal the recorded one. GLM fixtures carry `glm.scheme = '2026-10-14'`, which marks the method in
+which each pairwise post-hoc comparison is its own two-level test on the rows of its two levels
+and the two-way mixed design uses one channel set for every effect. The recording hook is off
+unless this script switches it on, and it changes no result either way.
+
 ## Column roles (GLM)
 
 Set only the roles the chosen `comparison` needs (leave `''`):
@@ -109,6 +155,13 @@ Set only the roles the chosen `comparison` needs (leave `''`):
 | `regression` | `predictor_col` (+ optional `covariate_cols`) |
 | `rmanova`    | `subject_col` + `condition_col` |
 | `mixed2way`  | `subject_col` + `group_col` + `condition_col` |
+
+`mixed2way` needs a balanced table: exactly one row per condition for every subject, and one
+group per subject. Otherwise the run stops with `core_snpm_glm:mixed2wayUnbalanced`, naming the
+subjects; remove or complete them, or use `run_lmm_analysis.m`. With three or more levels,
+`anova1`, `ancova`, `rmanova` and `mixed2way` also write pairwise post-hoc maps, each a two-level
+test on the rows of its two levels. The rules are in
+[`docs/reference/ANALYSIS_CATALOG.md`](../docs/reference/ANALYSIS_CATALOG.md).
 
 ## NCI notes
 

@@ -1,8 +1,10 @@
 # Missing data and the complete-column rule
 
 > *Understanding-oriented.* Why a correlation analysis now drops a whole channel for a single
-> missing value, why the t-tests drop a much smaller set of channels for a different reason, and
-> how to read the excluded-channel counts that appear in your outputs. For
+> missing value, why the t-tests drop a much smaller set of channels for a different reason, why
+> the two-way mixed design uses one channel set and refuses a table with missing rows, why a
+> channel with no variation is left untested, and how to read the excluded-channel counts and
+> reasons that appear in your outputs. For
 > the factual per-analysis table see the [Analysis catalog](../reference/ANALYSIS_CATALOG.md);
 > to run an analysis, see the [how-to guides](../how-to/README.md).
 
@@ -138,6 +140,191 @@ correlation. The run marks it as such (`results_struct.global_not_interpretable`
 `snpm:globalNotInterpretable`, an amber note on the global card); the channel-wise maps are
 unaffected.
 
+## The two-way mixed design: one channel set, and no missing rows
+
+The two-way mixed analysis of variance (`mixed2way`) reports several effects from one table: the
+group effect, the condition effect, their interaction, the condition effect within each group
+(the simple effects), the pairwise post-hoc comparisons, and a whole-head test for each of the
+three main effects. Since 14 October 2026 two rules apply to all of them together.
+
+**Every effect uses one channel set.** A channel is analysed only if it has a value in every row
+of the table, and that single set is fixed before any permutation and used for every effect in
+the report. The channels excluded for missing data are therefore the same in every section; a
+section can list a few more, excluded for having no variation in that test (see
+[Channels with no variation](#channels-with-no-variation) below). Before, the group
+effect was computed on subject means taken over whatever values a subject had, so it could test
+channels that the condition and interaction effects could not, and the three whole-head tests
+could rest on three different sets of channels. The rule also holds one level down: a pairwise
+post-hoc comparison, in this and in the other General Linear Model presets, tests a channel only
+if the omnibus effect tested it.
+
+**Every subject must have every condition.** The table must hold exactly one row per condition
+for every subject, and each subject must belong to one group. If a subject is short of a
+condition, has a condition twice, or appears in two groups, the run stops before computing
+anything with the error `core_snpm_glm:mixed2wayUnbalanced`, which names the subjects and says
+what is missing or duplicated.
+
+This is a different kind of missingness from a missing channel value, and it is refused rather
+than worked around because of what it does to the group effect. The group effect is tested on one
+mean per subject, taken over that subject's conditions. If a subject has no row for one
+condition, its mean is taken over the remaining conditions only. Whenever the conditions differ,
+that subject's mean is shifted by the condition effect, and the shift is counted as a difference
+between subjects. Measured on data with a condition effect and no group effect, with 7 of 20
+subjects missing a condition, the group effect rejected 0.61 of the time at a nominal 0.05. With
+the requirement in place, every subject mean is a plain mean over the same conditions.
+
+The remedy is the one this page gives throughout. Remove the subjects the error names, or
+complete their data, and run again. If a large share of subjects are incomplete, or the data are
+at the level of single trials, use the mixed model (`mixedmodel`), which uses every available
+row. Unequal group sizes are not a problem and are not affected by this rule.
+
+Within-subject post-hoc comparisons in `rmanova` handle the same situation per pair: a subject
+who has only one of the two conditions being compared is left out of that comparison, with a
+warning naming the subject, and stays in the other comparisons.
+
+## Channels with no variation
+
+A channel can be complete and still give a permutation test nothing to work with. Event counts
+and densities are the common source in sleep EEG: a detector that finds no spindles at a
+temporal channel in most subjects leaves a column of zeros. Integer scores, very small samples
+and a channel flattened in preprocessing do the same. Since 14 October 2026 every tier handles
+these channels with one rule in three parts.
+
+### What happened before
+
+The t-test builtins do not refuse such a channel. If every paired difference is the same
+non-zero number, `ttest` returns an infinite t; if two groups are each constant at different
+values, `ttest2` returns either an infinite t or, for 0.1 against 0.3, a finite t of about
+3 × 10¹⁶, because rounding leaves a tiny non-zero standard deviation. The threshold-free cluster
+enhancement (TFCE) step then tried to build a threshold ladder up to that value and stopped with
+an out-of-memory or array-size error that named no channel. This is the crash that was found
+and deferred in August 2026. It did not need an obviously broken channel: a channel where the
+paired differences take only the values +1 and −1 is fine as observed, but one of the sign-flip
+relabellings makes every difference equal, and that single relabelling stopped the run. At the
+other extreme, a channel constant at a non-zero value (every subject at 0.1, say) gave `ttest2`
+a t of exactly 0 and the correlation engine an r of exactly 0, so it was kept, tested and never
+mentioned.
+
+### The rule
+
+**First, a channel with nothing to permute is excluded up front and reported with a reason.**
+This is decided once, before the permutation loop, on the values the test actually uses: a
+paired or one-sample channel whose differences are all zero, an unpaired channel with the same
+value in every subject, a correlation channel that is constant on either side (on the ranks for
+Spearman, and after removing the covariates when there are covariates), and, in the General
+Linear Model presets, a channel whose residuals after the nuisance model are all zero, so that
+every permuted map would equal the observed one. In the General Linear Model presets this is
+decided separately for each test, on that test's own rows and nuisance model, so a post-hoc pair
+can exclude a channel its omnibus tested (a channel constant within two of three groups, for
+instance). Each test lists its own exclusions. A constant non-zero paired difference is *not*
+excluded here, because sign flips change it.
+
+**Second, at any labelling where the error sum of squares is zero, the statistic is defined as
+0** (and its parametric p as 1). This applies to the observed labelling and to every permuted
+labelling alike.
+
+**Third, if the observed labelling is one of those, the channel is reported as undefined.** Its
+map value is shown as NaN, it has no corrected p, and it is listed as excluded with the reason
+"perfect separation, t undefined" (t-tests) or "perfect fit, statistic undefined" (General
+Linear Model presets). It stays in every permuted map.
+
+### Why defining the statistic as 0 keeps the test exact
+
+A permutation test is exact for any statistic, as long as the same statistic is computed, by the
+same fixed rule, on the observed labelling and on every relabelling. Under the null hypothesis
+the labellings are exchangeable, so the observed value is equally likely to sit at any rank among
+them, whatever the function is. "Ordinary t, except 0 when the error term is zero" is such a
+fixed function. What would break exactness is applying a different rule to the observed map than
+to the permuted ones, for example screening only the observed labelling, or dropping a channel
+from some permuted maps and not others. The rule avoids both: the channel set is fixed before the
+loop, and the zero definition is applied everywhere.
+
+It was also checked by simulation on the data that cause the problem: null count-like data with
+about 78% zeros, 40 channels almost always zero, on the EGI 178-channel montage, 199
+permutations and 1000 simulated data sets per design. Family-wise error at a nominal 0.05 was
+0.040 to 0.064 for TFCE and 0.011 to 0.039 for the cluster test across paired (6, 8 and 12
+subjects), unpaired (6 against 6, 8 against 10) and repeated-measures designs. The alternative
+considered, screening out up front every channel where any relabelling has a zero denominator,
+gave the same error rates and cannot be written for the General Linear Model tier. Without the
+rule, up to 36% of those data sets (6 against 6, unpaired) produced a non-finite or absurdly large
+statistic somewhere in the 199 permutations, and the share grows with the permutation count.
+
+### Why perfect separation is reported untested
+
+If the observed data separate perfectly (every value identical within each group, or every
+paired difference identical and non-zero), the true t is infinite. Scoring it as the strongest
+possible effect would need an arbitrary ceiling value fed into TFCE, and that ceiling would set
+the corrected threshold for the whole montage. Leaving the channel untested is what the zero
+rule gives, it is valid, and it was approved on 14 October 2026. In practice it needs very small
+samples or integer data. A channel listed as "perfect separation" may well carry a large real
+effect, so look at its raw values rather than reading the NaN as "no effect".
+
+### When a value counts as zero
+
+An error sum of squares counts as zero when it is at most 10⁻²⁰ times the sum of the squared
+values the statistic is computed from on that channel, which is a relative standard deviation of
+10⁻¹⁰. The squared values are not centred first, so an all-zero channel qualifies. Rounding
+leftovers sit near 10⁻¹⁶ in relative standard deviation and real data many orders of magnitude
+above, so the line is far from both. A test for exact zero would not do: the 0.1-against-0.3
+case above has a pooled sum of squares of about 10⁻³³, not 0. The same tolerance is used in
+every tier and in the Python port.
+
+### The reasons you will see
+
+| Analysis | Condition | Reason listed |
+|---|---|---|
+| `pairedT` | every paired difference is zero | identical values in both conditions |
+| `onesampleT` | every value is zero | every value is zero |
+| `unpairedT` | the same value in every subject of both groups | same value in every subject |
+| `pairedT`, `onesampleT`, `unpairedT` | the observed data separate perfectly | perfect separation, t undefined |
+| `correlationP`, `correlationS` | a column is constant across subjects (on the ranks for Spearman) | constant across subjects |
+| correlation with covariates | a column is constant once the covariates are removed | fully explained by the covariates |
+| `anova1`, `ancova`, `regression`, `rmanova`, `mixed2way`, and each post-hoc and simple effect | no variation left after that test's nuisance model | no variation left after the nuisance model |
+| the same | the observed fit is perfect | perfect fit, statistic undefined |
+
+The strings are the same in the Python port. A constant single behavioural score in a
+correlation would exclude every channel, so it is refused earlier with its own error
+(`snpm:behavior:constant`); if a near-constant score gets past that check, every channel is then
+excluded here and the run stops with `snpm:noEvaluableChannels`.
+
+### Designs with no error degrees of freedom
+
+The rule above is about the data at one channel. A design can also leave no error at all,
+whatever the data: one subject per group in `anova1`, or a repeated-measures table in which the
+subject and condition columns already fit every row. Every channel would then hit the zero rule
+and be mislabelled "perfect fit", so the General Linear Model presets refuse such a design before
+computing anything, with `core_snpm_glm:noErrorDF` and the message "no error degrees of freedom
+left after fitting the design". The check counts rows minus the rank of the design matrix, not
+minus its number of columns. For `mixed2way` with one subject per group, all three effects have
+zero error degrees of freedom together and the whole run is refused. Inside an otherwise valid
+`mixed2way`, the condition effect within a group with a single subject is not run; the report says
+"simple effect: condition within A was not run: only 1 subject in this group; a within-group test
+needs at least 2". A post-hoc pair with too few rows is skipped with its own message, "too few
+rows for these two levels to leave any error degrees of freedom".
+
+### Whole-head tests are parametric, so a perfect fit is reported as undefined
+
+The whole-head global test on the channel average is a parametric F or t test, not a permutation
+test. Defining its statistic as 0 with p = 1 would be wrong there: a parametric p claims a position
+on the F distribution, and with a perfect fit the true F is infinite, so p = 1 would report the
+strongest possible effect as no evidence. A perfectly fitted whole-head average is therefore
+reported with statistic and p both NaN and the reason "perfect fit, statistic undefined". The
+global card is still shown, with the reason on it, so a missing number is not read as "no
+whole-head test was run". In the `.mat` the reason is in `results_struct.effects(k).global_reason`.
+
+### Very large statistics that are not degenerate
+
+A design with one error degree of freedom is valid, and its t or F statistic has very heavy tails:
+with one degree of freedom t follows a Cauchy distribution, and a permuted value of 9 × 10⁶ is an
+ordinary draw from it, not rounding. Its error sum of squares is small but far above the
+tolerance, so the zero rule rightly leaves it alone. The problem was numerical only: TFCE's
+threshold ladder grew with the largest value, and that one value asked for about 130 GB. Since
+14 October 2026 TFCE computes the same integral without the ladder when the ladder would need
+more than 10 000 levels, so its memory and time no longer depend on the size of the statistic;
+below that the original computation runs unchanged. Such a channel still dominates the
+maximum-statistic null and costs power across the montage, which is valid but worth knowing when
+a design has only one or two error degrees of freedom.
+
 ## A missing behavioural value removes the subject, not a channel
 
 The correlation analyses also accept Data 2 as a single behavioural score per subject (a
@@ -159,7 +346,9 @@ excluded, the run produces all of the following:
 - A console line and a MATLAB warning (`snpm:channelsExcluded`) naming the count and the
   individual channel labels.
 - An **`excludedChannels`** sheet in the `.xlsx`, one row per dropped channel with its index,
-  its label, and the reason.
+  its label, and its own reason (missing data, or one of the no-variation reasons above). In the
+  General Linear Model presets each test (omnibus, post-hoc pair, `mixed2way` effect, simple
+  effect) has its own rows, and a column says which test a row belongs to.
 - An **Excluded channels** entry in the amber notice block under the HTML report's model card,
   stating how many of how many channels were not tested and listing them.
 - A `--- Channel Exclusions ---` block in the results text, and
@@ -239,4 +428,6 @@ head missing supports far weaker regional claims than its topoplot suggests.
   (the common-channel rule and its measured false-positive table). Each of the three rules —
   correlation, the LMM tier, and the whole-head omnibus — was checked by the same invariance
   argument used above: given the retained channel set, the result must be identical whether or
-  not the dropped cells were ever present.
+  not the dropped cells were ever present. The no-variation rule's tolerance lives in one
+  function, `dependencies/snpm_zero_ss.m`, and the t-test form of the zero rule in
+  `dependencies/snpm_ttest_novar.m`.

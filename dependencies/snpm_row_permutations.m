@@ -29,6 +29,7 @@ function orders = snpm_row_permutations(nSubj, requested_permutations)
         orders = perms(1:nSubj);
         idRow = find(all(orders == (1:nSubj), 2), 1);
         orders([1 idRow], :) = orders([idRow 1], :);
+        snpm_perm_tap('record', 'rowperm:exact', orders);
     else
         % Monte-Carlo WITH REPLACEMENT (no uniqueness loop -> cannot hang).
         orders = zeros(requested_permutations, nSubj);
@@ -36,5 +37,6 @@ function orders = snpm_row_permutations(nSubj, requested_permutations)
         for r = 2:requested_permutations
             orders(r, :) = randperm(nSubj);
         end
+        snpm_perm_tap('record', 'rowperm:random', orders);
     end
 end

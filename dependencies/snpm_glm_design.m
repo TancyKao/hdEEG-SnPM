@@ -12,7 +12,9 @@ function D = snpm_glm_design(preset, meta, opts)
 %   opts   : struct of column names -
 %       .group_col, .condition_col, .subject_col, .predictor_col,
 %       .covariate_cols (cellstr), .effect ('interaction'|'group'|'condition'
-%       for mixed2way; default 'interaction')
+%       for mixed2way; default 'interaction'),
+%       .condition_levels (optional; rmanova/mixed2way) the condition level
+%       order to use instead of first appearance in these rows
 %
 % OUTPUT D with fields:
 %   X            : nObs x p full design
@@ -22,10 +24,19 @@ function D = snpm_glm_design(preset, meta, opts)
 %   eb           : nObs x 1 exchangeability-block id (subject for 'within')
 %   perm_type    : 'free' (between) | 'within' (repeated measures)
 %   effect_label : human-readable effect name
-%   posthoc      : struct array (label, C) of pairwise t-contrasts (omnibus only)
+%   posthoc      : struct array (label, a, b) of pairwise comparisons that
+%                  follow an effect with three or more levels: mean(a) - mean(b),
+%                  a and b being level indices in order of first appearance in
+%                  the factor column. Each is run as its OWN two-level test on
+%                  the rows of a and b only -- see snpm_glm_pair. (Until
+%                  2026-10-14 this carried a contrast row C in the omnibus
+%                  model; that scheme left the other levels' effects in the
+%                  permuted residuals and is retired.)
+%   factor_col   : name of the column whose levels .posthoc compares ('' if none)
 
     D = struct('X',[], 'C',[], 'contrast_type','t', 'nuisance_idx',[], ...
-        'eb',[], 'perm_type','free', 'effect_label','', 'posthoc',struct('label',{},'C',{}));
+        'eb',[], 'perm_type','free', 'effect_label','', ...
+        'posthoc',struct('label',{},'a',{},'b',{}), 'factor_col','');
 
     n = height(meta);
     cov = get_covariates(meta, opts);   % nObs x nCov, mean-centered (may be empty)
@@ -40,7 +51,7 @@ function D = snpm_glm_design(preset, meta, opts)
             D.nuisance_idx = ~ofint;                 % intercept only
             D.perm_type = 'free';  D.eb = ones(n,1);
             D.effect_label = sprintf('group (%d levels)', numel(gl));
-            D.posthoc = pairwise_contrasts(gl, 1);   % group dummies start at col 2
+            D.posthoc = pairwise_levels(gl);  D.factor_col = opts.group_col;
 
         case 'ancova'
             [Dg, gl] = ref_dummy(meta.(opts.group_col));
@@ -52,7 +63,7 @@ function D = snpm_glm_design(preset, meta, opts)
             D.nuisance_idx = ~ofint;                 % intercept + covariates
             D.perm_type = 'free';  D.eb = ones(n,1);
             D.effect_label = sprintf('group (%d levels), covariate-adjusted', numel(gl));
-            D.posthoc = pairwise_contrasts(gl, 1);
+            D.posthoc = pairwise_levels(gl);  D.factor_col = opts.group_col;
 
         case 'regression'
             pred = meta.(opts.predictor_col);
@@ -68,7 +79,7 @@ function D = snpm_glm_design(preset, meta, opts)
 
         case 'rmanova'
             [Ds, ~]  = ref_dummy(meta.(opts.subject_col));
-            [Dc, cl] = ref_dummy(meta.(opts.condition_col));
+            [Dc, cl] = ref_dummy(meta.(opts.condition_col), condition_order(opts));
             X = [ones(n,1), Ds, Dc];
             nc = size(Dc,2);
             ofint = false(1, size(X,2)); ofint(end-nc+1:end) = true;
@@ -78,11 +89,9 @@ function D = snpm_glm_design(preset, meta, opts)
             D.perm_type = 'within';
             D.eb = block_ids(meta.(opts.subject_col));
             D.effect_label = sprintf('condition (%d levels), within-subject', numel(cl));
-            % Pairwise condition post-hoc: condition dummies sit after the
-            % intercept + subject-mean columns, so they start at 1 + size(Ds,2).
-            % Same reference coding as anova1, so mean_a - mean_b holds; the
-            % within-subject permutation (perm_type/eb above) is inherited.
-            D.posthoc = pairwise_contrasts(cl, 1 + size(Ds,2));
+            % Pairwise condition post-hoc: each pair is its own two-level
+            % rmanova on the rows of those two conditions (snpm_glm_pair).
+            D.posthoc = pairwise_levels(cl);  D.factor_col = opts.condition_col;
 
         case 'mixed2way'
             effect = 'interaction';
@@ -91,7 +100,7 @@ function D = snpm_glm_design(preset, meta, opts)
             % effect, so the group main effect is not estimable here — it is a
             % between-subjects test on subject means (core_snpm_glm handles it).
             [Ds, ~]  = ref_dummy(meta.(opts.subject_col));
-            [Dc, cl] = ref_dummy(meta.(opts.condition_col));
+            [Dc, cl] = ref_dummy(meta.(opts.condition_col), condition_order(opts));
             ns = size(Ds,2); nc = size(Dc,2);
             switch effect
                 case 'interaction'
@@ -102,17 +111,33 @@ function D = snpm_glm_design(preset, meta, opts)
                     ofint = false(1, size(X,2)); ofint(end-nx+1:end) = true;
                     D.effect_label = 'two-way mixed ANOVA (group x condition)';
                 case 'condition'
-                    % Reduced model WITHOUT the interaction columns, so the Dc
-                    % coefficients are the condition effect POOLED over groups
-                    % (the marginal main effect). With the interaction in the
-                    % model and reference coding, Dc would instead be the
+                    % FULL model (Method Spec C, approved 2026-10-14):
+                    %     X = [1, Ds, Dc, Dxc]
+                    % with the group-by-condition columns Dxc built from a
+                    % group code that makes the Dc coefficients the condition
+                    % MAIN effect, so a real interaction sits in the nuisance
+                    % model instead of in the residuals that are permuted.
+                    %
+                    % The model this replaces was the reduced [1, Ds, Dc]. It
+                    % gave the pooled condition effect, but left any real
+                    % interaction in the Freedman-Lane residuals: with a
+                    % crossover interaction a planted condition effect was
+                    % detected 0.000 of the time. Plain reference coding in
+                    % the full model would not do either: Dc would then be the
                     % condition effect in the reference group only.
-                    X = [ones(n,1), Ds, Dc];
+                    %
+                    % The condition F from this model is the standard mixed-
+                    % ANOVA F (ranova, and Type III anovan): 8 + 14 subjects x
+                    % 3 conditions gives F(2,40) = 30.9004 in all three.
+                    [Dg, ~] = ref_dummy(meta.(opts.group_col));
+                    Eg  = main_effect_group_code(Dg);
+                    Dxc = interaction_cols(Eg, Dc);      % group outer, condition inner
+                    X = [ones(n,1), Ds, Dc, Dxc];
                     ofint = false(1, size(X,2)); ofint(1+ns+(1:nc)) = true;
                     D.effect_label = sprintf('condition main effect (%d levels)', numel(cl));
-                    % Pairwise condition post-hoc: condition dummies start at
-                    % 1+ns; contrast width already equals size(X,2).
-                    D.posthoc = pairwise_contrasts(cl, 1 + ns);
+                    % Pairwise condition post-hoc: each pair is this same
+                    % model on the rows of those two conditions (snpm_glm_pair).
+                    D.posthoc = pairwise_levels(cl);  D.factor_col = opts.condition_col;
                 otherwise
                     error('snpm_glm_design:mixed2wayGroup', ...
                         ['For mixed2way the between-group main effect is a subject-level test; ' ...
@@ -138,9 +163,41 @@ function D = snpm_glm_design(preset, meta, opts)
 end
 
 % ---------------------------------------------------------------------------
-function [Dd, levels] = ref_dummy(x)
-% Reference-coded dummies (first level = reference): n x (k-1).
-    [levels, ~, gi] = unique(x, 'stable');
+function Eg = main_effect_group_code(Dg)
+% =========================================================================
+% GROUP CODING FOR THE mixed2way CONDITION MAIN EFFECT -- THE ONE PLACE.
+%
+% SUM-TO-ZERO: the reference-coded group dummies with the first group's rows
+% set to -1 in every column. The condition coefficients are then the condition
+% effect averaged over groups with EQUAL weight per group (unweighted marginal
+% means), which is what a standard mixed ANOVA (ranova, Type III) reports.
+%
+% The alternative is CENTRED coding (Dg - mean(Dg)), which weights each group
+% by its number of subjects. The two agree when groups are the same size and
+% differ otherwise. Which one the toolbox should report is still to be
+% confirmed by Tancy (open as of 2026-10-14); to switch, change this function
+% only -- nothing else depends on the choice.
+% =========================================================================
+    first_group = (sum(Dg, 2) == 0);
+    Eg = Dg - first_group;
+end
+
+% ---------------------------------------------------------------------------
+function order = condition_order(opts)
+% opts.condition_levels (optional): the condition level order fixed from
+% outside, so that the condition effect inside one group lists and signs its
+% pairs exactly as the whole table does. See snpm_glm_levels.
+    order = [];
+    if isfield(opts, 'condition_levels') && ~isempty(opts.condition_levels)
+        order = opts.condition_levels;
+    end
+end
+
+function [Dd, levels] = ref_dummy(x, order)
+% Reference-coded dummies (first level = reference): n x (k-1). Levels are in
+% order of first appearance unless `order` fixes them (snpm_glm_levels).
+    if nargin < 2, order = []; end
+    [levels, gi] = snpm_glm_levels(x, order);
     k = numel(levels);
     n = numel(gi);
     Dd = zeros(n, max(k-1, 0));
@@ -178,14 +235,24 @@ function cov = get_covariates(meta, opts)
         if isnumeric(v) || islogical(v)
             parts{end+1} = double(v); %#ok<AGROW>
         else
-            vc = categorical(v);
+            % removecats: code from the levels PRESENT in these rows. Without
+            % it a categorical column subset to two groups keeps a category
+            % nobody has, and dummyvar returns an all-zero column for it.
+            vc = removecats(categorical(v));
             D = double(dummyvar(vc));            % n x k
             if size(D, 2) >= 2, D = D(:, 2:end); else, D = []; end   % drop reference level
             parts{end+1} = D; %#ok<AGROW>
         end
     end
     cov = [parts{:}];
-    if ~isempty(cov), cov = cov - mean(cov, 1, 'omitnan'); end
+    if ~isempty(cov)
+        % A covariate that does not vary over these rows is the intercept
+        % again and carries nothing; drop it (it would make X rank-deficient).
+        % Tested on the raw column, before centring, so it is exact.
+        varies = max(cov, [], 1, 'omitnan') > min(cov, [], 1, 'omitnan');
+        cov = cov(:, varies);
+        cov = cov - mean(cov, 1, 'omitnan');
+    end
 end
 
 function Dx = interaction_cols(Dg, Dc)
@@ -201,23 +268,19 @@ function Dx = interaction_cols(Dg, Dc)
     end
 end
 
-function ph = pairwise_contrasts(levels, dummy_start_col)
-% t-contrasts for every group pair, in the reference-coded design where
-% column 1 is the intercept and group dummies (levels 2..k) start at
-% (dummy_start_col+1). mean_1 = intercept; mean_j = intercept + beta_j.
+function ph = pairwise_levels(levels)
+% Every pair of levels, in level order: mean(a) - mean(b), a before b. The
+% levels are in order of first appearance (unique(...,'stable')), and a / b
+% are indices into that order.
     k = numel(levels);
-    p = dummy_start_col + (k - 1);    % intercept(s) + (k-1) dummies
-    ph = struct('label', {}, 'C', {});
+    ph = struct('label', {}, 'a', {}, 'b', {});
     idx = 0;
     for a = 1:k
         for b = a+1:k
             idx = idx + 1;
-            c = zeros(1, p);
-            % difference mean_a - mean_b in terms of dummy betas
-            if a > 1, c(dummy_start_col + (a-1)) = c(dummy_start_col + (a-1)) + 1; end
-            if b > 1, c(dummy_start_col + (b-1)) = c(dummy_start_col + (b-1)) - 1; end
             ph(idx).label = sprintf('%s vs %s', tostr(levels(a)), tostr(levels(b)));
-            ph(idx).C = c;
+            ph(idx).a = a;
+            ph(idx).b = b;
         end
     end
 end

@@ -29,7 +29,11 @@ choose t vs F for you, so you don't need to hand-build a regression for group co
 - **Within-subject** designs — paired / one-sample t-test, RM-ANOVA, two-way mixed ANOVA —
   need the *same* subjects across conditions. A subject missing a condition is dropped
   (**complete-case** → fewer subjects, less power). Pairing is by `sub-XX` (spectral folder)
-  or by row order (CSV).
+  or by row order (CSV). The two-way mixed ANOVA (`mixed2way`) does not drop such a subject for
+  you: it requires exactly one row per condition for every subject and stops with
+  `core_snpm_glm:mixed2wayUnbalanced`, naming the subjects, so that you remove them yourself
+  or move to the mixed model. The reason is given in
+  [Missing data and the complete-column rule](missing-data-and-excluded-channels.md).
 
 **For substantial within-subject dropout, prefer the LMM** (`mixedmodel`): it uses all
 available observations and is valid under **Missing-At-Random (MAR)**. This matters because
@@ -59,7 +63,7 @@ fewer channels. The LMM is **script-only** (`scripts/run_lmm_analysis.m`) — no
 | Is the per-channel measure ≠ 0 / a fixed reference? | one-sample t (`onesampleT`) |
 | Same people, two conditions differ? (baseline vs recovery; pre/post-CPAP) | paired t (`pairedT`) |
 | Two independent groups differ? (OSA vs control) | unpaired t (`unpairedT`) |
-| 3+ groups differ, then which pair? (control/mild/severe OSA) | `anova1` (+ auto post-hoc) |
+| 3+ groups differ, then which pair? (control/mild/severe OSA) | `anova1` (+ auto post-hoc: each pair is a two-group test on those two groups, corrected across channels but not across pairs) |
 | Groups differ after removing age/sex/AHI? | `ancova` |
 | Measure scales with a continuous variable (± covariates)? (SWA vs AHI) | `regression` |
 | 3+ within-subject conditions/stages differ? (N2/N3/REM) | `rmanova` |

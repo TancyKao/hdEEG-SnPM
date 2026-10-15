@@ -357,7 +357,9 @@ function fn = make_u2_perm(A, gi, sopt, evaluable, obs)
     first = true; n = numel(gi);
     fn = @perm;
     function [s, pp] = perm()
-        [s, pp] = snpm_circ_watsons_u2(A, gi(randperm(n)), sopt);
+        rp = randperm(n);
+        snpm_perm_tap('record', 'circ_u2:labels', rp);
+        [s, pp] = snpm_circ_watsons_u2(A, gi(rp), sopt);
         if first, assert_gate_fixed(sopt.valid_channels, evaluable, obs, s); first = false; end
     end
 end

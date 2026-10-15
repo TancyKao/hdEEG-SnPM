@@ -167,6 +167,7 @@ function E = build_effects(rs, params, base, statName, statSym, unc, tfce, clu)
     e.map_base = base;
     [e.eff_png, e.eff_title] = single_effect_map(rs, params, base, statName);
     e.posthoc  = posthoc_list(gf(rs,'posthoc',[]));
+    e.skipped  = skipped_list(gf(rs,'posthoc_skipped',[]));
     e.global   = global_from_legacy(rs, statSym);
     E = {e};
 end
@@ -196,12 +197,38 @@ function e = effect_from_glm_effect(rs, eff, key)
         e.eff_title = 'Effect map (t)';
     end
     e.posthoc = posthoc_list(gf(eff,'posthoc',[]));
+    e.skipped = skipped_list(gf(eff,'posthoc_skipped',[]));
     e.excl_html = excluded_effect_html(rs, eff);
+    % mixed2way condition main effect: say what it averages over. With unequal
+    % groups the equal-weight average is not the pooled one, and a reader who
+    % expects the pooled effect would otherwise misread the map.
+    if isfield(eff,'key') && strcmpi(char(eff.key), 'condition') && isfield(rs,'glm') ...
+            && isfield(rs.glm,'preset') && strcmpi(char(rs.glm.preset), 'mixed2way')
+        e.note_html = sprintf(['    <p class="methods" style="margin:14px 0 0">With unequal group ' ...
+            'sizes the condition main effect is the average across groups with equal weight ' ...
+            'per group, as in a standard mixed analysis of variance.</p>\n']);
+    end
+    % mixed2way interaction: simple effects that were NOT run (a group with
+    % fewer than 2 subjects). Said here, next to the simple-effect sections,
+    % so a missing section is not read as "nothing significant".
+    ssk = gf(eff,'simple_skipped',[]);
+    for i = 1:numel(ssk)
+        e.note_html = [e.note_html sprintf(['    <p class="methods" style="margin:14px 0 0;' ...
+            'color:#b8862a"><b>%s was not run:</b> %s.</p>\n'], ...
+            esc(char(ssk(i).label)), esc(char(ssk(i).reason)))];
+    end
     e.global = [];
-    if isfield(eff,'global_stat') && ~isempty(eff.global_stat) && ~isnan(eff.global_stat)
+    % A global the engine declared undefined (round-4 spec 3a: a perfectly
+    % fitted whole-head average, 'perfect fit, statistic undefined') keeps its
+    % card: NaN with the reason, so a missing number is never read as "no
+    % whole-head test was run".
+    greason = char(gf(eff,'global_reason',''));
+    if isfield(eff,'global_stat') && ~isempty(eff.global_stat) ...
+            && (~isnan(eff.global_stat) || ~isempty(greason))
         g = struct('label', eff_title(eff), 'sym', sym, 'stat', eff.global_stat, ...
             'p', gf(eff,'global_pval',NaN), 'nch', gf(eff,'global_n_channels',NaN), ...
-            'df1', gf(eff,'global_df1',NaN), 'df2', gf(eff,'global_df2',NaN), 'flag', '');
+            'df1', gf(eff,'global_df1',NaN), 'df2', gf(eff,'global_df2',NaN), 'flag', '', ...
+            'reason', greason);
         e.global = g;
     end
 end
@@ -210,7 +237,16 @@ function e = new_effect()
     e = struct('key','', 'title','', 'subtitle','', 'sym','t', 'signed',true, ...
         'T',[], 'punc',[], 'ptfce',[], 'Clusters',[], 'sunc',[], 'stfce',[], 'sclu',[], ...
         'lamp',false, 'map_base','', 'eff_png','', 'eff_title','Effect map', ...
-        'posthoc',{{}}, 'global',[], 'excl_html','');
+        'posthoc',{{}}, 'skipped',{{}}, 'global',[], 'excl_html','', 'note_html','');
+end
+
+% Pairwise comparisons that were NOT run: {label, reason} per entry.
+function K = skipped_list(sk)
+    K = {};
+    for i = 1:numel(sk)
+        K{end+1} = struct('label', char(gf(sk(i),'label','')), ...
+            'reason', char(gf(sk(i),'reason',''))); %#ok<AGROW>
+    end
 end
 
 function P = posthoc_list(ph)
@@ -226,7 +262,19 @@ function P = posthoc_list(ph)
         q.stfce = idxvec(gf(ph(i),'correctTFCEsigch',[]));
         q.sclu  = idxvec(gf(ph(i),'SnPMsigch',[]));
         q.map_base = gf(ph(i),'map_base','');
+        % What the pair was run on: its own rows, which can be fewer subjects
+        % than the effect's header states.
+        q.run_on  = char(gf(ph(i),'run_on',''));
+        q.dropped = gf(ph(i),'dropped_subjects',{});
+        if ~iscell(q.dropped), q.dropped = cellstr(string(q.dropped)); end
         q.name  = tab_name(q.label, i);
+        % This pair's own exclusions (zero-variance rule 4: a pair can exclude
+        % a channel its omnibus tested).
+        q.excl_html = '';
+        ex = gf(ph(i),'excluded_channels',[]);
+        if isstruct(ex) && isfield(ex,'n') && ex.n > 0
+            q.excl_html = excl_reason_html(ex);
+        end
         P{end+1} = q; %#ok<AGROW>
     end
 end
@@ -237,7 +285,7 @@ function g = global_from_legacy(rs, statSym)
     hasP = isfield(rs,'global_pval') && ~isempty(rs.global_pval);
     if ~hasS && ~hasP, return; end
     g = struct('label','Whole head', 'sym', statSym, 'stat', NaN, 'p', NaN, ...
-        'nch', NaN, 'df1', NaN, 'df2', NaN, 'flag', '');
+        'nch', NaN, 'df1', NaN, 'df2', NaN, 'flag', '', 'reason', '');
     if hasS, g.stat = rs.global_stat(1); end
     if hasP, g.p    = rs.global_pval(1); end
     if isfield(rs,'global_n_channels') && ~isempty(rs.global_n_channels)
@@ -918,14 +966,29 @@ function N = build_notices(rs)
 
     % -- excluded channels (single set, or the union across effects) --------
     if isfield(rs,'effects') && numel(rs.effects) > 1
-        [idx, labs] = union_excluded(rs);
-        if ~isempty(idx)
+        [idx, labs, per_effect] = union_excluded(rs);
+        if ~isempty(idx) && ~per_effect
             N{end+1} = notice('Excluded channels', sprintf([ ...
-                '<b>%d</b> of %d channel(s) were not tested in <b>at least one</b> effect. ' ...
-                'The excluded set <b>differs per effect</b> and is stated in each section ' ...
-                'below: the group main effect is computed on subject means, so it can test ' ...
-                'channels the within-subject effects cannot. Union: <span style="font-family:' ...
-                'var(--mono);font-size:11.5px">%s</span>'], ...
+                '<b>%d</b> of %d channel(s) were not tested. The <b>same channel set is used ' ...
+                'for every effect</b> in this report &mdash; group, condition, interaction, ' ...
+                'the simple effects and all post-hoc comparisons, and the whole-head averages: ' ...
+                'a channel is analysed only if it is present in every row of the table. ' ...
+                'Excluded: <span style="font-family:var(--mono);font-size:11.5px">%s</span>'], ...
+                numel(idx), effect_nchannels(rs), esc(strjoin(labs, ', '))));
+        elseif ~isempty(idx)
+            % Zero-variance exclusions are made per test (each effect, simple
+            % effect and post-hoc pair has its own rows and nuisance model), so
+            % the sets differ; the missing-data set and the whole-head averages
+            % are still shared.
+            N{end+1} = notice('Excluded channels', sprintf([ ...
+                '<b>%d</b> of %d channel(s) were not tested in at least one test of this ' ...
+                'report. Channels missing in any row of the table are excluded from every ' ...
+                'effect and from the whole-head averages. Channels with no variation to ' ...
+                'permute, or whose observed statistic is undefined (a perfect fit), are ' ...
+                'excluded only from the test where that happens; each effect and post-hoc ' ...
+                'below lists its own. Whole-head averages are over the channels with no ' ...
+                'missing data. Excluded somewhere: <span style="font-family:var(--mono);' ...
+                'font-size:11.5px">%s</span>'], ...
                 numel(idx), effect_nchannels(rs), esc(strjoin(labs, ', '))));
         end
     elseif isfield(rs,'excluded_channels') && isstruct(rs.excluded_channels) ...
@@ -939,12 +1002,23 @@ function N = build_notices(rs)
         % sheet already prints ex.reason.
         reason = 'missing data: channel not usable in every analysed subject';
         if isfield(ex,'reason') && ~isempty(ex.reason), reason = char(ex.reason); end
-        N{end+1} = notice('Excluded channels', sprintf([ ...
-            '<b>%d</b> of %d channel(s) were not tested. Reason: %s. They cannot be evaluated ' ...
-            'on the same row set in every permutation, so they carry no statistic and no ' ...
-            'p-value in either the observed map or the null. Channels: <span style="font-family:' ...
-            'var(--mono);font-size:11.5px">%s</span>'], ...
-            ex.n, nch, esc(reason), esc(strjoin(labs(:)', ', '))));
+        if isfield(ex,'reasons') && numel(unique(ex.reasons)) > 1 || is_zero_var_only(ex)
+            % Zero-variance exclusions (2026-10-14) carry their own reason per
+            % channel, and their consequence differs from the missing-data one:
+            % a channel with nothing to permute, or whose observed statistic is
+            % undefined, is not tested -- it is not a row-set problem.
+            N{end+1} = notice('Excluded channels', sprintf([ ...
+                '<b>%d</b> of %d channel(s) were not tested and carry no statistic and no ' ...
+                'p-value in the maps and tables. By reason: %s'], ...
+                ex.n, nch, excl_reason_html(ex)));
+        else
+            N{end+1} = notice('Excluded channels', sprintf([ ...
+                '<b>%d</b> of %d channel(s) were not tested. Reason: %s. They cannot be evaluated ' ...
+                'on the same row set in every permutation, so they carry no statistic and no ' ...
+                'p-value in either the observed map or the null. Channels: <span style="font-family:' ...
+                'var(--mono);font-size:11.5px">%s</span>'], ...
+                ex.n, nch, esc(reason), esc(strjoin(labs(:)', ', '))));
+        end
     end
 
     % -- how Data 2 was matched (correlation) -------------------------------
@@ -1011,33 +1085,65 @@ function n = notice(title, body)
 end
 
 % Per-effect exclusion statement, rendered inside the effect section so it sits
-% next to the maps it describes. When the report excludes something somewhere
-% but NOT here, that is said explicitly -- otherwise the top notice would be
-% read as applying to this section too.
+% next to the maps it describes. Every effect of a multi-effect (mixed2way)
+% report uses the one channel set, so this repeats the top notice's list in
+% place. (Until 2026-10-14 the group effect could keep a channel the
+% within-subject effects dropped, and an effect that excluded nothing printed
+% "all channels were tested for this effect (the exclusions noted at the top
+% apply to other effects)". With one shared set that case cannot arise -- an
+% effect with nothing excluded implies a report with nothing excluded -- and
+% the branch has been removed.)
 function h = excluded_effect_html(rs, eff)
     h = '';
-    [uidx, ~] = union_excluded(rs);
     ex = [];
     if isfield(eff,'excluded_channels') && isstruct(eff.excluded_channels)
         ex = eff.excluded_channels;
     end
     n = 0; labs = {};
     if ~isempty(ex) && isfield(ex,'n'), n = ex.n; end
-    if n > 0 && isfield(ex,'labels')
+    if n == 0, return; end
+    if isfield(ex,'labels')
         labs = ex.labels; if ~iscell(labs), labs = cellstr(string(labs)); end
         labs = labs(:)';
     end
     nch = effect_nchannels(rs);
-    if n == 0
-        if isempty(uidx), return; end
-        h = sprintf(['    <p class="methods" style="margin:14px 0 0"><b>Channels:</b> all %d ' ...
-            'channels were tested for this effect (the exclusions noted at the top of the ' ...
-            'report apply to other effects).</p>\n'], nch);
-        return;
+    if isfield(ex,'reasons') && numel(ex.reasons) == numel(ex.index)
+        what = excl_reason_html(ex);
+    else
+        what = esc(strjoin(labs, ', '));
     end
     h = sprintf(['    <p class="methods" style="margin:14px 0 0;color:#b8862a"><b>Excluded ' ...
         'for this effect:</b> %d of %d channel(s) &mdash; %s. They carry no statistic and no ' ...
-        'p-value in the maps and tables below.</p>\n'], n, nch, esc(strjoin(labs, ', ')));
+        'p-value in the maps and tables below.</p>\n'], n, nch, what);
+end
+
+% 'E1, E2 (reason A); E7 (reason B)' as HTML, channel labels in the mono font.
+function h = excl_reason_html(ex)
+    labs = ex.labels; if ~iscell(labs), labs = cellstr(string(labs)); end
+    labs = labs(:)';
+    if isfield(ex,'reasons') && numel(ex.reasons) == numel(labs)
+        r = ex.reasons(:)';
+    else
+        r = repmat({char(ex.reason)}, 1, numel(labs));
+    end
+    u = unique(r, 'stable');
+    parts = cell(1, numel(u));
+    for k = 1:numel(u)
+        parts{k} = sprintf(['<span style="font-family:var(--mono);font-size:11.5px">%s</span> ' ...
+            '(%s)'], esc(strjoin(labs(strcmp(r, u{k})), ', ')), esc(u{k}));
+    end
+    h = strjoin(parts, '; ');
+end
+
+% True when every listed reason is a zero-variance one (none is missing data).
+function tf = is_zero_var_only(ex)
+    zv = {'no variation left after the nuisance model', 'perfect fit, statistic undefined', ...
+          'identical values in both conditions', 'every value is zero', ...
+          'same value in every subject', 'perfect separation, t undefined', ...
+          'constant across subjects', 'fully explained by the covariates'};
+    tf = false;
+    if ~isfield(ex,'reasons') || isempty(ex.reasons), return; end
+    tf = all(ismember(ex.reasons, zv));
 end
 
 function n = effect_nchannels(rs)
@@ -1051,21 +1157,39 @@ function n = effect_nchannels(rs)
     end
 end
 
-function [idx, labs] = union_excluded(rs)
-    idx = [];
+function [idx, labs, per_effect] = union_excluded(rs)
+% per_effect: true when the loops do not all exclude the same channels (the
+% zero-variance rule excludes per test), so the "one channel set for every
+% effect" sentence would be false.
+    idx = []; sets = {};
     if isfield(rs,'effects')
         for k = 1:numel(rs.effects)
-            idx = [idx, eff_excl_idx(rs.effects(k))]; %#ok<AGROW>
+            sets{end+1} = eff_excl_idx(rs.effects(k)); %#ok<AGROW>
+            sets = [sets, posthoc_excl_sets(rs.effects(k))]; %#ok<AGROW>
             se = [];
             if isfield(rs.effects(k),'simple_effects'), se = rs.effects(k).simple_effects; end
             for s = 1:numel(se)
-                idx = [idx, eff_excl_idx(se(s))]; %#ok<AGROW>
+                sets{end+1} = eff_excl_idx(se(s)); %#ok<AGROW>
+                sets = [sets, posthoc_excl_sets(se(s))]; %#ok<AGROW>
             end
         end
+    end
+    per_effect = false;
+    for k = 1:numel(sets)
+        idx = [idx, sets{k}]; %#ok<AGROW>
+        if k > 1 && ~isequal(sort(sets{k}), sort(sets{1})), per_effect = true; end
     end
     idx = unique(idx(:)');
     labs = cell(1, numel(idx));
     for i = 1:numel(idx), labs{i} = chan_label(rs, idx(i)); end
+end
+
+function S = posthoc_excl_sets(eff)
+    S = {};
+    if ~isfield(eff,'posthoc'), return; end
+    for i = 1:numel(eff.posthoc)
+        S{end+1} = eff_excl_idx(eff.posthoc(i)); %#ok<AGROW>
+    end
 end
 
 function v = eff_excl_idx(eff)
@@ -1133,7 +1257,7 @@ function write_strip(fid, R)
         if ~isempty(e.global)
             g = e.global;
             fprintf(fid, '<span class="gp%s">%s = %s &middot; %s</span>', ...
-                psig_cls(g, R.alpha), g.sym, fmt_stat(g.stat), p_phrase(g.p, R.nperm));
+                psig_cls(g, R.alpha), g.sym, fmt_stat(g.stat), global_p_text(g, R.nperm));
         end
         fprintf(fid, '</a>\n');
     end
@@ -1301,6 +1425,7 @@ function write_effect(fid, R, e)
     fprintf(fid, '  </div>\n  <div class="ebody">\n');
 
     if ~isempty(e.excl_html), fprintf(fid, '%s', e.excl_html); end
+    if ~isempty(e.note_html), fprintf(fid, '%s', e.note_html); end
 
     if ~isempty(e.eff_png)
         fprintf(fid, '    <div class="blk">\n      <div class="bh">Effect map</div>\n');
@@ -1472,7 +1597,8 @@ end
 % ---- post-hoc pairwise contrasts as tabs --------------------------------
 function write_posthoc(fid, R, e)
     P = e.posthoc;
-    if isempty(P), return; end
+    K = e.skipped;
+    if isempty(P) && isempty(K), return; end
     grp = ['ph' e.key];
     names = cell(1, numel(P));
     for i = 1:numel(P), names{i} = P{i}.name; end
@@ -1480,6 +1606,16 @@ function write_posthoc(fid, R, e)
     fprintf(fid, '    <div class="blk">\n');
     fprintf(fid, ['      <div class="bh">Post-hoc pairwise contrasts &mdash; signed t per ' ...
         'comparison</div>\n']);
+    % A pair that was not run has no tab below. Say so here, in the report, so
+    % its absence is not mistaken for "nothing significant".
+    for i = 1:numel(K)
+        fprintf(fid, ['      <p class="methods" style="margin:0 0 10px;color:#b8862a"><b>Post-hoc ' ...
+            '%s was not run:</b> %s.</p>\n'], esc(K{i}.label), esc(K{i}.reason));
+    end
+    if isempty(P)
+        fprintf(fid, '    </div>\n');
+        return;
+    end
     fprintf(fid, '      <div class="tabs">\n');
     for i = 1:numel(P)
         oncls = ''; if i == 1, oncls = ' class="on"'; end
@@ -1494,6 +1630,22 @@ function write_posthoc(fid, R, e)
         hide = ' style="display:none"'; if i == 1, hide = ''; end
         fprintf(fid, '      <div id="tab_%s_%s" class="tabpanel" data-tab-name="Post-hoc: %s"%s>\n', ...
             grp, q.name, esc(q.label), hide);
+        % What THIS pair was run on. It is tested on the rows of its two levels
+        % only, so the count can be smaller than the one in the report header.
+        if ~isempty(q.run_on)
+            left = '';
+            if ~isempty(q.dropped)
+                left = sprintf(' Left out because they have only one of the two levels: %s.', ...
+                    esc(strjoin(q.dropped(:)', ', ')));
+            end
+            fprintf(fid, ['        <p class="methods" style="margin:0 0 10px">Tested on the rows ' ...
+                'of these two levels only: %s.%s</p>\n'], esc(q.run_on), left);
+        end
+        if ~isempty(q.excl_html)
+            fprintf(fid, ['        <p class="methods" style="margin:0 0 10px;color:#b8862a"><b>' ...
+                'Excluded for this comparison:</b> %s. They carry no statistic and no p-value ' ...
+                'for this pair.</p>\n'], q.excl_html);
+        end
         if isempty(q.stfce)
             fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
                 sprintf(['<b>No significant channels</b> for %s after TFCE correction%s. ' ...
@@ -1534,7 +1686,7 @@ function write_global(fid, R)
             first = false;
             fprintf(fid, ['    <div class="gstat"><span class="gk">%s</span>' ...
                 '<span class="gv">%s = %s</span><span class="gp%s">%s</span></div>\n'], ...
-                g.label, g.sym, fmt_stat(g.stat), psig_cls(g, R.alpha), p_phrase(g.p, R.nperm));
+                g.label, g.sym, fmt_stat(g.stat), psig_cls(g, R.alpha), global_p_text(g, R.nperm));
         end
         fprintf(fid, '    <div class="gnote">%s</div>\n', global_note(R));
     else
@@ -1543,12 +1695,23 @@ function write_global(fid, R)
     fprintf(fid, '  </div>\n</section>\n\n');
 end
 
+% The p-value text of a global card, or the engine's reason when it declared
+% the statistic undefined (then stat and p are NaN).
+function s = global_p_text(g, nperm)
+    if isfield(g,'reason') && ~isempty(g.reason)
+        s = esc(char(g.reason));
+    else
+        s = p_phrase(g.p, nperm);
+    end
+end
+
 % What the channel average was actually taken over. NOT cosmetic: the global is
-% a whole-head claim only when it rests on the whole montage, and in a
-% multi-effect report each effect is averaged over ITS OWN evaluable set (the
-% group main effect is computed on subject means and can keep a channel the
-% within-subject effects drop), so one number would be wrong for at least one
-% of them. Equal counts collapse to one sentence; unequal counts are listed.
+% a whole-head claim only when it rests on the whole montage. In a mixed2way
+% report every effect is averaged over the SAME channel set (the one set fixed
+% before any test: finite in every row of the table), so the counts are equal
+% and collapse to one sentence. The unequal-counts wording at the end is kept
+% for any other multi-effect caller whose effects do have different sets; the
+% current pipelines do not produce that case.
 function s = global_note(R)
     nch = effect_nchannels(R.rs);
     labs = {}; cnts = []; flagged = false;

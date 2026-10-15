@@ -115,6 +115,10 @@ table.heat th.row{text-align:right;white-space:nowrap}
 .pbd-ph-head{flex-basis:100%;font-size:12.5px;font-weight:650;color:var(--ink)}
 .ph-card{width:160px;text-align:center;margin:0}
 .ph-card .slot{aspect-ratio:5/4;border-radius:6px}
+/* a pair that was not run: no map, a full-width row whose reason wraps */
+.ph-card.ph-skip{flex-basis:100%;width:auto;text-align:left}
+.ph-card.ph-skip figcaption{margin-top:0;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:8px}
+.ph-card.ph-skip .bdg{white-space:normal;border-radius:8px;text-align:left;line-height:1.45}
 .ph-card figcaption{margin-top:7px;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11.5px}
 .bdg{font-family:var(--mono);font-size:11px;font-weight:600;border-radius:20px;padding:4px 9px;
   font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -334,10 +338,12 @@ function renderReading(){
   const cards=[
     {h:"Groups", b:`<p>Between-subject comparison of ${k} groups.</p><div class="pills">${pills}</div>`+
         (descs?`<p style="margin-top:7px">${descs}</p>`:"")},
-    {h:"Omnibus F vs pairwise", b:`<p>The omnibus <b>F</b> asks whether <i>any</i> group differs in a channel; the `+
-        `<b>${nPair}</b> pairwise contrasts localise <i>which</i> groups drive it.</p>`},
-    {h:"Maps per band", b:`<p>Each band shows <b>${total}</b> topoplots:</p>`+
-        `<div class="calc">${k} group means + 1 F-map + ${nPair} pairwise = ${total}</div>`},
+    {h:"Omnibus F vs pairwise", b:`<p>The omnibus <b>F</b> asks whether <i>any</i> group differs in a channel; up to `+
+        `<b>${nPair}</b> pairwise contrasts localise <i>which</i> groups drive it. Each pairwise contrast is a `+
+        `two-group test on the subjects of those two groups only. A pair that cannot be estimated is `+
+        `<b>not run</b>; it is listed under its band with the reason and has no map.</p>`},
+    {h:"Maps per band", b:`<p>Each band shows up to <b>${total}</b> topoplots:</p>`+
+        `<div class="calc">${k} group means + 1 F-map + up to ${nPair} pairwise = ${total}</div>`},
     {h:"Stat-map colour", b:`<p>Omnibus F is <b>sequential</b> (0 → high, non-negative). Pairwise contrasts are `+
         `<b>diverging</b> (warm = 1st &gt; 2nd).</p>`+
         `<div class="mini"><i style="background:linear-gradient(90deg,#eef4f6,var(--accent))"></i>`+
@@ -437,8 +443,9 @@ function buildDetail(stage){
     if(ph.length){
       const pr=el("div","pbd-ph");
       pr.innerHTML=`<div class="pbd-ph-head">Post-hoc pairwise contrasts</div>`+ph.map(e=>{
+        if(e.skipped) return `<figure class="ph-card ph-skip"><figcaption><b>${e.label}</b><span class="bdg ns">not run: ${e.skipped}</span></figcaption></figure>`;
         const ec=e.clu>0?"sig":(e.tfce>0?"tr":"ns");
-        return `<figure class="ph-card">${slot(IMG.mean(stage.key,b.key,e.token),"5/4")}<figcaption><b>${e.label}</b><span class="bdg ${ec}">TFCE ${e.tfce||0} · cluster ${e.clu||0} · p ${fmtP(e.p!=null?e.p:1)}</span></figcaption></figure>`;
+        return `<figure class="ph-card">${slot(IMG.mean(stage.key,b.key,e.token),"5/4")}<figcaption><b>${e.label}</b><span class="bdg ${ec}">TFCE ${e.tfce||0} · cluster ${e.clu||0} · p ${fmtP(e.p!=null?e.p:1)}</span>${e.run_on?`<span class="bdg ns">${e.run_on}</span>`:""}</figcaption></figure>`;
       }).join("");
       sec.appendChild(pr);
       const btn=row.querySelector(".ph-toggle");
@@ -468,6 +475,7 @@ function chanDetail(stage,band,m){
   const ph=phlist(stage,band);
   if(!ph.length)return `<div class="chan-detail"><div class="cd-lab none">No post-hoc contrasts.</div></div>`;
   const blocks=ph.map(e=>{
+    if(e.skipped) return `<div class="cd-grp"><div class="cd-lab"><b>${e.label}</b></div><span class="none">not run: ${e.skipped}</span></div>`;
     const {labels,sample}=phChannels(stage,band,e,m);
     const chips=labels.length?`<div class="chips">${labels.map(l=>`<span class="chip-ch">${l}</span>`).join("")}</div>`
       :`<span class="none">none</span>`;

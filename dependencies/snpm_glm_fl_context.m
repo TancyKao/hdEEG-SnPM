@@ -52,4 +52,18 @@ function flctx = snpm_glm_fl_context(Y, D)
     % A permuted column is Zfit + R(pe,:); it is finite for every permutation
     % index pe if and only if both Zfit and R are finite throughout the column.
     flctx.evaluable = all(isfinite(Zfit), 1) & all(isfinite(R), 1);
+
+    % ZERO-VARIANCE RULE 1 (Method Spec 2026-10-14, GLM tier). A channel whose
+    % nuisance-model residuals are zero (snpm_zero_ss: sum(R.^2) <= 1e-20 *
+    % sum(Y.^2)) has nothing to permute: every permuted map Zfit + R(pe,:)
+    % equals the observed one. That covers a constant channel, a channel
+    % constant within a post-hoc pair's rows, and an rmanova channel where each
+    % subject has the same value in every condition. Kept SEPARATE from
+    % .evaluable on purpose: .evaluable is the finiteness mask, which the
+    % mixed2way whole-head averages still use (spec GLM rule 5); the caller
+    % drops these channels from the loop mask and reports them with the reason
+    % 'no variation left after the nuisance model'. Only set on channels that
+    % are finite, so it never double-reports a missing-data channel.
+    flctx.no_variation = flctx.evaluable & ...
+        snpm_zero_ss(sum(R.^2, 1), sum(Y.^2, 1));
 end

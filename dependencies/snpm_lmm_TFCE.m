@@ -147,7 +147,7 @@ function [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail,
             otherwise
                 obs = T.real_TFCE(i);
         end
-        p.correctedTFCE(i) = (sum(T.tMaxTFCE >= obs) + 1) / (possible_permutations + 1);
+        p.correctedTFCE(i) = (snpm_count_at_least(T.tMaxTFCE, obs) + 1) / (possible_permutations + 1);
     end
     p.correctedTFCE(~evaluable) = NaN;   % explicit: not tested, not "p = 1"
 
@@ -159,15 +159,18 @@ end
 function m = enhance_map(stat, sparse_adj, E, H, nCh)
 % ClusterEnhancement with a shape guard.
 %
-% When the WHOLE statistic map lies below the TFCE integration step (dh=0.1),
-% ClusterEnhancement's threshold range collapses to a single level, its
-% per-channel sum degenerates to a scalar 0, and the trailing
-% TFCEdata(isnan(...)) = NaN assignment then grows that scalar only as far as
-% the LAST NaN channel — so the returned vector can be SHORTER than nCh. The
-% integral in that situation is genuinely zero at every channel, so the map is
-% right-padded with zeros and the NaN channels are re-marked. Without this the
-% map cannot be indexed by the evaluable mask (and, pre-existing, the
-% corrected-p loop would silently leave the tail channels at p = 1).
+% HISTORY. Until 2026-10-13, when the WHOLE statistic map lay below the TFCE
+% integration step (dh=0.1), ClusterEnhancement's threshold range collapsed to
+% a single level, its per-channel sum degenerated to a scalar 0, and the
+% trailing TFCEdata(isnan(...)) = NaN assignment then grew that scalar only as
+% far as the LAST NaN channel — so the returned vector could be SHORTER than
+% nCh. The integral in that situation is genuinely zero at every channel, so
+% the map was right-padded with zeros and the NaN channels re-marked.
+%
+% ClusterEnhancement now sums along dimension 1 explicitly and always returns
+% 1 x nCh (0 at finite channels, NaN at NaN channels) for such a map, so the
+% padding branch below no longer fires. It is kept as a guard, together with
+% the size error, in case the enhancer's output shape ever regresses.
     m = reshape(ClusterEnhancement(stat, sparse_adj, E, H), 1, []);
     if numel(m) < nCh
         m(numel(m)+1:nCh) = 0;

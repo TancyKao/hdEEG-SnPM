@@ -171,6 +171,13 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
         % choice rather than silently dropping the options.
         PreCircDataType = 'absolute'
         PreCircTail = 'both'
+        % mixed2way balance check, cached. The key is file + sheet + the
+        % Subject/Condition/Group roles, so the table is read only when one of
+        % those changes, not on every readiness re-check. A new file pick
+        % (detectAndFill on the primary slot) clears the key so a re-loaded,
+        % edited file is read again.
+        BalanceKey = ''
+        BalanceMsg = {}
     end
 
     % Row indices of the collapsible auxiliary panels in app.GridLayout.
@@ -576,6 +583,8 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             app.DetectedChanNames = {};
             app.DetectB1 = [];
             app.DetectCaption1 = '';
+            app.BalanceKey = '';
+            app.BalanceMsg = {};
             clearData2Detection(app);
         end
 
@@ -675,6 +684,7 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
             meta  = vn(~ismember(vn, chans));
             nchan = numel(chans);
             if isPrimary
+                app.BalanceKey = '';    % file (re)read: force the mixed2way balance re-check
                 app.DetectedNChan = nchan;
                 app.DetectedChanNames = chans;
                 app.DetectB1 = B;
@@ -1034,12 +1044,24 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
 
             catch ME
                 app.StatusLabel.Text = 'Analysis failed - see error details';
-                app.ResultsTextArea.Value = {['Error: ' ME.message], '', 'Stack trace:', ME.getReport()};
+                if strcmp(ME.identifier, 'core_snpm_glm:mixed2wayUnbalanced')
+                    % A data problem, not a code fault: the engine's message
+                    % names the subjects and the fix, so no stack trace.
+                    app.ResultsTextArea.Value = {['Error: ' ME.message]};
+                    app.BalanceKey = '';   % file may have changed since it was checked
+                else
+                    app.ResultsTextArea.Value = {['Error: ' ME.message], '', 'Stack trace:', ME.getReport()};
+                end
                 uialert(app.UIFigure, ME.message, 'Analysis Error');
             end
 
-            % Re-enable the run button
+            % Re-enable the run button. After an unbalanced-table refusal the
+            % readiness gate re-reads the table (cache cleared above) and puts
+            % the incomplete subjects in the checklist, keeping Run disabled.
             app.RunAnalysisButton.Enable = 'on';
+            if isempty(app.BalanceKey) && strcmp(app.ComparisonDropDown.Value, 'mixed2way')
+                checkReadyToRun(app);
+            end
         end
 
         % Button pushed function: ResetButton
@@ -1401,6 +1423,15 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 end
             end
 
+            % mixed2way needs a balanced table (one row per subject per
+            % condition, one group per subject); the engine refuses anything
+            % else (core_snpm_glm:mixed2wayUnbalanced). Checked only once the
+            % file and the Subject + Condition roles are set; cached.
+            if strcmp(key, 'mixed2way') && ~spec && ~isempty(app.data1_file) ...
+                    && ~isempty(app.SubjectColField.Value) && ~isempty(app.ConditionColField.Value)
+                missing = [missing, mixed2wayBalanceMessages(app)];
+            end
+
             if isempty(missing)
                 app.RunAnalysisButton.Enable = 'on';
                 app.ValidationPanel.Title = 'Ready to run';
@@ -1415,6 +1446,22 @@ classdef SnPMAnalysisGui < matlab.apps.AppBase
                 bullet = char(8226);   % real Unicode bullet (single-quoted escapes are literal in MATLAB)
                 app.ValidationLabel.Text = cellfun(@(s) [bullet '  ' s], missing, 'UniformOutput', false);
             end
+        end
+
+        % Cached mixed2way balance check (see BalanceKey). Returns a cell of
+        % checklist lines, empty when balanced or when the table could not be
+        % read (a read failure must not block Run; the engine then reports).
+        function msgs = mixed2wayBalanceMessages(app)
+            key = strjoin({char(app.data1_file), char(app.Data1SheetDropDown.Value), ...
+                char(app.SubjectColField.Value), char(app.ConditionColField.Value), ...
+                char(app.GroupColField.Value)}, char(0));
+            if ~strcmp(key, app.BalanceKey)
+                app.BalanceMsg = mixed2way_balance_messages(app.data1_file, ...
+                    app.Data1SheetDropDown.Value, app.SubjectColField.Value, ...
+                    app.ConditionColField.Value, app.GroupColField.Value);
+                app.BalanceKey = key;
+            end
+            msgs = app.BalanceMsg;
         end
 
         % Main analysis function that calls your existing code
@@ -2302,7 +2349,8 @@ function [l1, l2, hint, c1, c2] = analysis_labels(key)
         case 'rmanova'
             l1='Data File:'; l2=''; hint='Compares 3+ within-subject conditions (same subjects across conditions). Set Subject and Condition.';
         case 'mixed2way'
-            l1='Data File:'; l2=''; hint='Two-way mixed ANOVA: does the condition effect differ between groups? Set Group, Subject and Condition.';
+            l1='Data File:'; l2=''; hint=['Two-way mixed ANOVA: does the condition effect differ between groups? Every subject needs ' ...
+                  'exactly one row for each condition. Set Group, Subject and Condition.'];
         case 'pairedT'
             l1='Condition A File:'; l2='Condition B File:'; hint='Two conditions, same subjects. Load the A and B files (warm = A > B).';
         case 'onesampleT'
@@ -2393,6 +2441,79 @@ function fillRoleDropdown(dd, meta, def)
     dd.Items     = [{'(select)'}, meta(:)'];
     dd.ItemsData = [{''},        meta(:)'];
     if ~isempty(def) && any(strcmp(meta, def)), dd.Value = def; else, dd.Value = ''; end
+end
+
+function msgs = mixed2way_balance_messages(file, sheet, subjCol, condCol, grpCol)
+% Readiness-gate copy of core_snpm_glm.m's require_mixed2way_balance. The
+% definition is the engine's, line for line: the columns come from the same
+% readtable type detection (detectImportOptions defaults, only the role columns
+% selected), levels are stable-unique values of the raw column -- so a missing
+% condition (NaN / '' / <missing>) is its own level and a subject is flagged
+% whenever its row count in any level is not exactly 1 (missing OR duplicated).
+% The engine raises the same error id when a subject sits in more than one
+% group; that is checked too when a Group role is set. Any read or type problem
+% returns {} so Run stays available and the engine reports.
+    msgs = {};
+    try
+        if strcmp(sheet, 'CSV File')
+            o = detectImportOptions(file);
+        else
+            o = detectImportOptions(file, 'Sheet', sheet);
+        end
+        cols = {subjCol, condCol};
+        if ~isempty(grpCol), cols{end+1} = grpCol; end
+        cols = unique(cols, 'stable');
+        if ~all(ismember(cols, o.VariableNames)), return; end
+        o.SelectedVariableNames = cols;
+        T = readtable(file, o);
+
+        [subj, ~, si] = unique(T.(subjCol), 'stable');
+        [cond, ~, ci] = unique(T.(condCol), 'stable');
+        counts = accumarray([si(:), ci(:)], 1, [numel(subj), numel(cond)]);
+        bad = find(any(counts ~= 1, 2));
+        if ~isempty(bad)
+            % An empty Condition cell is its own "condition" to the engine, so
+            % one blank cell flags nearly every subject. Name the real cause.
+            nEmpty = nnz(ismissing(T.(condCol)));
+            if nEmpty > 0
+                msgs{end+1} = sprintf(['The %s column has %d empty cell(s); every row ' ...
+                    'needs a condition.'], condCol, nEmpty);
+            end
+            msgs{end+1} = sprintf(['%s not have exactly one row for every condition ' ...
+                '(missing or repeated): %s. Complete or remove them; unbalanced data need ' ...
+                'the mixed model (scripts/run_lmm_analysis.m).'], ...
+                count_phrase(numel(bad)), id_list(subj, bad));
+        end
+        if ~isempty(grpCol)
+            [~, ~, gi] = unique(T.(grpCol), 'stable');
+            ngrp = accumarray(si(:), gi(:), [numel(subj), 1], @(v) numel(unique(v)));
+            multi = find(ngrp > 1);
+            if ~isempty(multi)
+                if isscalar(multi), who = '1 subject appears'; else, who = sprintf('%d subjects appear', numel(multi)); end
+                msgs{end+1} = sprintf(['%s in more than one group: %s. Each subject ' ...
+                    'must belong to exactly one group.'], who, id_list(subj, multi));
+            end
+        end
+    catch
+        msgs = {};
+    end
+end
+
+function s = count_phrase(n)
+    if n == 1, s = '1 subject does'; else, s = sprintf('%d subjects do', n); end
+end
+
+function s = id_list(levels, idx)
+% Up to three subject IDs, formatted like the engine's level_to_str, then
+% "and N more" if there are more.
+    k = min(numel(idx), 3);
+    names = cell(1, k);
+    for j = 1:k
+        if iscell(levels), v = levels{idx(j)}; else, v = levels(idx(j)); end
+        if isnumeric(v) || islogical(v), names{j} = num2str(v); else, names{j} = char(string(v)); end
+    end
+    s = strjoin(names, ', ');
+    if numel(idx) > k, s = sprintf('%s and %d more', s, numel(idx) - k); end
 end
 
 function n = firstMatch(meta, pat)

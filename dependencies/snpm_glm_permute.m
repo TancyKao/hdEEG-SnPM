@@ -21,6 +21,7 @@ function Yperm = snpm_glm_permute(flctx)
     else
         pe = within_block_perm(flctx.eb);
     end
+    snpm_perm_tap('record', ['glm_permute:' flctx.perm_type], pe);
 
     Yperm = flctx.Zfit + R(pe, :);
 end

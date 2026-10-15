@@ -34,6 +34,19 @@ sparse_channel_adjacency_matrix = make_neighbors_sparse(neighbors,size(neighbors
 
 number_of_inputs=size(data_x,2);
 compstring=[comparison tail];
+
+% ZERO-VARIANCE RULE (Method Spec 2026-10-14, t-test tier). At every labelling
+% -- observed and permuted -- a channel whose error sum of squares counts as
+% zero (snpm_ttest_novar / snpm_zero_ss) has t DEFINED as 0, so TFCE and the
+% max-statistic null see a finite map (rule 2; without it ttest returns +/-Inf
+% when every difference is equal and ClusterEnhancement dies building its
+% threshold ladder). undef_obs marks the channels where the OBSERVED labelling
+% hit that rule: their 0 entered the observed TFCE integral and they stayed in
+% every permuted map, which keeps the test exact, but they are returned as NaN
+% with T.undefined_channels listing them (rule 3, 'perfect separation, t
+% undefined'). The correlation arms never set it: the denominator of r does
+% not change under row permutation, so they have no degenerate relabelling.
+undef_obs = false(1, number_of_inputs);
 % this switch sets up the comparisons
 switch compstring
 
@@ -77,6 +90,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,STATS] = ttest(data_x_temp,data_y_temp,alpha,'right');
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             tVals(permIndex,:) = STATS.tstat;
             TFCEdata(permIndex,:) = ClusterEnhancement(STATS.tstat,sparse_channel_adjacency_matrix,E,H);
         end
@@ -84,6 +98,7 @@ switch compstring
         
         %calculate real t
         [~,p.real,~,REALSTATS] = ttest(data_x,data_y,alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
         T.tMax = sort(max(tVals,[],2),'descend');
         T.chk_T = mean(tVals);
         T.tMaxTFCE = sort(max(TFCEdata,[],2),'descend');
@@ -122,6 +137,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,STATS] = ttest(data_x_temp,data_y_temp,alpha,'right');
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             tVals(permIndex,:) = STATS.tstat;
             TFCEdata(permIndex,:) = ClusterEnhancement(STATS.tstat,sparse_channel_adjacency_matrix,E,H);
         end
@@ -129,6 +145,7 @@ switch compstring
         
         %calculate real t
         [~,p.real,~,REALSTATS] = ttest(data_x,data_y,alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
         T.tMax = sort(max(tVals,[],2),'descend');
         T.chk_T = mean(tVals);
         T.tMaxTFCE = sort(max(TFCEdata,[],2),'descend');
@@ -168,6 +185,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,STATS] = ttest(data_x_temp,data_y_temp);
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             tVals(permIndex,:) = STATS.tstat;
             TFCEdata(permIndex,:) = ClusterEnhancement(STATS.tstat,sparse_channel_adjacency_matrix,E,H);
         end
@@ -175,6 +193,7 @@ switch compstring
         
         % calculate real t
         [~,p.real,~,REALSTATS] = ttest(data_x,data_y);
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
         T.tMax = sort(max(abs(tVals),[],2),'descend');
         T.chk_T = mean(abs(tVals));
         T.tMaxTFCE = sort(max(abs(TFCEdata),[],2),'descend');
@@ -213,6 +232,7 @@ switch compstring
             
             %Calculate T value for this grouping (ttest is paired ttest)
             [~,~,~,STATS] = ttest(data_x_temp,data_y_temp);
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data_x_temp, data_y_temp, 'paired');   % zero-variance rule 2
             tVals(permIndex,:) = STATS.tstat;
             TFCEdata(permIndex,:) = ClusterEnhancement(STATS.tstat,sparse_channel_adjacency_matrix,E,H);
         end
@@ -220,6 +240,7 @@ switch compstring
         
         % calculate real t
         [~,p.real,~,REALSTATS] = ttest(data_x,data_y);
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data_x, data_y, 'paired');   % rule 2 on the observed labelling
         T.tMax = sort(max(abs(tVals),[],2),'descend');
         T.chk_T = mean(abs(tVals));
         T.tMaxTFCE = sort(max(abs(TFCEdata),[],2),'descend');
@@ -265,6 +286,7 @@ switch compstring
 
             %Calculate T value for this grouping (ttest2 is unpaired ttest)
             [~,~,~,STATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data(group1,:), data(group2,:), 'unpaired');   % zero-variance rule 2
             tVals(permIndex,:) = STATS.tstat;
             TFCEdata(permIndex,:) = ClusterEnhancement(STATS.tstat,sparse_channel_adjacency_matrix,E,H);
         end
@@ -272,6 +294,7 @@ switch compstring
 
         %calculate real ttest
         [~,p.real,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data(1:nGrp,:), data(nGrp+1:end,:), 'unpaired');   % rule 2 on the observed labelling
         T.tMax = sort(max(tVals,[],2),'descend');
         T.chk_T = mean(tVals);
         T.tMaxTFCE = sort(max(TFCEdata,[],2),'descend');
@@ -312,6 +335,7 @@ switch compstring
 
             %Calculate T value for this grouping (ttest2 is unpaired ttest)
             [~,~,~,STATS] = ttest2(data(group1,:),data(group2,:),alpha,'right');
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data(group1,:), data(group2,:), 'unpaired');   % zero-variance rule 2
             tVals(permIndex,:) = STATS.tstat;
             TFCEdata(permIndex,:) = ClusterEnhancement(STATS.tstat,sparse_channel_adjacency_matrix,E,H);
         end
@@ -319,6 +343,7 @@ switch compstring
 
         %calculate r ttest
         [~,p.real,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:),alpha,'right');
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data(1:nGrp,:), data(nGrp+1:end,:), 'unpaired');   % rule 2 on the observed labelling
         T.tMax = sort(max(tVals,[],2),'descend');
         T.chk_T = mean(tVals);
         T.tMaxTFCE = sort(max(TFCEdata,[],2),'descend');
@@ -359,6 +384,7 @@ switch compstring
 
             %Calculate T value for this grouping (ttest2 is unpaired ttest)
             [~,~,~,STATS] = ttest2(data(group1,:),data(group2,:),alpha);
+            STATS.tstat = snpm_ttest_novar(STATS.tstat, data(group1,:), data(group2,:), 'unpaired');   % zero-variance rule 2
             tVals(permIndex,:) = STATS.tstat;
             TFCEdata(permIndex,:) = ClusterEnhancement(STATS.tstat,sparse_channel_adjacency_matrix,E,H);
         end
@@ -366,6 +392,7 @@ switch compstring
 
         % calculate r ttest
         [~,p.real,~,REALSTATS] = ttest2(data(1:nGrp,:),data(nGrp+1:end,:));
+        [REALSTATS.tstat, undef_obs] = snpm_ttest_novar(REALSTATS.tstat, data(1:nGrp,:), data(nGrp+1:end,:), 'unpaired');   % rule 2 on the observed labelling
         [T.tMax ,~] = sort(max(abs(tVals),[],2),'descend');
         T.chk_T = mean(abs(tVals));
         [T.tMaxTFCE ,~] = sort(max(abs(TFCEdata),[],2),'descend');
@@ -493,6 +520,15 @@ switch compstring
 
                 tVals(permIndex,:)=r_corr;
                 clusterTmp = ClusterEnhancement(r_corr,sparse_channel_adjacency_matrix,E,H);
+                % DEAD SINCE 2026-10-13, kept as a guard. Until then, a permuted
+                % map lying entirely below the TFCE step (max |r| < 0.1) made
+                % ClusterEnhancement return a scalar 0, or -- with NaN channels --
+                % a vector only as long as the last NaN channel. This branch
+                % appended ONE NaN, which repaired only a vector exactly one
+                % short; any other short vector failed the row assignment below
+                % with a size error. ClusterEnhancement now sums along dimension 1
+                % explicitly and always returns one value per channel, so the
+                % condition cannot be true.
                 if length(clusterTmp) <  size(TFCEdata,2) % to solve same data for data_x_temp and data_y_temp corr
                     clusterTmp(end+1) = NaN; %#ok<AGROW>
                 end
@@ -563,7 +599,7 @@ for i = 1:length(T.real_T)
         otherwise
             obs = T.real_T(i);
     end
-    p.corrected(i) = (sum(T.tMax >= obs) + 1)/(possible_permutations + 1);
+    p.corrected(i) = (snpm_count_at_least(T.tMax, obs) + 1)/(possible_permutations + 1);
 end
 
  % single threshold TFCE
@@ -579,5 +615,16 @@ for i = 1:length(T.real_TFCE)
         otherwise
             obs = T.real_TFCE(i);
     end
-    p.correctedTFCE(i) = (sum(T.tMaxTFCE >= obs) + 1)/(possible_permutations + 1);
+    p.correctedTFCE(i) = (snpm_count_at_least(T.tMaxTFCE, obs) + 1)/(possible_permutations + 1);
 end
+
+% Rule 3: an observed t that is 0 by definition is reported as undefined.
+undef_obs = reshape(logical(undef_obs), 1, []);
+if any(undef_obs)
+    T.real_T(undef_obs)        = NaN;
+    T.real_TFCE(undef_obs)     = NaN;
+    p.real(undef_obs)          = NaN;
+    p.corrected(undef_obs)     = NaN;
+    p.correctedTFCE(undef_obs) = NaN;
+end
+T.undefined_channels = find(undef_obs);

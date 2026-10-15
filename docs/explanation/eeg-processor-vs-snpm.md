@@ -45,7 +45,8 @@ peer-reviewed; SnPM reimplements the permutation math). SnPM is partly redundant
    chosen automatically. Lower friction for non-statisticians. This is its strongest justification.
 2. **Sleep-specific designs PALM doesn't package:**
    - Two-way mixed ANOVA rendered as a full **3-effect report** (group / condition / interaction),
-     each with the correct per-effect error term + simple effects.
+     with the group effect tested against between-subject variation and the condition and
+     interaction effects against within-subject variation, plus simple effects.
    - Per-channel **LMM** for trial-level / awakening data (Stephan 2021) — a mixed-effects fit
      PALM's fixed-effects GLM cannot do.
    - **Circular-statistics** variants for phase/angle data.

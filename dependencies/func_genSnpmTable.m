@@ -78,17 +78,28 @@ end
 % unevaluable in some permutations (GLM tier, snpm_glm_fl_context). Always
 % written when the field exists so a reader of the workbook can see that the
 % analysed channel set is smaller than the montage - and see exactly which.
+% One row per (analysis, channel), with that channel's own reason. Since the
+% zero-variance rule (2026-10-14) a channel can leave for missing data, for
+% having no variation left after the nuisance model, or because its observed
+% statistic is undefined, and each GLM loop (omnibus, each post-hoc pair, each
+% mixed2way effect and simple effect) lists its own; the Analysis column says
+% which loop a row belongs to.
 if isfield(S, 'excluded_channels') && isstruct(S.excluded_channels)
-    ex = S.excluded_channels;
-    if isfield(ex, 'n') && ex.n > 0
-        T_excl = table(ex.index(:), string(ex.labels(:)), ...
-            repmat(string(ex.reason), numel(ex.index), 1), ...
-            'VariableNames', {'ChannelIndex','ChannelLabel','Reason'});
-    else
+    T_excl = excluded_sheet(S);
+    if isempty(T_excl)
         T_excl = table("None", "All channels evaluable (no missing data)", ...
             'VariableNames', {'ChannelLabel','Reason'});
     end
     writetable(T_excl, output_xls, 'Sheet', 'excludedChannels')
+end
+
+% Pairwise post-hoc comparisons (GLM tier): one row per pair, RUN OR NOT. A
+% pair is tested on the rows of its two levels only, so it can rest on fewer
+% subjects than the effect, and a pair that cannot be estimated is not run at
+% all; neither fact is visible from the maps, so both are tabulated here.
+T_ph = posthoc_sheet(S);
+if ~isempty(T_ph)
+    writetable(T_ph, output_xls, 'Sheet', 'posthoc')
 end
 
 if ~isempty(uncorrsigch)
@@ -107,4 +118,117 @@ if ~isempty(SnPMsigch)
     writetable(array2table(SnPMsigch),output_xls,'Sheet','correctSnPMsigch')
 elseif isempty(SnPMsigch)
     writetable(table({'No significant chans'}),output_xls,'Sheet','correctSnPMsigch')
+end
+
+end
+
+function T = excluded_sheet(S)
+% ChannelIndex | ChannelLabel | Reason | Analysis, over every loop of the run.
+    rows = {};
+    if isfield(S, 'effects') && numel(S.effects) > 1
+        for k = 1:numel(S.effects)
+            e = S.effects(k);
+            rows = add_excl_rows(rows, effect_name(e), e);
+            rows = add_posthoc_excl_rows(rows, effect_name(e), e);
+            if isfield(e, 'simple_effects')
+                for s = 1:numel(e.simple_effects)
+                    se = e.simple_effects(s);
+                    rows = add_excl_rows(rows, effect_name(se), se);
+                    rows = add_posthoc_excl_rows(rows, effect_name(se), se);
+                end
+            end
+        end
+    else
+        nm = '';
+        if isfield(S.excluded_channels, 'context'), nm = char(S.excluded_channels.context); end
+        if isfield(S, 'glm') && isfield(S.glm, 'effect_label'), nm = char(S.glm.effect_label); end
+        rows = add_excl_rows(rows, nm, S);
+        rows = add_posthoc_excl_rows(rows, nm, S);
+    end
+    T = [];
+    if isempty(rows), return; end
+    T = cell2table(rows, 'VariableNames', {'ChannelIndex', 'ChannelLabel', 'Reason', 'Analysis'});
+end
+
+function rows = add_excl_rows(rows, name, e)
+    if ~isfield(e, 'excluded_channels') || ~isstruct(e.excluded_channels), return; end
+    ex = e.excluded_channels;
+    if ~isfield(ex, 'n') || ex.n == 0, return; end
+    if isfield(ex, 'reasons') && numel(ex.reasons) == numel(ex.index)
+        r = ex.reasons;
+    else
+        r = repmat({char(ex.reason)}, 1, numel(ex.index));
+    end
+    for i = 1:numel(ex.index)
+        rows(end+1, :) = {ex.index(i), char(ex.labels{i}), char(r{i}), name}; %#ok<AGROW>
+    end
+end
+
+function rows = add_posthoc_excl_rows(rows, name, e)
+    if ~isfield(e, 'posthoc'), return; end
+    for i = 1:numel(e.posthoc)
+        rows = add_excl_rows(rows, sprintf('%s: post-hoc %s', name, char(e.posthoc(i).label)), ...
+            e.posthoc(i));
+    end
+end
+
+function T = posthoc_sheet(S)
+% Effect | Pair | Status | RunOn | Rows | Subjects | SubjectsLeftOut | TFCEsigChannels | ClusterSigChannels
+    rows = {};
+    if isfield(S, 'effects') && numel(S.effects) > 1
+        for k = 1:numel(S.effects)
+            e = S.effects(k);
+            rows = add_effect_rows(rows, effect_name(e), e);
+            if isfield(e, 'simple_effects')
+                for s = 1:numel(e.simple_effects)
+                    rows = add_effect_rows(rows, effect_name(e.simple_effects(s)), e.simple_effects(s));
+                end
+            end
+        end
+    else
+        nm = 'main effect';
+        if isfield(S, 'glm') && isfield(S.glm, 'effect_label'), nm = char(S.glm.effect_label); end
+        rows = add_effect_rows(rows, nm, S);
+    end
+    T = [];
+    if isempty(rows), return; end
+    T = cell2table(rows, 'VariableNames', {'Effect', 'Pair', 'Status', 'RunOn', 'Rows', ...
+        'Subjects', 'SubjectsLeftOut', 'TFCEsigChannels', 'ClusterSigChannels'});
+end
+
+function nm = effect_name(e)
+    nm = '';
+    if isfield(e, 'effect_label'), nm = char(e.effect_label); end
+    if isempty(nm) && isfield(e, 'key'), nm = char(e.key); end
+end
+
+function rows = add_effect_rows(rows, name, e)
+    if isfield(e, 'posthoc')
+        for i = 1:numel(e.posthoc)
+            q = e.posthoc(i);
+            rows(end+1, :) = {name, char(q.label), 'run', fget(q, 'run_on', ''), ...
+                fget(q, 'n_rows', NaN), fget(q, 'n_subjects', NaN), ...
+                strjoin(fget(q, 'dropped_subjects', {}), ', '), ...
+                numel(q.correctTFCEsigch), numel(q.SnPMsigch)}; %#ok<AGROW>
+        end
+    end
+    if isfield(e, 'posthoc_skipped')
+        for i = 1:numel(e.posthoc_skipped)
+            q = e.posthoc_skipped(i);
+            rows(end+1, :) = {name, char(q.label), ['not run: ' char(q.reason)], '', NaN, NaN, '', NaN, NaN}; %#ok<AGROW>
+        end
+    end
+    % mixed2way: interaction simple effects that were not run (a group with
+    % fewer than 2 subjects). Listed here with the skipped pairs so the
+    % workbook states every test the report does not contain.
+    if isfield(e, 'simple_skipped')
+        for i = 1:numel(e.simple_skipped)
+            q = e.simple_skipped(i);
+            rows(end+1, :) = {name, char(q.label), ['not run: ' char(q.reason)], '', NaN, NaN, '', NaN, NaN}; %#ok<AGROW>
+        end
+    end
+end
+
+function v = fget(s, f, dflt)
+    if isfield(s, f) && ~isempty(s.(f)), v = s.(f); else, v = dflt; end
 end

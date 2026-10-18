@@ -1,4 +1,4 @@
-function [Clusters, real_stat] = snpm_cluster_analysis(data_x,data_y,threshold,neighbors,alpha,comparison,tail,permutation_overide)
+function [Clusters, real_stat] = snpm_cluster_analysis(data_x,data_y,threshold,neighbors,alpha,comparison,tail,permutation_overide,fl)
 %% Outputs
 % 1: Clusters   struct array of clusters with .channels .threshold .p .permutations
 % 2: real_stat  the OBSERVED statistic map (1 x nChannels) this engine formed
@@ -19,6 +19,11 @@ function [Clusters, real_stat] = snpm_cluster_analysis(data_x,data_y,threshold,n
 % 7: tail ('both','right','left') in this case a left tail looks for
 % negative threshold clusters
 % 8: permutation_overide
+% 9: fl (optional, correlationP only): Freedman-Lane context for a partial
+%    correlation, struct('Rz', n x n residual-forming matrix of [1, covariates],
+%    'k_eff', covariate rank); data_x / data_y must be the residuals Rz*x, Rz*y.
+%    Every map is corr(Rz * data_x(order,:), data_y) (snpm_fl_corr). Omitted or
+%    [] = the zero-order path.
 
 % set data for channels that are not interesting to NaN (i.e. data for outside of 185 channels is set to NaN prior to inputing into matrix
 %data_x(:,setdiff(1:256,inside185ch))=NaN;
@@ -53,6 +58,8 @@ if nargin < 7
     
 end
 
+if nargin < 9, fl = []; end
+
 if strcmp(comparison,'pairedT') ==1
     if size(data_x,1) ~= size(data_y,1)
         disp('group sizes must match')
@@ -70,6 +77,10 @@ else
 end
 
 compstring=[comparison tail];
+if ~isempty(fl) && ~any(strcmp(compstring, {'correlationPboth', 'correlationSboth'}))
+    error('snpm_cluster_analysis:flNotCorrelation', ...
+        'A Freedman-Lane context applies to correlationP only, not to ''%s''.', compstring);
+end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % this switch runs the permutation/combinations depending on the comparison
 switch compstring
@@ -79,7 +90,7 @@ switch compstring
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
 
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         end
 
@@ -133,7 +144,7 @@ switch compstring
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
 
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         end
 
@@ -179,7 +190,7 @@ switch compstring
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
 
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         end
 
@@ -226,7 +237,7 @@ switch compstring
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
 
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         end
 
@@ -278,7 +289,7 @@ switch compstring
         % Honour an explicit override; otherwise enumerate exactly when the group
         % is small, else fall back to a Monte-Carlo ceiling. snpm_relabel_assignments
         % samples WITH REPLACEMENT (no uniqueness loop) so requested >= G never hangs.
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         elseif G <= 300000
             requested_permutations = G;          % exact enumeration
@@ -325,7 +336,7 @@ switch compstring
 
         % See 'unpairedTleft'. snpm_relabel_assignments samples WITH REPLACEMENT
         % so requested >= G can no longer hang.
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         elseif G <= 300000
             requested_permutations = G;          % exact enumeration
@@ -371,7 +382,7 @@ switch compstring
 
         % See 'unpairedTleft'. snpm_relabel_assignments samples WITH REPLACEMENT
         % so requested >= G can no longer hang.
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         elseif G <= 300000
             requested_permutations = G;          % exact enumeration
@@ -416,7 +427,7 @@ switch compstring
         % snpm_row_permutations enumerates exactly when requested >= nSubj!
         % (nSubj<=10) and otherwise samples WITH REPLACEMENT (no uniqueness loop),
         % so requested >= nSubj! cannot hang.
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         else
             requested_permutations = min(factorial(nSubj), 50000);
@@ -439,6 +450,9 @@ switch compstring
         % core_snpm_analysis reports to the user. Same test in the Spearman arm
         % below, in snpm_single_threshold_with_TFCE, and in core_snpm_analysis.
         evaluable_col = all(isfinite(data_x) & isfinite(data_y), 1);
+        if ~isempty(fl)
+            fl_v2 = sum(data_x.^2, 1);   % zero-variance reference, as in the TFCE engine
+        end
 
         for permIndex=1:possible_permutations
             %print out the status
@@ -448,7 +462,12 @@ switch compstring
 
             randompermutations = actual_combos(permIndex,:);
 
-            r_corr = snpm_corr_columns(data_x(randompermutations,:), data_y);
+            if isempty(fl)
+                r_corr = snpm_corr_columns(data_x(randompermutations,:), data_y);
+            else
+                % Freedman-Lane: permuted residuals re-projected off the covariates.
+                r_corr = snpm_fl_corr(fl, data_x, data_y, randompermutations, fl_v2);
+            end
             r_corr(~evaluable_col) = NaN;   % defensive: unreachable
             REALSTATS.tstat=r_corr;  %this is an obvious misnomer until more appropriate terminology is established
 
@@ -467,16 +486,27 @@ switch compstring
         % between the observed statistic and its own image under the identity
         % relabelling flips a >= against the max-statistic null, changing b by
         % one and moving p by 1/(N+1) -- 0.005 at 200 permutations.
-        REALSTATS.tstat = snpm_corr_columns(data_x, data_y);
+        if isempty(fl)
+            REALSTATS.tstat = snpm_corr_columns(data_x, data_y);
+        else
+            REALSTATS.tstat = snpm_fl_corr(fl, data_x, data_y, 1:nSubj, fl_v2);   % identity order
+        end
         REALSTATS.tstat(~evaluable_col) = NaN;
 
     case 'correlationSboth'
+        % A partial Spearman reaches the engines as 'correlationP' on rank
+        % residuals; a Freedman-Lane context here would rank residuals twice.
+        if ~isempty(fl)
+            error('snpm_cluster_analysis:flSpearman', ...
+                ['correlationS takes no Freedman-Lane context: rank data and covariates ' ...
+                 'first, residualize, and call the engine with ''correlationP''.']);
+        end
 
         nSubj=size(data_x,1);
         % See 'correlationPboth'. snpm_row_permutations enumerates exactly when
         % requested >= nSubj! (nSubj<=10) and otherwise samples WITH REPLACEMENT
         % (no uniqueness loop), so requested >= nSubj! cannot hang.
-        if nargin == 8
+        if nargin >= 8
             requested_permutations = permutation_overide;
         else
             requested_permutations = min(factorial(nSubj), 50000);

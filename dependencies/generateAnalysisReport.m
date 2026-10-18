@@ -623,6 +623,8 @@ function s = perm_phrase(rs, params)
     % run is captioned as a within-subject sign flip.
     if     has(comp,'unpaired'),    s = 'group-relabelling permutation';
     elseif has(comp,'paired') || has(comp,'onesample'), s = 'within-subject sign-flip permutation';
+    elseif has(comp,'correlation') && has_fl_covariates(rs)
+        s = 'Freedman&ndash;Lane permutation (approximate)';
     elseif has(comp,'correlation'), s = 'subject-relabelling permutation';
     elseif has(comp,'circ'),        s = 'Freedman&ndash;Lane permutation';
     else,                           s = 'permutation';
@@ -677,6 +679,10 @@ function s = methods_line(rs, params, statName, nperm, alpha)
     elseif has(comp,'anova'),      phrase = 'One-way permutation';
     elseif has(comp,'regression'), phrase = 'Regression permutation';
     elseif has(comp,'circ'),       phrase = 'Circular permutation';
+    elseif has(comp,'correlation') && has_fl_covariates(rs)
+        % Never "exact" with covariates: Freedman-Lane permutes residuals,
+        % which are only approximately exchangeable.
+        phrase = 'Freedman&ndash;Lane partial-correlation permutation (approximate)';
     end
 
     % TAIL. Only the legacy t-test / correlation paths have one. An F statistic
@@ -908,6 +914,13 @@ function M = model_card_rows(rs, params, base)
     M = struct('formula', f, 'rows', {rows});
 end
 
+% A legacy correlation run that partialled covariates out (core_snpm_analysis
+% sets rs.covariates.method only on that route).
+function tf = has_fl_covariates(rs)
+    tf = isfield(rs,'covariates') && isstruct(rs.covariates) ...
+        && isfield(rs.covariates,'method') && ~isempty(rs.covariates.method);
+end
+
 function s = strjoin_or(c, dflt)
     if isempty(c), s = dflt; else, s = strjoin(c, ' + '); end
 end
@@ -1049,6 +1062,24 @@ function N = build_notices(rs)
     % finding.
     if isfield(rs,'normalize_broadcast_caveat') && ~isempty(rs.normalize_broadcast_caveat)
         N{end+1} = notice('Data Type caveat', esc(char(rs.normalize_broadcast_caveat)));
+    end
+
+    % -- partial correlation: how the covariates were controlled -------------
+    if has_fl_covariates(rs)
+        cv = rs.covariates;
+        k = gf(cv, 'k_eff', NaN); df = gf(cv, 'error_df', NaN);
+        N{end+1} = notice('Covariate control', sprintf([ ...
+            'Partial correlation with <b>%d</b> covariate(s) (error df n &minus; 2 &minus; k = ' ...
+            '<b>%d</b>). Both measures were residualized on the covariates and each ' ...
+            'permutation re-projects the permuted EEG residuals off the covariates before ' ...
+            'correlating (<b>Freedman&ndash;Lane</b>). This permutation test is ' ...
+            '<b>approximate</b>, not exact.'], k, df));
+        if isfield(cv,'conservative_note') && ~isempty(cv.conservative_note)
+            N{end+1} = notice('Few error degrees of freedom', esc(char(cv.conservative_note)));
+        end
+        if isfield(cv,'spearman_caveat') && ~isempty(cv.spearman_caveat)
+            N{end+1} = notice('Partial Spearman caveat', esc(char(cv.spearman_caveat)));
+        end
     end
 
     % -- a global the engine declared uninterpretable ------------------------

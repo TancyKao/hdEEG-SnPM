@@ -46,7 +46,10 @@ function out = snpm_perm_tap(cmd, tag, value)
 %       value = struct: data_x, data_y exactly as handed to global_stat_test and
 %               both engines (after matching, channel selection, transform,
 %               masking, residualization), comparison (the key the engines get),
-%               tail, ncov, alpha, threshold (cluster-forming)
+%               tail, ncov, alpha, threshold (cluster-forming); with
+%               covariates also fl_Rz (the n x n Freedman-Lane residual-
+%               forming matrix both engines re-project through) and k_eff
+%               (covariate rank, = ncov). Absent on the zero-order path.
 %   'legacy:cluster_null'                  snpm_cluster_analysis, once per run
 %       value = struct: null_sorted (the sorted max-cluster-size null the
 %               cluster p is computed against), thresholds, threshold

@@ -407,7 +407,9 @@ has this easy fix.
 Missing *covariate* values behave differently and more bluntly. A subject with a missing
 covariate has no defined design-matrix row at any channel, so that subject is dropped from the
 analysis outright rather than costing a channel. Correlation needs at least three subjects to
-survive this step.
+survive this step. How the remaining subjects' covariates are then controlled, and why that
+permutation is approximate, is explained in
+[Covariates in a correlation](covariates-in-correlation.md).
 
 Finally, if a large share of the montage is excluded no matter what you do, treat that as a
 reason to reconsider the analysis rather than to proceed carefully. A map with a third of the

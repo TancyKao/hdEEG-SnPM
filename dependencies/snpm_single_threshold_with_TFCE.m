@@ -1,10 +1,18 @@
-function [T,p,E,H]= snpm_single_threshold_with_TFCE(data_x,data_y,neighbors,E,H,alpha,comparison,tail,permutation_overide)
+function [T,p,E,H]= snpm_single_threshold_with_TFCE(data_x,data_y,neighbors,E,H,alpha,comparison,tail,permutation_overide,fl)
 
 %data_x, data_y = subjects x inputs
 
 %%Optional inputs and defaults
 %%alpha=0.05
 %%comparison='unpairedT' ('pairedT', potentially add more)
+
+%%fl (optional, correlationP only) = Freedman-Lane context for a partial
+%%   correlation, struct with fields
+%%     .Rz     n x n residual-forming matrix I - Q*Q' of [1, covariates]
+%%     .k_eff  rank([1, covariates]) - 1
+%%   data_x and data_y must then already be the residuals Rz*x and Rz*y.
+%%   Every map (observed = identity order, and each permutation) is
+%%   corr(Rz * data_x(order,:), data_y). Omitted or [] = zero-order path.
 
 %%Outputs
 %%T struct chkT,realT,critT, tMax
@@ -34,6 +42,11 @@ sparse_channel_adjacency_matrix = make_neighbors_sparse(neighbors,size(neighbors
 
 number_of_inputs=size(data_x,2);
 compstring=[comparison tail];
+if nargin < 10, fl = []; end
+if ~isempty(fl) && ~any(strcmp(compstring, {'correlationPboth', 'correlationSboth'}))
+    error('snpm_single_threshold_with_TFCE:flNotCorrelation', ...
+        'A Freedman-Lane context applies to correlationP only, not to ''%s''.', compstring);
+end
 
 % ZERO-VARIANCE RULE (Method Spec 2026-10-14, t-test tier). At every labelling
 % -- observed and permuted -- a channel whose error sum of squares counts as
@@ -54,7 +67,7 @@ switch compstring
 
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
-        if nargin == 9
+        if nargin >= 9
             requested_permutations = permutation_overide;
         end
         % switch values so it does a left sided test
@@ -110,7 +123,7 @@ switch compstring
 
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
-        if nargin == 9
+        if nargin >= 9
             requested_permutations = permutation_overide;
         end
 
@@ -157,7 +170,7 @@ switch compstring
 
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
-        if nargin == 9
+        if nargin >= 9
             requested_permutations = permutation_overide;
         end
 
@@ -204,7 +217,7 @@ switch compstring
     case 'onesampleTboth'
         nSubj=size(data_x,1);
         requested_permutations = 2^nSubj;
-        if nargin == 9
+        if nargin >= 9
             requested_permutations = permutation_overide;
         end
 
@@ -261,7 +274,7 @@ switch compstring
         % fall back to a sane Monte-Carlo ceiling. snpm_relabel_assignments then
         % samples WITH REPLACEMENT (no uniqueness loop) so the run always
         % terminates, even when requested >= G (the historical hang).
-        if nargin == 9
+        if nargin >= 9
             requested_permutations = permutation_overide;
         elseif G <= 300000
             requested_permutations = G;          % exact enumeration
@@ -310,7 +323,7 @@ switch compstring
 
         % See 'unpairedTleft' for the branch logic. snpm_relabel_assignments
         % samples WITH REPLACEMENT so requested >= G can no longer hang.
-        if nargin == 9
+        if nargin >= 9
             requested_permutations = permutation_overide;
         elseif G <= 300000
             requested_permutations = G;          % exact enumeration
@@ -359,7 +372,7 @@ switch compstring
 
         % See 'unpairedTleft' for the branch logic. snpm_relabel_assignments
         % samples WITH REPLACEMENT so requested >= G can no longer hang.
-        if nargin == 9
+        if nargin >= 9
             requested_permutations = permutation_overide;
         elseif G <= 300000
             requested_permutations = G;          % exact enumeration
@@ -432,6 +445,9 @@ switch compstring
         % core_snpm_analysis reports to the user. Same test in the Spearman arm
         % below, in snpm_cluster_analysis, and in core_snpm_analysis.
         evaluable_col = all(isfinite(data_x) & isfinite(data_y), 1);
+        if ~isempty(fl)
+            fl_v2 = sum(data_x.^2, 1);   % ||x~_c||^2, the zero-variance reference
+        end
 
         for permIndex = 1:possible_permutations
             %print out the status
@@ -441,7 +457,11 @@ switch compstring
             randompermutations = actual_combos(permIndex,:);
 
             % One vectorised call for the whole map; NaN columns stay NaN.
-            r_corr = snpm_corr_columns(data_x(randompermutations,:), data_y);
+            if isempty(fl)
+                r_corr = snpm_corr_columns(data_x(randompermutations,:), data_y);
+            else
+                r_corr = snpm_fl_corr(fl, data_x, data_y, randompermutations, fl_v2);
+            end
             r_corr(~evaluable_col) = NaN;   % defensive: unreachable, the rule above already gives NaN
 
             tVals(permIndex,:)=r_corr;
@@ -459,13 +479,25 @@ switch compstring
         % 1/(N+1) -- 0.005 at 200 permutations, enough to cross 0.05. The
         % uncorrected parametric p still comes from corr() per channel, which is
         % a separate quantity and not scored against any permutation null.
-         T.real_T = snpm_corr_columns(data_x, data_y);
-         T.real_T(~evaluable_col) = NaN;
-         p.real=NaN(1,number_of_inputs);
-         for i = 1:number_of_inputs
-             if ~evaluable_col(i), continue; end
-             [~,p_tmp]=corr(data_x(:,i),data_y(:,i));
-             p.real(i)=p_tmp;
+         if isempty(fl)
+             T.real_T = snpm_corr_columns(data_x, data_y);
+             T.real_T(~evaluable_col) = NaN;
+             p.real=NaN(1,number_of_inputs);
+             for i = 1:number_of_inputs
+                 if ~evaluable_col(i), continue; end
+                 [~,p_tmp]=corr(data_x(:,i),data_y(:,i));
+                 p.real(i)=p_tmp;
+             end
+         else
+             % Partial correlation: the observed map through the SAME
+             % expression as the permuted maps, identity order, so row 1 of
+             % actual_combos reproduces it bit for bit; equals partialcorr to
+             % ~1e-15. The uncorrected p uses the partial-correlation df
+             % n - 2 - k_eff (what partialcorr reports), not corr()'s n - 2,
+             % which treated the residuals as if nothing had been fitted.
+             T.real_T = snpm_fl_corr(fl, data_x, data_y, 1:nSubj, fl_v2);
+             T.real_T(~evaluable_col) = NaN;
+             p.real = fl_partial_p(T.real_T, nSubj - 2 - fl.k_eff);
          end
 
         T.tMax = sort(max(abs(tVals),[],2),'descend');
@@ -475,6 +507,14 @@ switch compstring
     
     case 'correlationSboth'
 
+            % A partial Spearman reaches the engines as 'correlationP' on rank
+            % residuals (core_snpm_analysis ranks first); a Freedman-Lane
+            % context here would mean ranking residuals a second time.
+            if ~isempty(fl)
+                error('snpm_single_threshold_with_TFCE:flSpearman', ...
+                    ['correlationS takes no Freedman-Lane context: rank data and covariates ' ...
+                     'first, residualize, and call the engine with ''correlationP''.']);
+            end
             nSubj=size(data_x,1);
             % See 'correlationPboth'. snpm_row_permutations enumerates exactly when
             % requested >= nSubj! (nSubj<=10) and otherwise samples WITH REPLACEMENT
@@ -628,3 +668,13 @@ if any(undef_obs)
     p.correctedTFCE(undef_obs) = NaN;
 end
 T.undefined_channels = find(undef_obs);
+
+end
+
+function pv = fl_partial_p(r, df)
+% Two-sided parametric p of a partial correlation, df = n - 2 - k_eff:
+% t = r*sqrt(df/(1 - r^2)) (what partialcorr and global_stat_test's
+% adjust_corr_p use). |r| = 1 gives t = Inf and p = 0. NaN stays NaN.
+    t  = r .* sqrt(df ./ (1 - r.^2));
+    pv = 2 * tcdf(-abs(t), df);
+end

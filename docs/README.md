@@ -53,6 +53,7 @@ Background reading; the *why* behind the design.
 - [Two-way mixed ANOVA — how the interaction is computed](explanation/mixed2way-interaction.md)
 - [About circular statistics for phase](explanation/circular-statistics-for-phase.md)
 - [Missing data and the complete-column rule](explanation/missing-data-and-excluded-channels.md)
+- [Covariates in a correlation: the Freedman–Lane permutation](explanation/covariates-in-correlation.md)
 - [Interpreting cluster results](explanation/interpreting-cluster-results.md)
 - [Why this tool exists alongside a PALM-based pipeline](explanation/eeg-processor-vs-snpm.md)
 

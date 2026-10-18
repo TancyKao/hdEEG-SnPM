@@ -1078,6 +1078,12 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     % filename, the topoplot and the report call the analysis.
     stat_comparison = params.comparison;
 
+    % Freedman-Lane context for a partial correlation: [] means no covariates
+    % (the zero-order path, unchanged); otherwise struct('Rz', k_eff) built in
+    % the residualization block below and handed to both engines.
+    fl_ctx = [];
+    fl_conservative_note = '';
+
     if is_correlation
         % A subject with a missing COVARIATE cannot enter the partial
         % correlation at ANY channel (the design matrix row is undefined), so
@@ -1379,10 +1385,18 @@ function [results_struct, results_text] = core_snpm_analysis(params)
         % 1e-12) and T10 (the same equality end-to-end through this function),
         % and by the estimator note printed in T5.
         %
-        % The permutation machinery is untouched: ranks are a fixed relabelling
-        % of 1..n, so permuting rows of the rank residuals is the same operation
-        % it always was, and the df used by the partial-correlation global p is
-        % unchanged.
+        % The ranks are taken ONCE, here, and never again: the Freedman-Lane
+        % permutation below runs on the rank residuals exactly as it runs on
+        % raw residuals for Pearson.
+        %
+        % ESTIMAND CAVEAT (Tancy 2026-10-18: document now, revisit later).
+        % Ranking the covariates and then partialling them out LINEARLY removes
+        % a covariate only as far as its relation to the RANKS is linear. A
+        % covariate whose effect is linear on the raw scale is not fully
+        % removed (simulated family-wise error about 0.13 at 3 covariates under
+        % any permutation scheme). The caveat is printed in the results text
+        % and the report; correlationP or the regression preset is the
+        % analysis to use when covariate control is the point.
         %
         % Because the statistic on rank residuals is a LINEAR correlation (that
         % is the definition of the rank partial correlation -- you do not rank
@@ -1404,49 +1418,82 @@ function [results_struct, results_text] = core_snpm_analysis(params)
         novar_pre_x = data_x;
         novar_pre_y = data_y;
 
-        % Residualize both data matrices against [1, covariates], per channel.
-        % Initialised to NaN, NOT zeros: with zeros a cell that was missing
-        % survived residualization as a finite 0 -- exactly the residual mean --
-        % which (a) left Spearman rho distorted by more than 0.05 in 29.2% of
-        % channels over 2000 draws at 20% missingness, (b) reported a parametric
-        % p on an inflated n, and (c) ERASED the missingness pattern, freezing
-        % the pairwise-deletion denominators across permutations while the
-        % numerator still lost mismatched pairs. Because the evaluable mask is
-        % applied above, every retained channel is complete here, so the
-        % sum(valid_idx) branch below can only fire on a channel the mask has
-        % already dropped.
-        data_x_residual = NaN(size(data_x));
-        data_y_residual = NaN(size(data_y));
-
-        for ch = 1:size(data_x, 2)
-            % Get valid indices for this channel. isfinite, not ~isnan, to match
-            % the evaluable mask above: on a retained channel every cell is
-            % finite so the two agree, and on an excluded channel both are
-            % all-false. Using ~isnan here would let a non-finite cell into the
-            % design matrix if the mask above were ever bypassed.
-            valid_idx = isfinite(data_x(:, ch)) & isfinite(data_y(:, ch));
-            
-            if sum(valid_idx) > size(covariates, 2) + 1  % Need enough subjects
-                % Residualize data_x for this channel
-                X_design = [ones(sum(valid_idx), 1), covariates(valid_idx, :)];
-                beta_x = X_design \ data_x(valid_idx, ch);
-                data_x_residual(valid_idx, ch) = data_x(valid_idx, ch) - X_design * beta_x;
-                
-                % Residualize data_y for this channel
-                beta_y = X_design \ data_y(valid_idx, ch);
-                data_y_residual(valid_idx, ch) = data_y(valid_idx, ch) - X_design * beta_y;
-            else
-                % Not enough subjects - keep as NaN
-                data_x_residual(:, ch) = NaN;
-                data_y_residual(:, ch) = NaN;
-            end
+        % FREEDMAN-LANE PARTIAL CORRELATION (Method Spec approved by Tancy
+        % 2026-10-18; Freedman & Lane 1983, Winkler et al. 2014).
+        %
+        % The residual-forming matrix R_Z = I - Q*Q' of the nuisance design
+        % D = [1, covariates] is built ONCE, on the final analysed rows (the
+        % missing-covariate subjects were dropped and the evaluable-channel
+        % mask was applied above), and both data matrices are residualized
+        % through it: x~ = R_Z*x, y~ = R_Z*y. One n x n matrix serves every
+        % channel; a masked (all-NaN) column stays all-NaN because a matrix
+        % product never mixes columns.
+        %
+        % The engines are then handed R_Z and score, at every permutation,
+        %       r* = corr(R_Z * x~(order,:), y~)
+        % i.e. the residuals of the EEG side are permuted and RE-PROJECTED off
+        % the covariates before correlating. The scheme it replaces permuted
+        % x~ against the fixed y~ and stopped there (Kennedy); a permuted x~ is
+        % no longer orthogonal to the covariates, so its null was too narrow
+        % whenever the covariates explain much of y: measured family-wise error
+        % 0.866 (max) / 0.505 (TFCE) / 0.229 (cluster) at n = 10, k = 4 and
+        % 0.302 / 0.215 / 0.143 at n = 20, k = 5, nominal 0.05. Freedman-Lane
+        % lands in 0.04-0.06 on every simulated row. Below 5 residual df the
+        % per-channel max-statistic family-wise error can be mildly liberal
+        % (measured 0.056 at nominal 0.05, df 3) while TFCE and cluster are
+        % conservative. It is APPROXIMATE, not exact -- residuals are not
+        % exchangeable -- and is reported that way.
+        %
+        % A rank-revealing QR makes a redundant covariate (a duplicate column,
+        % a sum of two others) cost nothing and be counted correctly: the
+        % covariate count that enters every degrees-of-freedom statement is
+        % k_eff = rank(D) - 1, not size(covariates, 2).
+        n_fl = size(data_x, 1);
+        D_fl = [ones(n_fl, 1), covariates];
+        [Q_fl, R_fl, ~] = qr(D_fl, 0);
+        rdiag = abs(diag(R_fl));
+        rank_fl = sum(rdiag > max(size(D_fl)) * eps(max(rdiag)));
+        Q_fl = Q_fl(:, 1:rank_fl);
+        fl_Rz = eye(n_fl) - Q_fl * Q_fl';
+        k_eff = rank_fl - 1;
+        if k_eff < size(covariates, 2)
+            warning('snpm:covariateRankDeficient', ...
+                ['The %d covariate column(s) span only %d dimension(s) beyond the intercept ' ...
+                 '(a duplicated, constant or linearly dependent covariate). The analysis ' ...
+                 'controls for that %d-dimensional space and every degrees-of-freedom ' ...
+                 'statement uses %d covariate(s).'], size(covariates, 2), k_eff, k_eff, k_eff);
         end
-        
-        % Use residualized data for permutation analysis
-        data_x = data_x_residual;
-        data_y = data_y_residual;
-        
-        fprintf('Residualization complete. Running permutation analysis on residuals.\n');
+
+        % Error degrees of freedom of the partial correlation: n - 2 - k_eff.
+        fl_df = n_fl - 2 - k_eff;
+        if fl_df < 1
+            error('snpm:covariateNoErrorDF', ...
+                ['Partial correlation with %d covariate(s) on %d subjects leaves %d error ' ...
+                 'degrees of freedom (n - 2 - covariates). It needs at least 1: drop ' ...
+                 'covariates or add subjects.'], k_eff, n_fl, fl_df);
+        end
+        fl_conservative_note = '';
+        if fl_df < 5
+            fl_conservative_note = sprintf(['Only %d error degrees of freedom remain after ' ...
+                'partialling out %d covariate(s) from %d subjects (n - 2 - covariates < 5). ' ...
+                'With covariates the permutation test is APPROXIMATE (Freedman-Lane). At ' ...
+                'residual df below 5 the per-channel max-statistic family-wise error may be ' ...
+                'mildly liberal (measured 0.056 at nominal 0.05, df 3), while TFCE and ' ...
+                'cluster inference are conservative. Interpret borderline results cautiously.'], ...
+                fl_df, k_eff, n_fl);
+            warning('snpm:covariateConservative', '%s', fl_conservative_note);
+        end
+
+        % NaN, not zeros, for a masked column -- see the history of this
+        % block: a zero survived as a finite value equal to the residual mean,
+        % inflated n and erased the missingness pattern. R_Z * (all-NaN
+        % column) is all-NaN, so the property holds without a buffer.
+        data_x = fl_Rz * data_x;
+        data_y = fl_Rz * data_y;
+        fl_ctx = struct('Rz', fl_Rz, 'k_eff', k_eff, 'error_df', fl_df);
+
+        fprintf(['Residualization complete (Freedman-Lane, %d covariate(s), %d error df). ' ...
+            'Running permutation analysis.\n'], k_eff, fl_df);
     end
 
     % ------------------------------------------------------------------
@@ -1473,8 +1520,11 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     %       residuals with covariates -- against the pre-residual sum(v.^2))
     %                 -> 'constant across subjects' or, when only the
     %                    residuals are degenerate, 'fully explained by the
-    %                    covariates'. The denominator of r does not change
-    %       under row permutation, so correlation needs no rule 2.
+    %                    covariates'. Without covariates the denominator
+    %       of r does not change under row permutation, so no rule 2 is needed;
+    %       with covariates each permuted residual is re-projected off the
+    %       covariates and can lose its length, so the engines apply rule 2
+    %       inside snpm_fl_corr (r = 0 for that order).
     % The reason strings are shared with the Python port; do not reword.
     % ------------------------------------------------------------------
     novar = false(1, size(data_x, 2));
@@ -1537,10 +1587,12 @@ function [results_struct, results_text] = core_snpm_analysis(params)
 
     % Global statistical analysis (channel-averaged). Computed AFTER any
     % covariate residualization so the correlation global p reflects the partial
-    % correlation; ncov shrinks its df to n-2-ncov (descriptive p only).
+    % correlation; ncov shrinks its df to n-2-ncov (descriptive p only). ncov
+    % is k_eff = rank([1, covariates]) - 1, the number of covariate dimensions
+    % actually partialled out, so a redundant covariate does not cost a df.
     ncov = 0;
-    if contains(params.comparison, 'correlation') && use_covariates && ~isempty(covariates)
-        ncov = size(covariates, 2);
+    if ~isempty(fl_ctx)
+        ncov = fl_ctx.k_eff;
     end
 
     % STAT_COMPARISON, NOT PARAMS.COMPARISON, FROM HERE DOWN.
@@ -1564,7 +1616,15 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     % and the cluster engine must score the same functional or the global p and
     % the map describe different estimators. params.comparison is untouched and
     % still names the analysis in the filename, the topoplot and the report.
-    snpm_perm_tap('record', 'legacy:engine_inputs', struct('data_x', data_x, 'data_y', data_y, 'comparison', stat_comparison, 'tail', params.tail, 'ncov', ncov, 'alpha', alpha, 'threshold', threshold));
+    engine_inputs = struct('data_x', data_x, 'data_y', data_y, 'comparison', stat_comparison, 'tail', params.tail, 'ncov', ncov, 'alpha', alpha, 'threshold', threshold);
+    if ~isempty(fl_ctx)
+        % Partial correlation only (fields absent on the zero-order path, so
+        % its record is unchanged): the residual-forming matrix both engines
+        % re-project every permuted map through, and the covariate rank.
+        engine_inputs.fl_Rz = fl_ctx.Rz;
+        engine_inputs.k_eff = fl_ctx.k_eff;
+    end
+    snpm_perm_tap('record', 'legacy:engine_inputs', engine_inputs);
     res = global_stat_test(data_x, data_y, alpha, stat_comparison, params.tail, ncov);
 
     % ------------------------------------------------------------------
@@ -1598,10 +1658,15 @@ function [results_struct, results_text] = core_snpm_analysis(params)
     % Main permutation analysis. Circular comparisons never reach this point --
     % they are routed to core_snpm_circ by the early guard above, and the two
     % legacy _circ engines have been deleted.
-    [T,p,~,~] = snpm_single_threshold_with_TFCE(data_x,data_y,neighbors,E,H,alpha,stat_comparison,params.tail,params.permutations);
-
-    % Cluster analysis
-    [Clusters] = snpm_cluster_analysis(data_x,data_y,threshold,neighbors,alpha,stat_comparison,params.tail,params.permutations);
+    % With covariates the Freedman-Lane context rides along as one trailing
+    % argument; without, the call is the nine/eight-argument one it always was.
+    if isempty(fl_ctx)
+        [T,p,~,~] = snpm_single_threshold_with_TFCE(data_x,data_y,neighbors,E,H,alpha,stat_comparison,params.tail,params.permutations);
+        [Clusters] = snpm_cluster_analysis(data_x,data_y,threshold,neighbors,alpha,stat_comparison,params.tail,params.permutations);
+    else
+        [T,p,~,~] = snpm_single_threshold_with_TFCE(data_x,data_y,neighbors,E,H,alpha,stat_comparison,params.tail,params.permutations,fl_ctx);
+        [Clusters] = snpm_cluster_analysis(data_x,data_y,threshold,neighbors,alpha,stat_comparison,params.tail,params.permutations,fl_ctx);
+    end
 
     % ZERO-VARIANCE RULE 3 (t-tests). A channel whose OBSERVED labelling has a
     % zero error term (every value identical within each group, or every
@@ -2096,10 +2161,37 @@ function [results_struct, results_text] = core_snpm_analysis(params)
                 end
             end
             
+            % HOW the covariates were controlled. Never "exact": Freedman-Lane
+            % permutes residuals, which are only approximately exchangeable,
+            % so even the full-enumeration branch (n <= 10) is approximate.
+            fl_method = ['Freedman-Lane, approximate: x and y residualized on [1, covariates]; ' ...
+                'each permutation re-projects the permuted EEG residuals off the covariates ' ...
+                'before correlating. Not an exact test.'];
+            results_text{end+1} = ['Covariate rank used (k): ' num2str(fl_ctx.k_eff) ...
+                ' (error df n - 2 - k = ' num2str(fl_ctx.error_df) ')'];
+            results_text{end+1} = ['Permutation method: ' fl_method];
+            fl_spearman_caveat = '';
+            if strcmp(params.comparison, 'correlationS')
+                fl_spearman_caveat = ['Partial Spearman controls the covariates only as far as ' ...
+                    'their relation to the RANKS is linear (data and covariates are ranked, then ' ...
+                    'the covariates are partialled out linearly). A covariate whose effect is ' ...
+                    'linear on the raw scale is not fully removed. Use correlationP or the ' ...
+                    'regression preset when covariate control matters.'];
+                results_text{end+1} = ['CAVEAT: ' fl_spearman_caveat];
+            end
+            if ~isempty(fl_conservative_note)
+                results_text{end+1} = ['CAVEAT: ' fl_conservative_note];
+            end
+
             % Store in results_struct
             results_struct.covariates.names = covariate_names;
             results_struct.covariates.n_covariates = size(covariates, 2);
             results_struct.covariates.data = covariates;
+            results_struct.covariates.k_eff = fl_ctx.k_eff;
+            results_struct.covariates.error_df = fl_ctx.error_df;
+            results_struct.covariates.method = fl_method;
+            results_struct.covariates.spearman_caveat = fl_spearman_caveat;
+            results_struct.covariates.conservative_note = fl_conservative_note;
         end
     end
 

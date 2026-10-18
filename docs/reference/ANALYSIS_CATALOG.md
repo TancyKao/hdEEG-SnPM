@@ -52,8 +52,8 @@ repo root, which is in the repository — there is nothing to generate.
 | **Paired t** `pairedT` | Same people, 2 conditions differ? | 2 wide files (A, B), row-matched | — | paired `ttest` | `paired_condA.csv` + `paired_condB.csv` |
 | **One-sample** `onesampleT` | Within-subject A−B ≠ 0? | 2 wide files (A, B) | — | `ttest`(A−B) | `onesample_condA.csv` + `onesample_condB.csv`; or `onesample_change.csv` alone (single file vs 0) |
 | **Unpaired t** `unpairedT` | 2 independent groups differ? | 2 wide files (A, B), **group sizes may differ** | — | `ttest2` | `unpaired_groupA.csv` + `unpaired_groupB.csv` |
-| **Correlation P** `correlationP` | Linear EEG↔measure assoc? | 2 files: Data 1 wide w/ `Subject`; Data 2 either wide (channel *i* vs channel *i*) **or** `Subject` + ONE behavioural column (broadcast across Data 1's channels) | Subject col | Pearson `corr` | `corr_eeg.csv` + `corr_behavior.csv` (wide) or + `corr_behavior_single.csv` (single behavioural column) |
-| **Correlation S** `correlationS` | Monotonic assoc (robust)? | as above | Subject col | Spearman `corr` | as above |
+| **Correlation P** `correlationP` | Linear EEG↔measure assoc? | 2 files: Data 1 wide w/ `Subject`; Data 2 either wide (channel *i* vs channel *i*) **or** `Subject` + ONE behavioural column (broadcast across Data 1's channels) | Subject col (+ optional `covariate_file`) | Pearson `corr`; with covariates `partialcorr`, Freedman–Lane permutation (approximate) | `corr_eeg.csv` + `corr_behavior.csv` (wide) or + `corr_behavior_single.csv` (single behavioural column) |
+| **Correlation S** `correlationS` | Monotonic assoc (robust)? | as above | Subject col (+ optional `covariate_file`) | Spearman `corr`; with covariates `partialcorr(...,'Type','Spearman')`, Freedman–Lane (approximate; see the partial Spearman caveat below) | as above |
 | **Circular phase, 2 groups** `circ_phase_group` | Do 2 independent groups couple at a different phase? | 2 wide angle files in **radians** (**disjoint** Subject ids) **+ 2 wide event-count files** (GUI: *Event Count File*) | `circ_units`, `circ_convention`, `count1_file`, `count2_file` | covariate-adjusted Hotelling T² on (cos,sin), F(2, N−q−3) | `circ_phase_groupA.csv`, `circ_phase_groupB.csv` + `circ_phase_countsA.csv`, `circ_phase_countsB.csv` |
 | **Circular phase, 2 groups (U²)** `circ_phase_group_u2` | As above, omnibus over the whole distribution | as above (**no whole-degree input**) | as above | Watson's U² (no covariate slot) | as above; also `circ_conc_groupA.csv`, `circ_conc_groupB.csv` + `circ_conc_countsA.csv`, `circ_conc_countsB.csv` |
 | **Circular–linear** `circ_corrAngLinear` | Does a behavioural measure vary with phase? | 1 wide angle file + 1 measure file, **matched** Subject ids | `circ_units`, `circ_convention`, `measure_col` | circular–linear correlation (Mardia 1976), model F | `circ_anglinear_angles.csv` + `circ_anglinear_measure.csv` |
@@ -245,6 +245,35 @@ all (an ID column only, or an unreadable header) errors at classification
 stripped as the ID from each file; any other non-numeric column that survives (a second text
 ID such as `SubjectID`) errors `snpm:nonNumericDataColumn`, naming the column.
 
+**Covariates for the correlations (partial correlation).** With `use_covariates = true` and a
+`covariate_file` (first column `Subject`, the rest numeric covariates), both measures are
+residualized on `[1, covariates]` and the map is the partial correlation (equal to
+`partialcorr`, `'Type','Spearman'` for `correlationS`). The permutation null is
+**Freedman–Lane**: at each permutation the EEG residuals are reordered and projected off the
+covariates again before they are correlated with the behavioural residuals. The test is
+**approximate, not exact** (residuals are only approximately exchangeable), including on the
+full-enumeration branch for 10 or fewer subjects, and the report says so. Simulated
+family-wise error at nominal 0.05 is about 0.04–0.06 for the per-channel max statistic, and at
+or below nominal for TFCE and cluster inference. On a single behavioural score the
+max-statistic corrected p equals that of the `regression` preset on the same permutation
+orders; the TFCE and cluster p do not (TFCE runs on r, not t, and the cluster-forming threshold
+differs). With fewer than 5 error degrees of freedom (`n − 2 − k < 5`) the max statistic may be
+mildly liberal (0.056 at nominal 0.05, 3 error df) while TFCE and cluster inference are
+conservative (about 0.02 at 4 error df); the run warns (`snpm:covariateConservative`) and
+borderline results there should be read with caution. With no error df left it stops
+(`snpm:covariateNoErrorDF`). `k` is the
+rank of the covariate design minus the intercept (`results_struct.covariates.k_eff`), so a
+duplicated or linearly dependent covariate is not counted twice (`snpm:covariateRankDeficient`
+warns). The uncorrected per-channel p and the global p use `df = n − 2 − k`. A subject with a
+missing covariate value is dropped whole (`snpm:covariateNaNRows`). **Partial Spearman
+caveat:** `correlationS` ranks the data and the covariates and then partials the covariates out
+linearly. Its null is that the rank residuals have no linear association after the ranked
+covariates are removed linearly; it is not a test that the two measures are unrelated given the
+covariates. A covariate is controlled only as far as its relation to the *ranks* is linear; a
+covariate whose effect is linear on the raw scale is not fully removed. Use `correlationP` or
+the `regression` preset when covariate control matters. Rationale and simulations:
+[Covariates in a correlation](../explanation/covariates-in-correlation.md).
+
 **Use `datatype = 'absolute'` for EEG-vs-behaviour runs.** Under `'normalize'` each subject's
 EEG row is z-scored across channels and therefore sums to zero — and because the behavioural
 value is the *same* number at every channel, it follows algebraically that the resulting r-map
@@ -422,8 +451,9 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   channel, parallel to `.index`; `.reason` joins the distinct reasons), one `excludedChannels`
   row per test and channel with its reason, and in the HTML a per-effect list.
 - **Correlation runs also emit** each channel's effective N as `results_struct.per_channel_n` and
-  a guarded **`effectiveN`** sheet in the `.xlsx`; the partial-correlation global p uses
-  `df = n − 2 − k` (`k` = number of covariates). Since the 2026-08 fix `per_channel_n` is the n
+  a guarded **`effectiveN`** sheet in the `.xlsx`; the partial-correlation global p and the
+  uncorrected per-channel p use `df = n − 2 − k` (`k` = rank of the covariate design,
+  `results_struct.covariates.k_eff`). Since the 2026-08 fix `per_channel_n` is the n
   **after** the completeness mask — full n for a retained channel, 0 for an excluded one — not the
   old pairwise matched-pair count.
 - `<base>_<timestamp>_report.html` — one self-contained HTML report (inline CSS and script, and

@@ -31,6 +31,11 @@ works the way it does. They don't give step-by-step instructions (see
   correlation analysis drops a whole channel for one missing cell, what pairwise deletion does to
   a permutation null (measured family-wise error up to 0.288 at a nominal 0.05), why the t-tests
   are deliberately not masked, and how to read the excluded-channel counts in your outputs.
+- **[Covariates in a correlation: the Freedman–Lane permutation](covariates-in-correlation.md)**
+  — why permuting covariate residuals against each other gave a null that was too narrow
+  (family-wise error up to 0.86), what the Freedman–Lane re-projection does, why the test is
+  approximate, and in which direction at few error degrees of freedom, and what partial Spearman
+  controls.
 - **[About circular statistics for phase](circular-statistics-for-phase.md)** — why phase needs
   its own machinery, why coupling *strength* and *prevalence* do not, what Hotelling and Watson's
   U² each license you to claim, the honest power figures, the precision confound and why there is

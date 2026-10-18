@@ -541,6 +541,10 @@ function E = legacy_engine(aux, rs, name)
     E.comparison = v.comparison;
     E.tail       = v.tail;
     E.ncov       = v.ncov;
+    if isfield(v, 'fl_Rz')                 % partial correlation (Freedman-Lane) only
+        E.fl_Rz = v.fl_Rz;
+        E.k_eff = v.k_eff;
+    end
     E.alpha      = v.alpha;
     E.cluster_threshold   = cn.value.threshold;          % as passed to the engine
     E.cluster_thresholds  = cn.value.thresholds(:)';      % as used: [-thr thr] for tail both
@@ -981,6 +985,7 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| pairedT, onesampleT | `snpm_signflip_patterns` | 0/1, units = subjects | 1 = pair kept, 0 = the subject''s two conditions are swapped (difference sign-flipped). The engine builds `x_perm = [x(keep,:); y(~keep,:)]`, `y_perm = [y(keep,:); x(~keep,:)]`, i.e. rows are also regrouped, kept subjects first. |');
     w('| unpairedT | `snpm_relabel_assignments` | subject indices into the stacked matrix, units = n1 + n2 | first nGrp columns = group 1, the rest = group 2. Stacking: tail both/right `data = [data_x; data_y]`, nGrp = n1. Tail left `data = [data_y; data_x]`, nGrp = n2, tested right. |');
     w('| correlationP, correlationS | `snpm_row_permutations` | row orders, units = subjects | `r = corr(data_x(order,:), data_y)` column by column; data_y is not moved. Spearman ranks both matrices once, before the loop. |');
+    w('| correlationP/S **with covariates** (`*_cov`, `miss_correlationP_cov_nan`) | `snpm_row_permutations` | row orders, units = subjects | Freedman-Lane (since 2026-10-18): `r = corr(engine.fl_Rz * data_x(order,:), data_y)`, i.e. the permuted residuals are re-projected off the covariates before correlating; the observed map is the same expression with `order = 1:n`. A column with `sum((fl_Rz*data_x(order,c)).^2) <= 1e-20*sum(data_x(:,c).^2)` scores 0. Partial Spearman is handed on as `correlationP` on rank residuals. Uncorrected p: `t = r*sqrt(df/(1-r^2))`, `df = n - 2 - engine.k_eff`. |');
     w('');
     w('Random branches: `signflip:random` = `rand(N, n) > 0.5` (one call, filled column by column); `relabel:random`');
     w('and `rowperm:random` = one `randperm(n)` per row for rows 2..N.');
@@ -1107,7 +1112,8 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| `data_x`, `data_y` | nSubj_x x nCh, nSubj_y x nCh | engine inputs, analysed channel order, rows = analysed subjects in analysed order. A masked channel is an all-NaN column in BOTH; other NaN are original missing cells (t-tests only). With covariates these are residuals (of ranks for correlationS). One-sample against 0: `data_y` is all zeros. Single behavioural column: `data_y` is that column repeated across channels. |');
     w('| `comparison` | char | the key the engines were given. Equals `params.comparison` except partial Spearman, which is handed on as `correlationP` (ranking and residualizing are already done). |');
     w('| `tail` | char | `both`, `left` or `right` |');
-    w('| `ncov` | scalar | number of covariates (reduces the df of the global correlation p only) |');
+    w('| `ncov` | scalar | covariate rank `k_eff = rank([1, covariates]) - 1` (0 without covariates); reduces the df of the global correlation p and, with covariates, of the uncorrected per-channel p |');
+    w('| `fl_Rz`, `k_eff` | n x n, scalar | covariate cases only (absent otherwise): the Freedman-Lane residual-forming matrix `I - Q*Q''` of `[1, covariates]` on the analysed rows (rank-revealing QR) and its rank minus 1. `data_x = fl_Rz * x`, `data_y = fl_Rz * y`. |');
     w('| `alpha` | scalar | 0.05 |');
     w('| `cluster_threshold` | scalar | cluster-forming threshold passed to `snpm_cluster_analysis` (t: `tinv(1-alpha/2, df)`; r: step function of n) |');
     w('| `cluster_thresholds` | 1 x 2 or scalar | thresholds actually applied: `[-thr, +thr]` for tail both (clusters of stat < -thr and of stat > +thr are formed separately), `thr` for a one-sided tail |');

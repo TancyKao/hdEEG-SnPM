@@ -8,10 +8,13 @@ function [G] = global_stat_test(data_x, data_y, alpha,comparison,tail,ncov)
 %   G.n_channels_total        how many were offered
 %   G.channels_kept           1 x nCh logical, the retained set itself
 %
-% NCOV (optional, default 0): number of covariates residualized out of the data
-% before this global test. For the partial-correlation cases the descriptive
-% global p-value must use df = n - 2 - ncov, not the n - 2 that corr() reports.
-% ncov = 0 leaves the ordinary (zero-order) correlation p unchanged.
+% NCOV (optional, default 0): number of covariate dimensions residualized out
+% of the data before this global test -- core_snpm_analysis passes k_eff =
+% rank([1, covariates]) - 1, so a redundant covariate does not cost a df. For
+% the partial-correlation cases the descriptive global p-value must use
+% df = n - 2 - ncov, not the n - 2 that corr() reports. ncov = 0 leaves the
+% ordinary (zero-order) correlation p unchanged. The global test is parametric
+% (no permutation), so the Freedman-Lane scheme of the maps does not reach it.
 %
 % COMMON-CHANNEL RULE (2026-08-03). The average is taken over the channels that
 % are FINITE IN EVERY ANALYSED ROW OF BOTH data_x AND data_y, and over nothing

@@ -52,8 +52,28 @@ confirm the run recovers an effect it was built to find. `run_glm_analysis.m` co
   # DATA_dir and OUT_dir are POSITIONAL. --group labels the cohort in subjects.csv;
   # pass it explicitly whenever you have more than one group.
   python3 db_to_group_table.py <DATA_dir> <OUT_dir> --group <label>
-  # writes: subjects.csv, channels.csv, eventStat_<param>_<event>.csv
+  # optional: --stages NREM2,NREM3 (default) | NREM3 ...   stages analysed
+  #           --bands spindle_9-12,spindle_12-15,sw_0.5-1.25  subset of event bands
+  #           --allow-hypnogram-denominator   accept pre-4.3 databases (biased density)
+  # writes: subjects.csv, channels.csv, recordings.csv, eventStat_<param>_<event>.csv
   ```
+
+  Density is events per minute of TurtleWave's stored artefact-free analysed time
+  (TurtleWave 4.3+), over the stages the detection run actually searched, out of
+  `--stages`; a band whose subjects would be divided over different stages is
+  refused. An older database stops the run with an error unless
+  `--allow-hypnogram-denominator` is given, which divides it by hypnogram minutes
+  instead, with a warning per recording; a run mixing the two denominators is
+  refused even then. `recordings.csv` (one row per subject and band) records which
+  denominator and stages each subject got; do not merge tables from separate runs
+  across denominator types or stage sets. A band never detected in a subject is
+  written as a blank row with a warning. The bridge reads
+  one detection run per band and stops with an error if two runs cover the same
+  stage, if a band's events all lie outside `--stages`, or if a band with no event
+  has more than one method in TurtleWave's processing record; it sets interpolated
+  channels to missing. Rules and options:
+  `docs/how-to/analyse-turtlewave-event-data.md`. `run_event_report.m` expects all
+  three bands, so do not combine it with `--bands`.
 
   `run_glm_analysis.m` joins `matrix_csv` + `subjects.csv` on `Subject` and runs
   one matrix; `run_event_report.m` loops all parameters × event bands itself.

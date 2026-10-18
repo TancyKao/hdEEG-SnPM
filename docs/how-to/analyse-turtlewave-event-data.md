@@ -42,11 +42,20 @@ staged XML directly rather than TurtleWave's parameter CSVs, so it survives chan
 
 ```bash
 python3 db_to_group_table.py <DATA_dir> <OUT_dir> --group CONTROL
+python3 db_to_group_table.py <DATA_dir> <OUT_dir> --group CONTROL --stages NREM3
+python3 db_to_group_table.py <DATA_dir> <OUT_dir> --group CONTROL --bands sw_0.5-1.25
 ```
 
 `<DATA_dir>` is the cohort folder holding one subfolder per subject (each containing
 `wonambi/neural_events.db` and `wonambi/*_clean_rebuilt.xml`). Always pass `--group`
 explicitly — it carries a study-specific default.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--group LABEL` | `group1` | cohort label written into `subjects.csv` |
+| `--stages LIST` | `NREM2,NREM3` | the sleep stages analysed, comma-separated (`NREM3`, `NREM2,NREM3`; the joint token `NREM2NREM3` is accepted too) |
+| `--bands LIST` | all three | write only some event bands, by label (`spindle_9-12`, `spindle_12-15`, `sw_0.5-1.25`) |
+| `--allow-hypnogram-denominator` | off | accept databases older than TurtleWave 4.3 and divide their density by raw hypnogram minutes (see below) |
 
 It writes into `<OUT_dir>`:
 
@@ -55,11 +64,93 @@ It writes into `<OUT_dir>`:
 | `eventStat_<param>_<event_band>.csv` | rows = subjects, columns = channels. `<param>` is `density`, `amplitude` or `duration` |
 | `subjects.csv` | `Subject`, `group`, `session` — the metadata table every GLM preset joins on |
 | `channels.csv` | the union of channel labels across subjects |
+| `recordings.csv` | one row per subject and event band: `Subject`, `band`, `density_denominator` (`analysed_time` or `hypnogram`), `denominator_minutes`, `stages` (the stages density was divided over, joined with `+`), and `interpolated_channels` (the channels set to missing because TurtleWave interpolated them, repeated on each of the subject's rows). The three denominator columns are blank for a band never detected in that subject |
 
 The event bands are fixed in the script: spindles 9–12 Hz, spindles 12–15 Hz, and slow waves
-0.5–1.25 Hz. Density is **count divided by NREM2+NREM3 minutes**, taken from the hypnogram, so
-it is already normalised for how much scorable sleep each subject had; amplitude and duration
-are per-channel means.
+0.5–1.25 Hz. Amplitude and duration are per-channel means. The run-selection and density
+rules below follow the hdEEG-SnPM Python reader and TurtleWave's own density function. Where
+they overlap the three give the same numbers: on a TurtleWave 4.3+ database, with one
+detection run per band inside `--stages`, density, amplitude and duration are equal, including
+which channels are 0 and which are missing. They differ in these places:
+
+- The bridge has a hypnogram fallback for old databases, behind
+  `--allow-hypnogram-denominator`. The Python reader and TurtleWave have no density at all for
+  such a database.
+- The bridge cannot be told which detection method to read. Where the Python reader would
+  accept a named method, the bridge stops with an error instead; leave that band out with
+  `--bands` or use the Python reader.
+- The bridge processes all three bands for every subject, so one band it refuses stops the
+  whole run unless `--bands` leaves it out. A band with no event and no processed channel at
+  all in a subject is written as a blank row, with a warning naming the subject and the band,
+  and the run still finishes; the Python reader stops there.
+
+**One detection run per band.** A TurtleWave database can hold more than one run of the same
+band — for example a per-stage run stored under `NREM2` and a later joint run stored under
+`NREM2NREM3` on the same night. Those runs re-detect the same spindles, so adding them together
+counts most events twice. The bridge reads only the runs whose stored stages lie inside
+`--stages`: with the default `NREM2,NREM3` a joint `NREM2NREM3` run, or a pair of per-stage
+`NREM2` and `NREM3` runs, are both read. If two runs cover the same stage, or two detection
+methods share the band, it stops with an error naming the database and the runs instead of
+pooling them. Remove the unwanted run, choose `--stages` so only one run is covered, or leave
+that band out with `--bands`. A joint run cannot be split: asking for `--stages NREM2` on a
+database that only holds `NREM2NREM3` events stops with an error naming the database, the
+stored stage token and the requested stages, as it does whenever a band's events all lie
+outside `--stages`. A blank row there would look like missing data rather than a mismatch.
+
+If a band has no event in scope at all, the channels TurtleWave processed for it get density
+0. When TurtleWave's processing record lists more than one detection method for that band,
+there is no way to tell whose channels those are, and the bridge stops rather than guess.
+
+**Density is events per minute of analysed time.** TurtleWave 4.3 and later store the
+artefact-free time of each stage (its `analysed_time` table). That table is shared by every
+detector run on the recording, so it can hold stages a given band's run never searched. The
+bridge therefore divides by the time of the stages the selected run actually searched, out
+of those in `--stages`. It finds the searched stages the way TurtleWave's own density code
+does: from TurtleWave's processing record for that method and band, or failing that from its
+record of the detection run. A slow-wave run detected in NREM3 only and read with the default
+`NREM2,NREM3` is therefore divided by NREM3 time, and the bridge prints
+`density for sw_0.5-1.25 over NREM3 (run searched only these)` for that recording. Each of
+those stages must have a stored time; if one is missing, the bridge stops and asks for the
+right `--stages`.
+
+Only when a database records neither (an old one) does the bridge fall back, with a warning,
+to the stages its events are stored under, as TurtleWave and the Python reader do: a slow-wave
+run whose events are all stored under `NREM3` is divided by NREM3 time even when read with the
+default `NREM2,NREM3`. A stage the run searched but found nothing in leaves no stored event,
+so its time is then missing from the denominator and the density can be too high. Re-running
+detection with a current TurtleWave records the searched stages and removes the fallback.
+
+Within one event band every subject must be divided over the same stages. If they are not, for
+example one subject's run searched NREM2 and NREM3 and another's NREM1 to NREM3, the bridge
+stops before writing anything and lists which subjects fall under which stage set, because a
+rate over NREM2 and NREM3 and a rate over the whole of NREM are different quantities.
+
+Older databases have no stored analysed time, and by default the bridge stops on them with an
+error naming the database. The better fix is to re-run detection with a current TurtleWave.
+If that is not possible, `--allow-hypnogram-denominator` divides their density by the raw
+hypnogram minutes of the same stages, chosen by the same rule, read from the first rater in
+the staging XML
+(a warning is printed when the file holds several raters). Hypnogram time still contains the
+artefact and arousal epochs the detector skipped, so this density is lower than the true rate
+by an amount that depends on each recording's artefact load. That bias looks like a real
+between-subject difference, so the bridge prints a warning for every such recording.
+
+The two kinds of denominator are never mixed in one output folder: even with the flag, a run
+whose recordings would use different denominators stops and lists which recordings use which.
+`recordings.csv` records the denominator of every subject and band (`density_denominator` is
+`analysed_time` or `hypnogram`, `stages` the stages it covers). Tables from separate runs, for
+example one per `--group`, must not be merged into one comparison unless every subject in both
+has the same `density_denominator` and the same `stages` for that band; check
+`recordings.csv` before joining them.
+
+**Zeros and missing values.** A channel TurtleWave processed but on which it found no event
+gets density 0, not a blank. A channel TurtleWave recorded as interpolated (TurtleWave 4.5 and
+later) is set to missing for every measure in that subject, and is listed in
+`recordings.csv`, so the analysis tests it on the subjects where it was recorded or reports it
+as excluded.
+
+The bridge opens every database read-only, so it never writes into a TurtleWave database or
+its write-ahead log.
 
 ## Step 2 — pick the analysis for the measure you have
 

@@ -19,24 +19,19 @@ else
     T_p_correctedTFCE = array2table(round(S.p_correctedTFCE,4));
 end
 
-Chanlabels={};
-for i = 1:size(chanlocs,2)
-    Chanlabels{i} = chanlocs(i).labels;
+Chanlabels = string({chanlocs.labels});
+if strcmp(select_mode, 'positional') && width(T_real_T) == 256
+    Chanlabels(Chanlabels == "Cz") = []; % legacy UWM 256-column layout
 end
 
-Chanlabels = string(Chanlabels);
-
-if strcmp(select_mode, 'positional') && length(T_real_T.Properties.VariableNames) == 256
-    Chanlabels(strcmp(Chanlabels, 'Cz')) = []; % for UWM
-else
-    T_real_T.Properties.VariableNames = Chanlabels;
-end
-    
-
-if  length({T_p_real})== length(Chanlabels)
-    T_p_real.Properties.VariableNames = Chanlabels;
-end
-T_p_correctedTFCE.Properties.VariableNames = Chanlabels;
+% Every per-channel sheet is headed by the channel labels in the analysed
+% order. The old guard on the p sheet compared length({T_p_real}) - always 1,
+% the length of a one-cell array - with the channel count, so that sheet was
+% never labelled and came out as Var1..VarN. A width mismatch is now reported
+% instead of silently leaving generic headers.
+T_real_T          = label_columns(T_real_T,          Chanlabels, 'statVal');
+T_p_real          = label_columns(T_p_real,          Chanlabels, 'pVal_or_pCritVal');
+T_p_correctedTFCE = label_columns(T_p_correctedTFCE, Chanlabels, 'pValTFCE');
 
 output_xls = [outname, '.xlsx'];
 writetable(T_real_T, output_xls,'Sheet','statVal')
@@ -64,10 +59,7 @@ if isfield(S, 'per_channel_n') && ~isempty(S.per_channel_n)
         effN_rows{end+1}   = double(S.n_available(:)');
         effN_metric{end+1} = 'n_available';
     end
-    T_effN = array2table(vertcat(effN_rows{:}));
-    if width(T_effN) == length(Chanlabels)
-        T_effN.Properties.VariableNames = Chanlabels;
-    end
+    T_effN = label_columns(array2table(vertcat(effN_rows{:})), Chanlabels, 'effectiveN');
     T_effN = addvars(T_effN, string(effN_metric(:)), 'Before', 1, ...
         'NewVariableNames', 'Metric');
     writetable(T_effN, output_xls, 'Sheet', 'effectiveN')
@@ -120,6 +112,18 @@ elseif isempty(SnPMsigch)
     writetable(table({'No significant chans'}),output_xls,'Sheet','correctSnPMsigch')
 end
 
+end
+
+function T = label_columns(T, labels, sheet)
+% Head a channels-in-columns table with the channel labels. Warns (does not
+% throw) on a width mismatch so the rest of the workbook is still written.
+if width(T) == numel(labels)
+    T.Properties.VariableNames = cellstr(labels);
+else
+    warning('func_genSnpmTable:labelMismatch', ...
+        'Sheet %s has %d columns but %d channel labels; left with generic headers.', ...
+        sheet, width(T), numel(labels));
+end
 end
 
 function T = excluded_sheet(S)

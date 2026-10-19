@@ -1,4 +1,4 @@
-function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec, evaluable)
+function [stat, wald, p_model, degenerate] = snpm_lmm_fit(power, meta, spec, evaluable)
 % Fit a linear mixed model at every channel and return the statistic of
 % the effect of interest. This is the per-channel engine used by
 % snpm_lmm_TFCE and snpm_lmm_cluster (analogous to the per-channel ttest
@@ -43,10 +43,14 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec, evaluable)
 %             poison, via NaN) cluster mass. This is the documented contract
 %             and it is now enforced on BOTH the continuous and factor paths.
 %   p_model : model p-value of the effect of interest. NaN for unfit channels.
+%   degenerate : TRUE where the fit was made but had no usable residual
+%             variation (snpm_lmm_degenerate); those channels are NaN/0/NaN.
 %
 % Each channel is fitted through snpm_lmm_fitlme: plain fitlme(tbl, formula),
 % plus one private-stream random-start refit when a random-effect SD comes
-% back at 0 and that is not the likelihood maximum (see that file).
+% back at 0 and that is not the likelihood maximum (see that file). A fit
+% with no residual variation left (snpm_lmm_degenerate: a flat channel, or a
+% response constant within each subject) returns stat NaN, wald 0, p NaN.
 
     nCh = size(power, 2);
 
@@ -86,6 +90,7 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec, evaluable)
     stat    = nan(1, nCh);
     wald    = zeros(1, nCh);
     p_model = nan(1, nCh);
+    degenerate = false(1, nCh);
 
     % minimum trials needed before a fit is attempted
     min_trials = 5;
@@ -109,6 +114,13 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec, evaluable)
             lme = snpm_lmm_fitlme(tbl, formula);
         catch
             continue   % singular / non-convergent fit -> leave as NaN/0
+        end
+        % No residual variation left (flat channel, or a response constant
+        % within each subject): the statistic is undefined -> NaN/0/NaN, in the
+        % observed and every permuted map alike (zero-variance rule).
+        if snpm_lmm_degenerate(lme)
+            degenerate(ch) = true;
+            continue
         end
 
         switch effect_type

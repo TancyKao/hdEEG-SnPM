@@ -400,6 +400,13 @@ function cases = case_table(EX, B)
         ['lmm_continuous_groupcov input with missing MODEL metadata: ~10% of sleepDepth NaN and the group label blank ' ...
          'on 3 non-first trials; those rows are dropped before anything else (lmm.dropped_rows). time is NaN on 5 ' ...
          'rows but is not in the model, so it drops nothing.']);
+    cases(end+1) = lmm('lmm_degenerate', B.lmm_degenerate, lmeta, ...
+        'POWER', 'group', '(1|Subject)', 'group', 'factor', ...
+        sprintf(['POWER ~ group + (1|Subject), group_label, 12 subjects x 5 trials of lmm_long_groups3. %s is flat, ' ...
+         '%s is constant within each subject and %s has a within-subject share of variation of 0.9e-6: all three ' ...
+         'are excluded before the fit (lmm.within_ratio <= 1e-6, lmm.const_within_subject) with the reason in ' ...
+         'lmm.excluded_reasons, and are NaN in the observed map and every permuted map.'], ...
+         B.lmm_degenerate_flat, B.lmm_degenerate_subjconst, B.lmm_degenerate_nearconst));
     cases(end+1) = lmm('lmm_continuous_groupcov', B.lmm_groups3, lmeta, ...
         'sleepDepth', 'POWER + group', '(1|Subject)', 'POWER', 'continuous', ...
         ['sleepDepth ~ POWER + group + (1|Subject): signed t of POWER with the 3-level group as a categorical ' ...
@@ -664,6 +671,33 @@ function B = build_inputs(EX, IN_DIR, seed)
     B.lmm_meta_missing = in('lmm_long_meta_missing.csv'); writetable(Lq, B.lmm_meta_missing);
     B.lmm_meta_missing_rows = sort(unique([dvn(:); gb(:)]))';
     B.lmm_meta_missing_counts = [numel(dvn), numel(gb), numel(tn)];
+    % (d) degenerate channels (no random draw, so every other input is unchanged):
+    %     lmm_long_groups3 cut to its first 12 subjects x first 5 trials, one channel
+    %     flat (5 on every row) and one constant within each subject (its subject mean)
+    keep12 = ismember(L3.Subject, usub(1:12)) & L3.time <= 5;
+    Ld = L3(keep12, :);
+    B.lmm_degenerate_flat = llab{5};
+    B.lmm_degenerate_subjconst = llab{50};
+    Ld.(B.lmm_degenerate_flat) = 5 * ones(height(Ld), 1);
+    [~, ~, di] = unique(Ld.Subject, 'stable');
+    sm = accumarray(di, Ld.(B.lmm_degenerate_subjconst), [], @mean);
+    Ld.(B.lmm_degenerate_subjconst) = sm(di);
+    % a third channel: its subject means plus a fixed zero-mean within-subject
+    % pattern scaled so that w = SS_within / SS_total = 0.9e-6, just under the
+    % 1e-6 exclusion threshold (snpm_lmm_within_ratio)
+    B.lmm_degenerate_nearconst = llab{100};
+    v = Ld.(B.lmm_degenerate_nearconst);
+    sm3 = accumarray(di, v, [], @mean);
+    ssb = sum((sm3(di) - mean(sm3(di))).^2);
+    dpat = zeros(height(Ld), 1);
+    for k = 1:max(di)
+        r = find(di == k);
+        dpat(r) = (1:numel(r))' - mean(1:numel(r));
+    end
+    wt = 0.9e-6;
+    a = sqrt(wt * ssb / ((1 - wt) * sum(dpat.^2)));
+    Ld.(B.lmm_degenerate_nearconst) = sm3(di) + a * dpat;
+    B.lmm_degenerate = in('lmm_long_degenerate.csv');    writetable(Ld, B.lmm_degenerate);
 end
 
 function T = scatter_nan(T, scalp, k, rs)
@@ -1522,16 +1556,25 @@ function [M, L, bench] = lmm_capture(P, rs, plog, aux, name, refitK)
     end
 
     % ---- evaluable mask: complete across every analysed row ----
-    ev = all(isfinite(power), 1);
+    % then channels constant within each subject (snpm_lmm_within_ratio <= 1e-6) when
+    % the channel is the response (dv POWER) or the within_subject predictor
+    ev_fin = all(isfinite(power), 1);
+    wch = nan(1, nCh);
+    wch(ev_fin) = snpm_lmm_within_ratio(power(:, ev_fin), meta.(sp.subject));
+    const_ch = ev_fin & wch <= 1e-6;
+    ev = ev_fin;
+    if strcmp(sp.dv, 'POWER') || strcmpi(sp.perm, 'within_subject'), ev = ev_fin & ~const_ch; end
     ex = rs.excluded_channels;
-    ck.evaluable = isequal(ev, logical(v.evaluable(:)')) && isequal(find(~ev), rs.T.excluded_channels) && ...
-        ex.n == sum(~ev) && isequal(double(ex.index(:)'), find(~ev));
+    ck.evaluable = isequal(ev, logical(v.evaluable(:)')) && isequal(find(~ev), rs.T.excluded_channels);
 
     % ---- observed fit, channel by channel, timed ----
     O = lmm_observed(base, power, ev, formula, fit_opts, sp, is_factor);
+    und = O.degenerate & ev;               % observed backstop hits: 'perfect fit, statistic undefined'
+    ck.excluded = ex.n == sum(~ev | und) && isequal(double(ex.index(:)'), find(~ev | und)) && ...
+        isequal(find(und), rs.T.undefined_channels);
     ck.default_options = all(O.default_identical(ev));
-    ck.cov_fe_formula  = max(O.cov_fe_reldiff(ev)) < 1e-8;
-    ck.loglik_formula  = max(O.loglik_absdiff(ev)) < 1e-8;
+    ck.cov_fe_formula  = max([O.cov_fe_reldiff(ev & ~O.degenerate), 0]) < 1e-8;
+    ck.loglik_formula  = max([O.loglik_absdiff(ev & ~O.degenerate), 0]) < 1e-8;
     stat = O.stat; pm = O.p; stat(~ev) = NaN; pm(~ev) = NaN;
     ck.stat = isequaln(stat, rs.T.real_T);
     ck.p    = isequaln(pm, rs.p.real);
@@ -1640,6 +1683,11 @@ function [M, L, bench] = lmm_capture(P, rs, plog, aux, name, refitK)
         L.categorical_levels.(sp.categorical{i}) = categories(base.(sp.categorical{i}))';
     end
     L.n_obs = size(power, 1);
+    L.degenerate = O.degenerate;
+    L.within_ratio = wch;                  % snpm_lmm_within_ratio per channel (NaN if incomplete)
+    L.const_within_subject = const_ch;     % w <= 1e-6
+    L.excluded_index = double(ex.index(:)');
+    if isfield(ex, 'reasons'), L.excluded_reasons = ex.reasons(:)'; else, L.excluded_reasons = repmat({ex.reason}, 1, ex.n); end   % fitted, but no residual variation left -> stat NaN, wald 0, p NaN (snpm_lmm_degenerate)
     L.dropped_rows = D;    % rows (1-based, into the input file) dropped for a missing model variable
     L.dropped_rule = ['before anything else, rows with ismissing() in any model variable are dropped from meta and ' ...
         'power together: the DV (if a meta column), every meta column named in fixed or random, the subject column, ' ...
@@ -1682,7 +1730,8 @@ function O = lmm_observed(base, power, ev, formula, fit_opts, sp, is_factor)
     O = struct('stat', nan(1, nCh), 'wald', zeros(1, nCh), 'p', nan(1, nCh), ...
         'df1', nan(1, nCh), 'df2', nan(1, nCh), 'loglik', nan(1, nCh), ...
         'default_identical', false(1, nCh), 'cov_fe_reldiff', nan(1, nCh), 'loglik_absdiff', nan(1, nCh), ...
-        'fit_ms', nan(1, nCh), 'anova_ms', nan(1, nCh), 'res_std', nan(1, nCh));
+        'fit_ms', nan(1, nCh), 'anova_ms', nan(1, nCh), 'res_std', nan(1, nCh), ...
+        'degenerate', false(1, nCh));
     first = true;
     for ch = find(ev)
         tbl = base; tbl.POWER = power(:, ch);
@@ -1728,6 +1777,18 @@ function O = lmm_observed(base, power, ev, formula, fit_opts, sp, is_factor)
             O.re_std(k + (1:numel(d)), ch) = d; k = k + numel(d);
         end
         O.res_std(ch) = sqrt(mse);
+        O.degenerate(ch) = snpm_lmm_degenerate(lme);
+        R = lmm_extract(lme, av, sp, is_factor);
+        O.stat(ch) = R.stat; O.wald(ch) = R.wald; O.p(ch) = R.p; O.df1(ch) = R.df1; O.df2(ch) = R.df2;
+        if O.degenerate(ch)
+            % no usable residual variation: what fitlme left behind (SE ~1e-16, t ~1e16,
+            % SDs at rounding level) is not an estimate -> NaN, as the Python port reports;
+            % and the two formula checks do not apply
+            O.coef_est(:, ch) = NaN; O.coef_se(:, ch) = NaN; O.coef_t(:, ch) = NaN;
+            O.coef_df(:, ch) = NaN; O.coef_p(:, ch) = NaN;
+            O.loglik(ch) = NaN; O.re_std(:, ch) = NaN; O.res_std(ch) = NaN;
+            continue
+        end
         % Cov(beta) and the ML log-likelihood from the variance components
         X = designMatrix(lme, 'Fixed'); Z = designMatrix(lme, 'Random'); y = response(lme);
         D = [];
@@ -1741,8 +1802,6 @@ function O = lmm_observed(base, power, ev, formula, fit_opts, sp, is_factor)
         rr = y - X * b; n = numel(y);
         ll = -0.5 * (n * log(2 * pi) + 2 * sum(log(diag(chol(V)))) + rr' * (V \ rr));
         O.loglik_absdiff(ch) = abs(ll - lme.LogLikelihood);
-        R = lmm_extract(lme, av, sp, is_factor);
-        O.stat(ch) = R.stat; O.wald(ch) = R.wald; O.p(ch) = R.p; O.df1(ch) = R.df1; O.df2(ch) = R.df2;
     end
 end
 
@@ -1768,6 +1827,7 @@ end
 
 function x = lmm_extract(lme, av, sp, is_factor)
     x = struct('stat', NaN, 'wald', 0, 'p', NaN, 'df1', NaN, 'df2', NaN);
+    if snpm_lmm_degenerate(lme), return; end   % no residual variation left: undefined (snpm_lmm_fit)
     if is_factor
         r = find(strcmp(av.Term, sp.effect), 1);
         if ~isempty(r) && isfinite(av.FStat(r))
@@ -2103,6 +2163,14 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
         B.lmm_meta_missing_counts(2), B.lmm_meta_missing_counts(3), numel(B.lmm_meta_missing_rows));
     w('dropped before anything else (`lmm.dropped_rows.rows`, 1-based into the input file); `time` is not in the model');
     w('and drops nothing. Every other array in that fixture (`lmm.power`, `lmm.meta`, the maps) is on the kept rows.');
+    w('`inputs/lmm_long_degenerate.csv` is `lmm_long_groups3.csv` cut to its first 12 subjects and trials 1-5, with');
+    w('`%s` set to 5 on every row (flat), `%s` replaced by each subject''s mean (constant within subject), and `%s`', ...
+        B.lmm_degenerate_flat, B.lmm_degenerate_subjconst, B.lmm_degenerate_nearconst);
+    w('set to its subject means plus a fixed zero-mean within-subject pattern (trial index minus its subject mean) scaled');
+    w('to a within-subject share of variation of 0.9e-6. All three have w = SS_within/SS_total <= 1e-6');
+    w('(`snpm_lmm_within_ratio`; w = 0 when SS_total <= 1e-20 sum(v.^2)), so they are excluded before the fit with the');
+    w('reason in `lmm.excluded_reasons` and are NaN in every map. `lmm.degenerate` lists observed fits caught by the');
+    w('per-labelling backstop (`snpm_lmm_degenerate`), which none of these reach.');
     w('');
     w('## Order of permutation loops per analysis');
     w('');

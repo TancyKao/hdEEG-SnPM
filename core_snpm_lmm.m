@@ -29,7 +29,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
 %                        derived from effect_type)
 %     .lmm_subject     - subject column name (optional, default 'Subject')
 %     .lmm_group       - group column name (optional, default 'group')
-%     .tail            - 'both' (default) | 'left' | 'right'
+%     .tail            - 'both' (default; the only value accepted, see below)
 %     .permutations    - number of permutations
 %
 % OUTPUT: results_struct, results_text (same shape as core_snpm_analysis)
@@ -53,6 +53,38 @@ function [results_struct, results_text] = core_snpm_lmm(params)
         perm_scheme = 'group_label';
     else
         perm_scheme = 'within_subject';
+    end
+
+    %% Up-front refusals: settings under which the permutation test cannot work
+    % (checked before any file is read or any model fitted; same codes and
+    % texts as the Python port).
+    if ~strcmp(tail, 'both')
+        error('core_snpm_lmm:oneSidedTail', ...
+            ['mixedmodel requires tail = ''both'' (got ''%s''). The effect map is a two-sided t or ' ...
+             'an F, and clusters are formed on the two-sided model p; a one-sided TFCE null of ' ...
+             'signed maxima would not match it.'], char(tail));
+    end
+    if strcmpi(perm_scheme, 'group_label')
+        % A token names the group if it IS the group column or a coefficient of
+        % it ('group_B': column name + '_' + level), as snpm_lmm_fit resolves names.
+        effect_vars = strtrim(regexp(char(params.lmm_effect), '[:*]', 'split'));
+        if ~any(strcmp(effect_vars, grp_col) | startsWith(effect_vars, [grp_col '_']))
+            error('core_snpm_lmm:effectNotPermuted', ...
+                ['The group_label scheme relabels subjects between levels of ''%s'', but ' ...
+                 'the effect ''%s'' does not contain ''%s'', so every permuted map ' ...
+                 'would equal the observed one. Use within_subject for an effect that varies ' ...
+                 'within subjects, or test an effect of the group column.'], ...
+                grp_col, char(params.lmm_effect), grp_col);
+        end
+    else
+        dv = char(params.lmm_dv);
+        if strcmp(dv, 'POWER') || ~ismember(dv, params.lmm_meta_cols)
+            if strcmp(dv, 'POWER'), why = '(it is the channel value).'; else, why = 'among lmm_meta_cols.'; end
+            error('core_snpm_lmm:dvNotMetadata', ...
+                ['The within_subject scheme shuffles the response within each subject, so the ' ...
+                 'response must be a metadata column; ''%s'' is not %s Use group_label for a ' ...
+                 'between-group effect on the channel value.'], dv, why);
+        end
     end
 
     %% Load long-format data
@@ -85,6 +117,21 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     if dropped_rows.n > 0
         fprintf('LMM: %d trials left after dropping %d with a missing model variable\n', ...
             size(power, 1), dropped_rows.n);
+    end
+
+    % within_subject shuffles the DV inside each subject: a DV that is constant
+    % within every subject leaves nothing to permute (every permuted map would
+    % equal the observed one). Labelling-independent, so decided once, here.
+    if strcmpi(perm_scheme, 'within_subject')
+        w_dv = snpm_lmm_within_ratio(meta.(params.lmm_dv), meta.(subj_col));
+        if w_dv <= 1e-6
+            error('core_snpm_lmm:dvConstantWithinSubject', ...
+                ['The within_subject scheme shuffles ''%s'' within each subject, but it is ' ...
+                 'constant within each subject (within-subject share of its variation %.3g, ' ...
+                 'threshold 1e-06), so the within-subject shuffle has nothing to permute. ' ...
+                 'Use group_label for a between-group effect, or analyse subject means.'], ...
+                char(params.lmm_dv), w_dv);
+        end
     end
 
     %% Data type transform (applied to channel power, mirrors core_snpm_analysis)
@@ -199,6 +246,32 @@ function [results_struct, results_text] = core_snpm_lmm(params)
             100 * excluded_channels.n / numel(evaluable));
     end
 
+    % Channels whose value is constant within each subject (within-subject share
+    % of variation w <= 1e-6, snpm_lmm_within_ratio). Grouped by subject only,
+    % so the property does not depend on the labelling: decided ONCE, here, and
+    % held fixed for the observed map and every permutation.
+    %   - channel is the response (dv = POWER, the group_label case): nothing
+    %     within subject for the mixed model to estimate; fitlme cannot resolve
+    %     such a fit (its subject/residual SD ratio runs to infinity).
+    %   - channel is the predictor under within_subject: its slope is
+    %     between-subject only, the shuffle cannot move it, and its t would sit
+    %     in every permuted map unchanged, raising the max null for the rest.
+    w_ch = nan(1, numel(evaluable));
+    w_ch(evaluable) = snpm_lmm_within_ratio(power(:, evaluable), meta.(subj_col));
+    const_ch = evaluable & w_ch <= 1e-6;
+    if strcmp(spec.dv, 'POWER')
+        excluded_channels = snpm_excluded_add(excluded_channels, const_ch, lmm_reason_const_response(), chanlocs);
+        evaluable = evaluable & ~const_ch;
+    elseif strcmpi(spec.perm, 'within_subject')
+        excluded_channels = snpm_excluded_add(excluded_channels, const_ch, lmm_reason_const_predictor(), chanlocs);
+        evaluable = evaluable & ~const_ch;
+    end
+    if ~any(evaluable)
+        error('core_snpm_lmm:noEvaluableChannels', ...
+            'No channel is left to test: %d of %d excluded (%s).', ...
+            excluded_channels.n, excluded_channels.n_channels, excluded_channels.reason);
+    end
+
     % Parity recorder (scripts/export_parity_fixtures.m). Inert unless switched
     % on: it consumes no random number and nothing reads it back.
     if snpm_perm_tap('ison')
@@ -211,6 +284,10 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     %% Statistical analysis
     [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail, params.permutations, evaluable);
     Clusters = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, params.permutations, evaluable);
+    % An observed channel whose fit had no usable residual variation
+    % (snpm_lmm_degenerate, the per-labelling backstop) is NaN in the map; list it.
+    und = false(1, numel(evaluable)); und(T.undefined_channels) = true;
+    excluded_channels = snpm_excluded_add(excluded_channels, und, 'perfect fit, statistic undefined', chanlocs);
 
     %% Significant channels (same derivation as core_snpm_analysis:488-497)
     uncorrsigch      = find(p.real <= alpha);
@@ -426,14 +503,34 @@ function v = getfield_default(s, f, default)
     end
 end
 
+% Reason strings are compared with the Python port; do not reword.
+function s = lmm_reason_const_response()
+    s = ['channel value constant within each subject: no within-subject variation for the mixed ' ...
+         'model to estimate; analyse subject means with anova1/unpairedT'];
+end
+
+function s = lmm_reason_const_predictor()
+    s = ['predictor constant within each subject: its effect is between-subject only, which the ' ...
+         'within-subject shuffle cannot test (use group_label or regression on subject means)'];
+end
+
 function txt = lmm_excluded_text(excl)
 % One results_text line (feeds the GUI Result box + the report CSV).
     if excl.n == 0
         txt = sprintf('Channels excluded for missing data: none (%d/%d evaluable)', ...
             excl.n_channels, excl.n_channels);
-    else
+    elseif all(startsWith(excl.reasons, 'missing data'))   % .reasons: always set by snpm_excluded_add
         txt = sprintf('Channels excluded for missing data (%s): %d of %d — %s', ...
             excl.context, excl.n, excl.n_channels, strjoin(excl.labels, ', '));
+    else
+        % more than one rule can exclude: 'E1, E2 (reason A); E7 (reason B)'
+        u = unique(excl.reasons, 'stable');
+        parts = cell(1, numel(u));
+        for k = 1:numel(u)
+            parts{k} = sprintf('%s (%s)', strjoin(excl.labels(strcmp(excl.reasons, u{k})), ', '), u{k});
+        end
+        txt = sprintf('Channels excluded (%s): %d of %d — %s', ...
+            excl.context, excl.n, excl.n_channels, strjoin(parts, '; '));
     end
 end
 

@@ -192,12 +192,28 @@ dropped); `lmm.n_trials` and `lmm.n_subjects` are the analysed counts. Each per-
 returns a random-effect standard deviation at 0 (at most 0.001 times the residual standard
 deviation) is refitted once from a random start drawn from a private random stream, which leaves
 the permutation draws unchanged, and the refit is kept only if its log-likelihood is higher
-(`dependencies/snpm_lmm_fitlme.m`).
+(`dependencies/snpm_lmm_fitlme.m`). Before any fit, a channel whose value is constant within each
+subject (within-subject share of its variation ≤ 1e-6, `dependencies/snpm_lmm_within_ratio.m`,
+grouped by subject only so the decision is the same for every permutation) is excluded when it is
+the response or the `within_subject` predictor. As a backstop at every fit, a fit with no usable
+residual variation (`dependencies/snpm_lmm_degenerate.m`: the response reproduced by the fixed
+effects, or by the fixed and random effects when they leave some residual degrees of freedom,
+to within 1e-20 of its uncentred sum of squares, or,
+for a model whose only random effect is a subject intercept, a method-of-moments
+subject-to-residual standard deviation ratio of 1e3 or more) has no statistic: stat NaN, Wald 0,
+p NaN.
 
 | Constraint | Identifier |
 |---|---|
 | Subject column not in `lmm_meta_cols` ⇒ reject | `core_snpm_lmm:noSubjectColumn` |
 | `group_label`: group column not in `lmm_meta_cols` ⇒ reject | `core_snpm_lmm:noGroupColumn` |
+| `tail` must be `both` (the map is a two-sided t or an F; clusters use the two-sided model p) | `core_snpm_lmm:oneSidedTail` |
+| `group_label`: the effect's variables (split on `:` / `*`) must include `lmm_group`, or a coefficient of it (`<group>_<level>`, e.g. `group_B`), else every permuted map equals the observed one | `core_snpm_lmm:effectNotPermuted` |
+| `within_subject`: the DV must be a metadata column (not `POWER`), since the DV is what is shuffled | `core_snpm_lmm:dvNotMetadata` |
+| `within_subject`: the DV must vary within subjects (within-subject share of its variation > 1e-6) | `core_snpm_lmm:dvConstantWithinSubject` |
+| Channel constant within each subject (within-subject share ≤ 1e-6, `snpm_lmm_within_ratio`) when it is the response (`lmm_dv = 'POWER'`) or the `within_subject` predictor: excluded before the fit, reason in the excluded-channel list | (excluded channel) |
+| A fit with no usable residual variation (`snpm_lmm_degenerate`): stat NaN, Wald 0, p NaN; an observed one is listed as "perfect fit, statistic undefined" | (excluded channel) |
+| Every channel excluded (missing data or constant within subject) ⇒ reject | `core_snpm_lmm:noEvaluableChannels` |
 | Trials with a missing model variable are dropped up front | `snpm:lmmMetaNaNRows` (warning) |
 | Fewer than 3 subjects after the drop ⇒ reject | `core_snpm_lmm:tooFewSubjects` |
 | `group_label`: group must be constant within each subject (checked with or without missingness) | `core_snpm_lmm:groupVariesWithinSubject` |

@@ -261,18 +261,32 @@ function write_excluded(fid, rs)
     if ~isfield(ex, 'n') || ex.n == 0, return; end
     labs = ex.labels;
     if ~iscell(labs), labs = cellstr(string(labs)); end
+    labs = labs(:)';
     nch = 0;
     if isfield(ex, 'n_channels'), nch = ex.n_channels; end
-    fprintf(fid, '<section class="section">\n  <div class="head"><h2>Excluded channels</h2><span class="sub">Not tested &mdash; missing data</span></div>\n');
+    fprintf(fid, '<section class="section">\n  <div class="head"><h2>Excluded channels</h2><span class="sub">Not tested &mdash; see the reason for each</span></div>\n');
     fprintf(fid, '  <div class="legend" style="border-color:#b8862a;background:#fdf8ee">\n');
     fprintf(fid, ['    <div class="grp"><span class="k" style="color:#b8862a">Excluded</span>' ...
         '<span><b>%d</b> of %d channel(s) were not tested.</span></div>\n'], ex.n, nch);
-    fprintf(fid, ['    <div class="grp"><span>They are missing on some analysed rows, so the ' ...
-        'per-channel model would be fitted on a different row subset than the permutation ' ...
-        'shuffles across. They carry no statistic and no p-value in either the observed map ' ...
-        'or the null. Reported here rather than dropped silently.</span></div>\n']);
-    fprintf(fid, '    <div class="grp"><span class="k">Channels</span><span style="font-family:var(--mono);font-size:11.5px">%s</span></div>\n', ...
-        esc(strjoin(labs(:)', ', ')));
+    if isfield(ex, 'reasons') && numel(ex.reasons) == numel(labs)
+        rs = ex.reasons(:)';
+    else
+        rs = repmat({char(ex.reason)}, 1, numel(labs));
+    end
+    miss = startsWith(rs, 'missing data');
+    if any(miss)
+        fprintf(fid, ['    <div class="grp"><span>Missing data: they are missing on some analysed rows, so the ' ...
+            'per-channel model would be fitted on a different row subset than the permutation ' ...
+            'shuffles across.</span></div>\n']);
+    end
+    fprintf(fid, ['    <div class="grp"><span>They carry no statistic and no p-value in either the observed ' ...
+        'map or the null. Reported here rather than dropped silently.</span></div>\n']);
+    u = unique(rs, 'stable');
+    for k = 1:numel(u)
+        fprintf(fid, ['    <div class="grp"><span class="k">Channels</span><span style="font-family:var(--mono);' ...
+            'font-size:11.5px">%s</span><span>(%s)</span></div>\n'], ...
+            esc(strjoin(labs(strcmp(rs, u{k})), ', ')), esc(u{k}));
+    end
     fprintf(fid, '  </div>\n</section>\n');
 end
 

@@ -86,7 +86,10 @@ function [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail,
     % ---- real fit ----
     % Restrict the observed map to the evaluable set BEFORE enhancement, so the
     % observed TFCE integral sees exactly the channels the permuted ones do.
-    [real_stat, ~, real_p] = snpm_lmm_fit(power, meta, spec, evaluable);
+    [real_stat, ~, real_p, real_deg] = snpm_lmm_fit(power, meta, spec, evaluable);
+    % Observed channels with no usable residual variation (snpm_lmm_degenerate):
+    % NaN here, listed by the caller as 'perfect fit, statistic undefined'.
+    T.undefined_channels = find(real_deg & evaluable);
     real_stat(~evaluable) = NaN;
     real_p(~evaluable)    = NaN;
     T.real_T    = real_stat;

@@ -16,7 +16,7 @@ output_dir  = fullfile(ROOT,'results_lmm');
 channels    = '178 channels';   % '164 channels' | '178 channels'
 datatype    = 'absolute';       % absolute|logscale|normalize
 permutations= 100;
-tail        = 'both';           % both|right|left
+tail        = 'both';           % mixedmodel accepts 'both' only (core_snpm_lmm:oneSidedTail)
 
 % model spec (the per-channel value enters the formula as POWER)
 lmm_dv          = 'sleepDepth';     % dependent variable column (behaviour), OR 'POWER' if modelling power

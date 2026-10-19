@@ -64,6 +64,53 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
 
 ### Fixed
 
+- **Mixed model: settings the permutation test cannot handle are refused up front**
+  (`mixedmodel`; `core_snpm_lmm.m`). Affects `mixedmodel` runs with any of three settings, which
+  used to run and return a map that could not be read as a test. (1) `tail` `left` or `right`:
+  for `left` the null was built from signed maxima, so nothing could ever be significant; an F
+  has no side; and clusters always used the two-sided model p. Now an error,
+  `core_snpm_lmm:oneSidedTail`; `mixedmodel` takes `tail = 'both'` only. (2) The `group_label`
+  permutation with an effect that does not involve the group column (the effect's variables,
+  split on `:` or `*`, must include `lmm_group` or a coefficient of it such as `group_B`): relabelling subjects then leaves every permuted
+  map equal to the observed one, so every corrected p was 1. Now an error,
+  `core_snpm_lmm:effectNotPermuted`. (3) The `within_subject` permutation with a dependent
+  variable that is not a metadata column (for example `POWER`): it used to fail only inside the
+  permutation loop. Now an error before anything is read, `core_snpm_lmm:dvNotMetadata`. Runs
+  with valid settings are unchanged.
+
+- **Mixed model: channels constant within each subject, and fits with no residual variation**
+  (`mixedmodel`; `core_snpm_lmm.m`, `dependencies/snpm_lmm_fit.m`, new
+  `dependencies/snpm_lmm_within_ratio.m` and `dependencies/snpm_lmm_degenerate.m`). Affects
+  `mixedmodel` runs with a channel whose value is constant, or almost constant, within each
+  subject (including a flat channel), and runs whose dependent variable is constant within each
+  subject. Before: when the channel was the response (e.g. `POWER ~ group + (1|Subject)`),
+  `fitlme` did not fail on such a channel but returned a finite F from rounding noise (20.6,
+  p = 2e-5, on a flat channel in one example), the same in every permutation, so it could raise
+  the maximum-statistic null for the whole map; above a subject/residual SD ratio of about 1e4
+  its fit is also off the optimum (35% off in F at 1e5). When the channel was the predictor under
+  `within_subject`, a channel constant within subject has a between-subject slope only, which
+  the within-subject shuffle never moves: its t sat unchanged in every permuted map, and in a
+  test example it raised a planted effect's corrected p from 0.016 to 1.0. Now:
+  - before any fit, once and the same for every permutation, a channel whose within-subject
+    share of variation (within-subject sum of squares over total, grouped by subject only) is at
+    most 1e-6 is excluded with a reason, through the usual excluded-channel list, Excel sheet and
+    HTML banner: when the channel is the response, "channel value constant within each subject:
+    no within-subject variation for the mixed model to estimate; analyse subject means with
+    anova1/unpairedT"; when it is the `within_subject` predictor, "predictor constant within each
+    subject: its effect is between-subject only, which the within-subject shuffle cannot test (use
+    group_label or regression on subject means)";
+  - a `within_subject` run whose dependent variable has a within-subject share of at most 1e-6 is
+    refused (`core_snpm_lmm:dvConstantWithinSubject`): the shuffle has nothing to permute;
+  - as a backstop at every fit, a fit with no usable residual variation (the response fitted
+    exactly by the fixed effects, or by the fixed and random effects when they leave some residual
+    degrees of freedom, to 1e-20 of its uncentred
+    sum of squares, or, when the only random effect is a subject intercept, a subject/residual SD
+    ratio of at least 1e3 estimated by the method of moments from those sums) has no statistic
+    (stat NaN, Wald 0, p NaN); an observed channel caught this way is listed as "perfect fit,
+    statistic undefined";
+  - if the exclusions leave no channel, the run stops with `core_snpm_lmm:noEvaluableChannels`.
+  Channels with ordinary within-subject variation are unchanged bit for bit.
+
 - **Mixed model: a fit that stopped at zero subject variance** (`mixedmodel`;
   `dependencies/snpm_lmm_fit.m`, new `dependencies/snpm_lmm_fitlme.m`). Affects every
   `mixedmodel` run in which any channel fit, observed or permuted, came back with a random-effect

@@ -3,7 +3,8 @@
 > *Understanding-oriented.* Why a correlation analysis now drops a whole channel for a single
 > missing value, why the t-tests drop a much smaller set of channels for a different reason, why
 > the two-way mixed design uses one channel set and refuses a table with missing rows, why a
-> channel with no variation is left untested, and how to read the excluded-channel counts and
+> channel with no variation is left untested, why the mixed model excludes a channel that is
+> constant within each subject, and how to read the excluded-channel counts and
 > reasons that appear in your outputs. For
 > the factual per-analysis table see the [Analysis catalog](../reference/ANALYSIS_CATALOG.md);
 > to run an analysis, see the [how-to guides](../how-to/README.md).
@@ -286,6 +287,11 @@ every tier and in the Python port.
 | correlation with covariates | a column is constant once the covariates are removed | fully explained by the covariates |
 | `anova1`, `ancova`, `regression`, `rmanova`, `mixed2way`, and each post-hoc and simple effect | no variation left after that test's nuisance model | no variation left after the nuisance model |
 | the same | the observed fit is perfect | perfect fit, statistic undefined |
+| `mixedmodel`, channel as the response | constant within each subject | channel value constant within each subject: no within-subject variation for the mixed model to estimate; analyse subject means with anova1/unpairedT |
+| `mixedmodel`, channel as the `within_subject` predictor | constant within each subject | predictor constant within each subject: its effect is between-subject only, which the within-subject shuffle cannot test (use group_label or regression on subject means) |
+| `mixedmodel` | the observed fit has no usable residual variation | perfect fit, statistic undefined |
+
+The mixed-model rows are explained in their own section below.
 
 The strings are the same in the Python port. A constant single behavioural score in a
 correlation would exclude every channel, so it is refused earlier with its own error
@@ -384,6 +390,77 @@ complete-case analysis does. A missing report after an awakening because the par
 respond is the typical case. If missingness depends on the effect (for example, reports missing
 mainly after deep-sleep awakenings when depth is the predictor), the estimate is biased and no
 permutation scheme repairs that.
+
+## The mixed model: channels constant within each subject, and fits with nothing left over
+
+A mixed model separates variation between subjects from variation within them. A channel whose
+value does not change across a subject's trials has only the first kind, and a mixed model cannot
+use it in the usual way. Flat channels, and channels that carry one per-subject value copied onto
+every trial (a subject-level summary pasted into a trial table, for instance), are the usual
+source. The mixed model handles them with one up-front exclusion and one backstop at every fit.
+
+### The up-front exclusion
+
+Before any model is fitted, the run computes for every channel the within-subject share of its
+variation: the sum of squares around each subject's own mean, divided by the sum of squares
+around the overall mean. A channel whose share is at most 10⁻⁶ counts as constant within each
+subject. The share is grouped by subject only, never by group or condition, so it does not depend
+on any permutation's labelling; it is computed once, and the channels it removes are absent from
+the observed map and from every permuted map alike. What happens next depends on the channel's
+role in the model.
+
+When the channel is the response (the `group_label` scheme, with the channel value as the
+dependent variable), there is nothing within subjects for the model to estimate. `fitlme` does not
+fail on such a channel; it returns a finite F made of rounding noise (20.6, p = 2 × 10⁻⁵, on a
+flat channel in one example), the same in every permutation, which can raise the maximum-statistic
+null for the whole map. The channel is excluded with the reason "channel value constant within
+each subject: no within-subject variation for the mixed model to estimate; analyse subject means
+with anova1/unpairedT".
+
+When the channel is the predictor under the `within_subject` scheme, its slope is purely
+between subjects. The within-subject shuffle moves the dependent variable only inside each subject,
+so it never changes that slope: the channel's t sits unchanged in every permuted map and sets the
+maximum-statistic threshold for the rest of the head. In a test example, a constant-within-subject
+predictor channel with t = 10.61 left in the analysis made a planted channel's corrected p 1.0000;
+with the channel excluded it was 0.0164. Over 500 simulated null data sets with the exclusion in
+place, family-wise error at a nominal 0.05 was 0.052 (26 of 500, 95% confidence interval 0.033 to
+0.072, 100 permutations each). The channel is excluded with the reason "predictor constant within
+each subject: its effect is between-subject only, which the within-subject shuffle cannot test
+(use group_label or regression on subject means)".
+
+The same check applies to the dependent variable under `within_subject`. If it is constant within
+every subject, the shuffle has nothing to permute and every permuted map would equal the observed
+one, so the run is refused before any fit with `core_snpm_lmm:dvConstantWithinSubject`. Three
+other settings are refused up front for the same kind of reason: a one-sided `tail`
+(`core_snpm_lmm:oneSidedTail`; the map is a two-sided t or an F, so `mixedmodel` takes
+`tail = 'both'` only), a `group_label` effect that does not contain the group column
+(`core_snpm_lmm:effectNotPermuted`; relabelling subjects would leave every permuted map equal to
+the observed one), and a `within_subject` dependent variable that is not a metadata column
+(`core_snpm_lmm:dvNotMetadata`; the scheme shuffles the dependent variable, so it cannot be the
+channel value). If the exclusions leave no channel at all, the run stops with
+`core_snpm_lmm:noEvaluableChannels`.
+
+### The backstop at every fit
+
+A channel that passes the up-front check can still produce a fit with nothing left over at one
+particular labelling, observed or permuted. After every fit the run checks the data directly,
+because `fitlme`'s own variance estimates are not reliable at this edge. A fit counts as having no
+usable residual variation when the response is reproduced by the fixed effects, or by the fixed
+and random effects together when they leave some residual degrees of freedom (fewer independent
+columns than trials), to within 10⁻²⁰ of its uncentred sum of squares (the same tolerance
+as the zero-variance rule above). For a model whose only random effect is a subject intercept, it
+also counts when the ratio of the subject standard deviation to the residual standard deviation,
+estimated by the method of moments from those sums of squares, is 1000 or more. Such a fit has no
+statistic: its value is NaN and it adds 0 to cluster mass, in the observed map and in every
+permuted map. An observed channel caught this way is shown as NaN and listed with the reason
+"perfect fit, statistic undefined".
+
+The ratio cut-off is there because `fitlme` cannot reach the maximum-likelihood optimum when the
+subject variation dwarfs the residual variation. Compared with the exact optimum, its F was 0.05%
+off at a ratio of 1000, 0.75% off at 10 000 and 35% off at 100 000. Real trial-level power has
+ratios in single digits, so the cut-off is far from ordinary data and only catches channels that
+are nearly constant within subject without crossing the 10⁻⁶ line above. Channels with ordinary
+within-subject variation are unchanged, bit for bit.
 
 ## What you will see in your outputs
 

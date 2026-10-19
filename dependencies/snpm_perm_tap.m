@@ -42,6 +42,15 @@ function out = snpm_perm_tap(cmd, tag, value)
 %               subject-level index perm (group_label)
 %   'circ_u2:labels'                       core_snpm_circ Watson U2, ONE draw
 %       value = the index applied to the group-label vector
+%   'circ:engine_inputs'                   core_snpm_circ, once per run
+%       value = struct: the imported angles (A_imported, before the count-file
+%               NaN rule; A, as analysed), gi / y, logC, usecov, collinear,
+%               the gate masks (gate0, gate, complete, evaluable), the
+%               observed stat / p, tfce_dh, the import / covariate /
+%               inversion-check records, keptcols, and (Hotelling and
+%               circular-linear only) the Freedman-Lane fl_Zfit / fl_R.
+%               Recorded immediately before the 'loop:circ:<comparison>'
+%               marker that opens the run's one permutation loop.
 %   'legacy:engine_inputs'                 core_snpm_analysis, once per run
 %       value = struct: data_x, data_y exactly as handed to global_stat_test and
 %               both engines (after matching, channel selection, transform,

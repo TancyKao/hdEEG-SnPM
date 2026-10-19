@@ -155,6 +155,7 @@ the legacy stat-function switches. Hard constraints, all enforced with named err
 | Precision files required for both group keys | `core_snpm:circCountsRequired` |
 | `datatype` must be `absolute` | `core_snpm:circDatatypeNotSupported` |
 | `tail` must be `both` (all three statistics are non-negative, one-tailed) | `core_snpm:circTailNotSupported` |
+| `circ_corrAngLinear`: subjects missing the measure are dropped whole up front (listed in `results_struct.circ.dropped_subjects`); missing angles are deleted per channel on that fixed row set; fewer than 8 subjects left ⇒ reject | `core_snpm:circMeasureNaNRows` (warning) / `core_snpm:circTooFewSubjects` |
 
 Permutation scheme is **Freedman–Lane on the stacked (cos,sin) response**, `free` (whole-subject
 relabelling) — between-subject only; there is no within-subject circular scheme yet. Cluster

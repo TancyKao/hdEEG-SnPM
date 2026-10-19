@@ -64,6 +64,20 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
 
 ### Fixed
 
+- **Circular–linear correlation with a missing measure value** (`circ_corrAngLinear`;
+  `core_snpm_circ.m`). Affects runs where the measure file has a blank or non-finite value for
+  any subject who also has angles. Such a subject used to stay in the analysis: its missing
+  value travelled with each permutation, so every permuted map dropped a *different* subject,
+  and the reported per-channel n counted the subject as if it had been analysed. The test was
+  not anti-conservative, but it was conservative at small n and could stop with a
+  `core_snpm:circGateDrift` error at random. Now a subject without a finite measure is dropped
+  whole before anything is computed, with a warning (`core_snpm:circMeasureNaNRows`) naming
+  them, and is listed in `results_struct.circ.dropped_subjects`, the results text and a report
+  notice; fewer than 8 remaining subjects is an error (`core_snpm:circTooFewSubjects`). Missing
+  angles are still deleted per channel, now on a fixed set of subjects. The reported n is
+  correct, and results of affected runs can differ from before (small-n runs were
+  conservative). Runs with a complete measure are unchanged.
+
 - **Correlation with covariates now uses a Freedman–Lane permutation** (`correlationP` /
   `correlationS` with `use_covariates`; `core_snpm_analysis.m`, `snpm_single_threshold_with_TFCE.m`,
   `snpm_cluster_analysis.m`, new `dependencies/snpm_fl_corr.m`). The old scheme residualized

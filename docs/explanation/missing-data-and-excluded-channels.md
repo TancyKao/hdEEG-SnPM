@@ -19,8 +19,13 @@ analysis, and outside a permutation test it is defensible.
 Since 2 August 2026 those analyses follow the **complete-column rule** instead. A channel is
 tested only if *every* analysed subject has a value there. One missing cell and the channel
 leaves the analysis entirely, is reported as excluded, and carries no statistic and no p-value
-in either the observed map or the null. The GLM presets and the circular tier already worked
-this way; the correlation paths have now been brought into line with them.
+in either the observed map or the null. The GLM presets already worked this way; the
+correlation paths have now been brought into line with them. The circular tier differs: a
+channel that uses the event-count covariate needs every subject, but elsewhere a missing angle
+is left out at that channel only. That is still exact: a missing angle stays with its
+subject's row when rows are permuted, so the set of subjects analysed at each channel is the
+same in every permutation. In the group tests the split between the groups at that channel can
+shift, which costs sensitivity, not validity.
 
 Nothing changes for complete data. If your file has no missing cells, the results are identical
 to what the tool produced before.
@@ -337,6 +342,12 @@ behavioural value is instead dropped whole, before anything else happens: the ru
 The remaining subjects are analysed on every channel that is complete for *them*. As with
 excluded channels, the removal is never silent — if the analysed n in the report is smaller than
 the number of rows in your behavioural file, this is where the difference went.
+
+The circular–linear analysis (`circ_corrAngLinear`) follows the same rule for its linear measure:
+a subject whose measure value is missing (or not finite) is dropped whole, up front, with the
+warning `core_snpm:circMeasureNaNRows`, and is listed in `results_struct.circ.dropped_subjects`,
+the results text and the report; a missing *angle* is deleted at that channel only, on the fixed
+set of remaining subjects, so every permuted map uses the same subjects at each channel.
 
 ## What you will see in your outputs
 

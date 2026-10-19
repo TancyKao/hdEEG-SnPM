@@ -18,8 +18,9 @@
 %
 % Scope: phase 1 = pairedT, unpairedT, onesampleT, correlationP, correlationS
 % (with and without covariates), anova1, ancova, regression, rmanova, mixed2way.
-% The circular and mixed-model tiers are recorded by the same hook but are not
-% exported here.
+% Phase 2 = the circular tier (circ_phase_group, circ_phase_group_u2,
+% circ_corrAngLinear), replayed like the GLM tier (fx.circ.replay_ok). The
+% mixed-model tier is recorded by the same hook but is not exported here.
 %
 % Nothing in the production results_struct is changed for this. What the
 % pipeline computes but does not keep comes from two places. The hook records
@@ -93,10 +94,12 @@ for ci = 1:numel(cases)
 
     t0 = tic;
     [results_struct, results_text, raw_log] = run_case(P, SEED);
-    % Three kinds of entry are not permutation draws: the matrices the legacy
-    % engines were handed and the legacy cluster-size null (-> fx.engine), and
-    % the GLM cluster-mass null of each loop (-> fx.glm.loops).
-    is_aux  = ismember({raw_log.tag}, {'legacy:engine_inputs', 'legacy:cluster_null', 'glm:cluster_mass_null'});
+    % Four kinds of entry are not permutation draws: the matrices the legacy
+    % engines were handed and the legacy cluster-size null (-> fx.engine), the
+    % cluster-mass null of each GLM / circular loop (-> fx.glm.loops, fx.circ),
+    % and what the circular engine was handed (-> fx.circ).
+    is_aux  = ismember({raw_log.tag}, {'legacy:engine_inputs', 'legacy:cluster_null', ...
+        'glm:cluster_mass_null', 'circ:engine_inputs'});
     aux_log = raw_log(is_aux);
     raw_log = raw_log(~is_aux);
     close all force
@@ -125,6 +128,17 @@ for ci = 1:numel(cases)
                 ['%s: the recorded indices did not reproduce the pipeline''s own null ' ...
                  '(%s). The fixture would not be a valid reference; not saved.'], ...
                 c.name, replay_txt);
+        end
+    elseif strcmp(c.tier, 'circ')
+        fx.inputs = circ_inputs(P);
+        [fx.montage, fx.circ] = circ_capture(P, results_struct, fx.perm_log, aux_log, c.name);
+        replay_txt = sprintf('replay %d/%d checks ok', sum(fx.circ.replay_detail), ...
+            numel(fx.circ.replay_detail));
+        if ~fx.circ.replay_ok
+            error('export_parity:replayMismatch', ...
+                ['%s: the recorded indices did not reproduce the pipeline''s own null ' ...
+                 '(%s; failed: %s). The fixture would not be a valid reference; not saved.'], ...
+                c.name, replay_txt, strjoin(fx.circ.replay_checks(~fx.circ.replay_detail), ', '));
         end
     else
         fx.inputs  = legacy_inputs(P);
@@ -282,6 +296,64 @@ function cases = case_table(EX, B)
         ['Pearson with datatype normalize (each subject z-scored across the analysed channels). ' ...
          'The global test is flagged not interpretable by the pipeline in this configuration.']);
     cases(end).params.datatype = 'normalize';
+
+    % ---- 7. correlation with covariates: backlog of 2026-10-18 ----
+    cases(end+1) = legacy('miss_correlationP_cov_eeg_nan', 'correlationP', 'both', B.miss_corrX_cov, ex('corr_behavior.csv'), 'egi', B.cov, ...
+        ['Partial Pearson (Freedman-Lane) with missing EEG cells, not missing covariates: the complete-column ' ...
+         'rule masks those channels and every subject is kept.']);
+    cases(end+1) = legacy('exact_correlationP_n5_cov', 'correlationP', 'both', B.small_corrX, B.small_corrY, 'egi', B.small_cov, ...
+        ['First 5 subjects, partial Pearson on ONE covariate (age): 5! = 120 orderings enumerated under ' ...
+         'Freedman-Lane; df = 5 - 2 - 1 = 2.']);
+
+    % ---- 8. circular tier (phase 2) ----
+    cases(end+1) = circ('circ_phase_group', 'circ_phase_group', ex('circ_phase_groupA.csv'), ex('circ_phase_groupB.csv'), ...
+        ex('circ_phase_countsA.csv'), ex('circ_phase_countsB.csv'), 'rad', 'literature_uppeak0', ...
+        ['Hotelling T^2 on (cos, sin), 16 + 16 subjects, per-channel log(event count) covariate, ' ...
+         'Freedman-Lane on the stacked response. Planted 46 deg mean-direction shift.']);
+    cases(end+1) = circ('circ_phase_group_u2', 'circ_phase_group_u2', ex('circ_phase_groupA.csv'), ex('circ_phase_groupB.csv'), ...
+        ex('circ_phase_countsA.csv'), ex('circ_phase_countsB.csv'), 'rad', 'literature_uppeak0', ...
+        'Watson U^2 on the same pair (no covariate slot; the count files still feed the gate). TFCE dh = 0.005.');
+    cases(end+1) = circ('circ_corrAngLinear', 'circ_corrAngLinear', ex('circ_anglinear_angles.csv'), ex('circ_anglinear_measure.csv'), ...
+        '', '', 'rad', 'literature_uppeak0', ...
+        'Circular-linear F (y on [1, cos, sin]), 30 matched subjects, the measure y permuted (free).');
+    cases(end).params.measure_col = 'measure';
+    cases(end+1) = circ('circ_phase_group_gate', 'circ_phase_group', B.circ_gateA, B.circ_gateB, ...
+        B.circ_gate_countsA, B.circ_gate_countsB, 'rad', 'literature_uppeak0', ...
+        ['Hotelling on a copy of the example pair edited so that every exclusion route fires: one channel ' ...
+         'below 8 per group, one incomplete channel under the covariate, one channel with log(count) ' ...
+         'disjoint by group (collinear), and one constant-count channel with a missing angle and a zero ' ...
+         'count that stays in on the covariate-free (pairwise-deletion) path.']);
+    cases(end+1) = circ('circ_phase_group_u2_gate', 'circ_phase_group_u2', B.circ_gateA, B.circ_gateB, ...
+        B.circ_gate_countsA, B.circ_gate_countsB, 'rad', 'literature_uppeak0', ...
+        'Watson U^2 on the gate inputs: same evaluable set, missing angles deleted per channel.');
+    cases(end+1) = circ('circ_phase_group_deg_luna', 'circ_phase_group', B.circ_lunaA, B.circ_lunaB, ...
+        ex('circ_phase_countsA.csv'), ex('circ_phase_countsB.csv'), 'deg', 'luna_zerocross0', ...
+        ['The example pair exported in DEGREES with the Luna convention (up-state peak at 270 deg): ' ...
+         'import converts units and rotates by +90 deg.']);
+    cases(end+1) = circ('circ_phase_group_u2_turtlewave', 'circ_phase_group_u2', B.circ_twA, B.circ_twB, ...
+        ex('circ_phase_countsA.csv'), ex('circ_phase_countsB.csv'), 'rad', 'turtlewave_pre_v4', ...
+        ['The example pair inverted by 180 deg (TurtleWave pre-v4.0) and declared so: import rotates by ' ...
+         '180 deg and the inversion check passes. circ.inversion_probe records that the same files ' ...
+         'declared literature_uppeak0 are refused.']);
+    cases(end+1) = circ('circ_corrAngLinear_miss_y', 'circ_corrAngLinear', B.circ_missy_angles, B.circ_missy_measure, ...
+        '', '', 'rad', 'literature_uppeak0', ...
+        ['Circular-linear F with 6 of 30 measure values missing (one Inf) and 3 missing angles in each of ' ...
+         '10 channels: the 6 subjects are dropped whole before anything is computed (results.circ.' ...
+         'dropped_subjects), the missing angles are deleted per channel on the fixed 24-subject row set.']);
+    cases(end).params.measure_col = 'measure';
+end
+
+function c = circ(name, comparison, f1, f2, k1, k2, units, convention, note)
+    P = struct('comparison', comparison, 'tail', 'both', ...
+        'data1_file', f1, 'data1_sheet', 'CSV File', ...
+        'data2_file', f2, 'data2_sheet', 'CSV File', ...
+        'channels', 'egi', 'datatype', 'absolute', ...
+        'circ_units', units, 'circ_convention', convention);
+    if ~isempty(k1)
+        P.count1_file = k1; P.count1_sheet = 'CSV File';
+        P.count2_file = k2; P.count2_sheet = 'CSV File';
+    end
+    c = struct('name', name, 'tier', 'circ', 'analysis', comparison, 'params', P, 'note', note);
 end
 
 function c = legacy(name, comparison, tail, f1, f2, channels, covfile, note)
@@ -398,6 +470,70 @@ function B = build_inputs(EX, IN_DIR, seed)
     B.s7_corrX_ties = in('small_corr_eeg_n7_ties.csv');   writetable(Xt(1:7, :), B.s7_corrX_ties);
     B.ties_corrX    = in('ties_corr_eeg.csv');            writetable(Xt,         B.ties_corrX);
     B.tie_channels  = tie_ch;
+
+    % ---- inputs added with the circular tier: a SECOND private stream, so
+    %      nothing above draws a different number because these exist ----
+    rs2 = RandStream('mt19937ar', 'Seed', seed + 1);
+
+    % correlation with covariates, missing EEG cells (not covariates)
+    nan_ch = scalp(randperm(rs2, numel(scalp), 2));
+    Xm = X;
+    Xm.(nan_ch{1})(randi(rs2, n)) = NaN;
+    Xm.(nan_ch{2})(randi(rs2, n)) = NaN;
+    B.miss_corrX_cov = in('miss_corr_eeg_cov.csv');       writetable(Xm, B.miss_corrX_cov);
+    B.miss_cov_channels = nan_ch;
+    % exact enumeration with one covariate: the first 5 subjects, age only
+    B.small_cov = in('small_corr_covariates_n5.csv');     writetable(C(1:5, {'Subject', 'age'}), B.small_cov);
+
+    % circular: the example pair edited so that every exclusion route fires
+    Ga = rd('circ_phase_groupA.csv'); Gb = rd('circ_phase_groupB.csv');
+    Ka = rd('circ_phase_countsA.csv'); Kb = rd('circ_phase_countsB.csv');
+    cscalp = analysed_labels('egi', Ga.Properties.VariableNames);
+    pk = cscalp(randperm(rs2, numel(cscalp), 4));
+    na = height(Ga); nb = height(Gb);
+    Ea = Ga; Eb = Gb; Qa = Ka; Qb = Kb;
+    Ea.(pk{1})(randperm(rs2, na, na - 7)) = NaN;          % (1) 7 angles left in A  -> below the gate
+    Qa.(pk{1})(:) = 20; Qb.(pk{1})(:) = 20;               %     (constant count, so the gate is its ONLY reason)
+    Eb.(pk{2})(randi(rs2, nb)) = NaN;                     % (2) one missing angle under the covariate
+    Qa.(pk{3}) = max(Kb.(pk{3})) + (1:na)';               % (3) every A count above every B count
+    Qa.(pk{4})(:) = 20; Qb.(pk{4})(:) = 20;               % (4) constant count -> covariate dropped ...
+    Qa.(pk{4})(3) = 0;                                    %     ... A row 3 has no usable count (angle dropped)
+    Eb.(pk{4})(5) = NaN;                                  %     ... B row 5 has no angle; the channel stays in
+    B.circ_gateA = in('circ_gate_groupA.csv');          writetable(Ea, B.circ_gateA);
+    B.circ_gateB = in('circ_gate_groupB.csv');          writetable(Eb, B.circ_gateB);
+    B.circ_gate_countsA = in('circ_gate_countsA.csv');  writetable(Qa, B.circ_gate_countsA);
+    B.circ_gate_countsB = in('circ_gate_countsB.csv');  writetable(Qb, B.circ_gate_countsB);
+    B.circ_gate_channels = pk;
+
+    % circular: the example pair in other export conventions
+    ach = setdiff(Ga.Properties.VariableNames, {'Subject'}, 'stable');
+    La = Ga; Lb = Gb; Wa = Ga; Wb = Gb;
+    La{:, ach} = mod(Ga{:, ach} * 180 / pi - 90, 360);   % degrees, up-state peak at 270
+    Lb{:, ach} = mod(Gb{:, ach} * 180 / pi - 90, 360);
+    Wa{:, ach} = mod(Ga{:, ach} + pi, 2 * pi);           % radians, inverted
+    Wb{:, ach} = mod(Gb{:, ach} + pi, 2 * pi);
+    B.circ_lunaA = in('circ_luna_deg_groupA.csv');      writetable(La, B.circ_lunaA);
+    B.circ_lunaB = in('circ_luna_deg_groupB.csv');      writetable(Lb, B.circ_lunaB);
+    B.circ_twA   = in('circ_tw_inverted_groupA.csv');   writetable(Wa, B.circ_twA);
+    B.circ_twB   = in('circ_tw_inverted_groupB.csv');   writetable(Wb, B.circ_twB);
+
+    % ---- circular-linear with a missing measure: a THIRD private stream, so
+    %      every input above keeps the values it had before this was added ----
+    rs3 = RandStream('mt19937ar', 'Seed', seed + 2);
+    Ya = rd('circ_anglinear_angles.csv'); Ym = rd('circ_anglinear_measure.csv');
+    ny = height(Ym);
+    ymiss = sort(randperm(rs3, ny, round(0.2 * ny)));     % 20% of subjects lose y ...
+    Ym.measure(ymiss) = NaN;
+    Ym.measure(ymiss(end)) = Inf;                         % ... one of them as Inf (also missing)
+    lscalp = analysed_labels('egi', Ya.Properties.VariableNames);
+    ach_nan = lscalp(randperm(rs3, numel(lscalp), 10));   % 10 channels, 3 missing angles each
+    for i = 1:numel(ach_nan)
+        Ya.(ach_nan{i})(randperm(rs3, height(Ya), 3)) = NaN;
+    end
+    B.circ_missy_angles  = in('circ_anglinear_angles_miss.csv');   writetable(Ya, B.circ_missy_angles);
+    B.circ_missy_measure = in('circ_anglinear_measure_miss_y.csv'); writetable(Ym, B.circ_missy_measure);
+    B.circ_missy_subjects = cellstr(string(Ym.Subject(ymiss)))';
+    B.circ_missy_channels = ach_nan;
 end
 
 function T = scatter_nan(T, scalp, k, rs)
@@ -479,7 +615,7 @@ end
 
 function S = source_files(P, ROOT)
     S = struct();
-    for f = {'data1_file', 'data2_file', 'data_file', 'covariate_file'}
+    for f = {'data1_file', 'data2_file', 'data_file', 'covariate_file', 'count1_file', 'count2_file'}
         if isfield(P, f{1}) && ~isempty(P.(f{1}))
             a = P.(f{1});
             r = a;
@@ -839,6 +975,343 @@ function ok = cluster_p_match(Clusters, maxM, nP)
 end
 
 % =======================================================================
+% CAPTURE: circular tier
+% =======================================================================
+function I = circ_inputs(P)
+% The input files as readtable returns them (raw units and convention).
+    I = struct();
+    I.angles1 = table_block(P.data1_file, {});
+    if strcmp(P.comparison, 'circ_corrAngLinear')
+        I.angles2 = [];
+        I.measure = table_block(P.data2_file, {});
+        I.counts1 = [];
+        I.counts2 = [];
+    else
+        I.angles2 = table_block(P.data2_file, {});
+        I.measure = [];
+        I.counts1 = table_block(P.count1_file, {});
+        I.counts2 = table_block(P.count2_file, {});
+    end
+end
+
+function [M, C] = circ_capture(P, rs, plog, aux, name)
+% Rebuilds every stage of core_snpm_circ from the input FILES with the same
+% dependency functions (import, montage, count rule, gate, Freedman-Lane
+% context, observed statistic), checks each stage against what the engine
+% recorded (tap 'circ:engine_inputs'), then replays the one permutation loop
+% from the RECORDED indices and checks it against the pipeline's own nulls,
+% corrected p-values and clusters.
+    alpha = 0.05; E = 0.5; H = 2;
+    ei = aux(strcmp({aux.tag}, 'circ:engine_inputs'));
+    mn = aux(strcmp({aux.tag}, 'glm:cluster_mass_null'));
+    assert(isscalar(ei) && isscalar(mn) && isscalar(plog), 'export_parity:auxCount', ...
+        ['%s: expected one circ:engine_inputs record, one cluster-mass null and one ' ...
+         'permutation loop; got %d, %d and %d.'], name, numel(ei), numel(mn), numel(plog));
+    v = ei.value;
+    is_u2   = strcmp(P.comparison, 'circ_phase_group_u2');
+    is_corr = strcmp(P.comparison, 'circ_corrAngLinear');
+    is_grp  = ~is_corr;
+    ck = struct();                         % named replay checks, in this order
+
+    % ---- montage: the angle file's header against the registry ----
+    W1 = circ_wide(P.data1_file);
+    W2 = circ_wide(P.data2_file);
+    S = snpm_setup_channels(P.channels, {zeros(1, numel(W1.cols))}, W1.cols);
+    M = montage_struct(P.channels, S);
+    nCh = numel(M.labels);
+    kept = M.data_columns(:)';
+    ck.montage = isequal(M.labels, {rs.chanlocs.labels}) && isequal(double(kept), double(v.keptcols(:)'));
+
+    % ---- import (units, convention, rotation) ----
+    gate_mode = 'warn'; if is_u2, gate_mode = 'error'; end
+    iopt = struct('units', P.circ_units, 'convention', P.circ_convention, ...
+        'zero_offset_deg', pget(P, 'circ_zero_offset_deg', []), 'resolution_gate', gate_mode, ...
+        'label', 'Angles file 1');
+    [A1, imp] = snpm_circ_import(W1.M, iopt);
+    if is_grp
+        [tf, loc] = ismember(W1.cols, W2.cols);
+        assert(all(tf), 'export_parity:circColumns', '%s: group B lacks channels of group A.', name);
+        iopt.label = 'Angles file 2';
+        A2 = snpm_circ_import(W2.M(:, loc), iopt);
+        n1 = size(A1, 1); n2 = size(A2, 1);
+        Araw = [A1; A2];
+        gi = [ones(n1, 1); zeros(n2, 1)];
+        y = [];
+        subj = [W1.subj; W2.subj];
+        src_file = [ones(n1, 1); 2 * ones(n2, 1)];
+        src_row  = [(1:n1)'; (1:n2)'];
+        measure_row = [];
+        measure_col = '';
+    else
+        measure_col = pget(P, 'measure_col', '');
+        if isempty(measure_col), measure_col = W2.cols{1}; end
+        [subj, i1, i2] = intersect(W1.subj, W2.subj, 'stable');
+        y = W2.M(i2, strcmp(W2.cols, measure_col));
+        % Subjects without a finite measure are dropped whole, before anything
+        % else (core_snpm_circ, core_snpm:circMeasureNaNRows).
+        keep = isfinite(y);
+        ck_dropped = isequal(subj(~keep)', rs.circ.dropped_subjects(:)') && ...
+            rs.circ.measure_nan_removed == sum(~keep);
+        subj = subj(keep); i1 = i1(keep); i2 = i2(keep); y = y(keep);
+        Araw = A1(i1, :);
+        gi = [];
+        src_file = ones(numel(i1), 1);
+        src_row  = i1(:);
+        measure_row = i2(:);
+    end
+    A_imported = Araw(:, kept);
+    ck.import = isequaln(A_imported, v.A_imported) && isequaln(gi, v.gi) && ...
+        isequaln(y, v.y) && isequaln(imp, v.import);
+    if is_corr, ck.import = ck.import && ck_dropped; end
+
+    % ---- event counts -> NaN rule -> per-channel log covariate ----
+    A = A_imported;
+    Cnt = []; logC = [];
+    if is_grp
+        K1 = circ_wide(P.count1_file); K2 = circ_wide(P.count2_file);
+        Cnt = [circ_align(K1, W1.cols, W1.subj); circ_align(K2, W1.cols, W2.subj)];
+        Cnt = Cnt(:, kept);
+        no_count = isfinite(A) & ~(isfinite(Cnt) & Cnt > 0);
+        A(no_count) = NaN;
+        assert(strcmp(v.covariate.mode, 'per_channel'), 'export_parity:circCovMode', ...
+            '%s: the replay implements the per_channel count mode only.', name);
+        Cu = Cnt; Cu(~(isfinite(Cu) & Cu > 0)) = NaN;
+        logC = log(Cu);
+    end
+    ck.count_rule = isequaln(A, v.A) && isequaln(logC, v.logC);
+
+    % ---- covariate rules, rebuilt from logC and the observed labels ----
+    % (snpm_circ_count_covariate: dropped where sd(log count) < 0.05 or no
+    % finite value; collinear where log count is disjoint by group or
+    % abs(point-biserial) > circ_collinearity_max, default 0.8)
+    if is_grp
+        pb = nan(1, nCh);
+        for k = 1:nCh
+            okk = isfinite(logC(:, k));
+            if sum(okk) < 3 || numel(unique(gi(okk))) < 2, continue; end
+            cc = corrcoef(logC(okk, k), gi(okk));
+            pb(k) = cc(1, 2);
+        end
+        sdl = std(logC, 0, 1, 'omitnan');
+        usecov = ~(sdl < 0.05) & any(isfinite(logC), 1);
+        disjoint = false(1, nCh);
+        for k = 1:nCh
+            a1 = logC(gi == 1, k); a1 = a1(isfinite(a1));
+            a0 = logC(gi == 0, k); a0 = a0(isfinite(a0));
+            if isempty(a1) || isempty(a0), disjoint(k) = true; continue; end
+            disjoint(k) = (min(a1) > max(a0)) || (min(a0) > max(a1));
+        end
+        collinear = usecov & (disjoint | abs(pb) > pget(P, 'circ_collinearity_max', 0.8));
+        usecov(collinear) = false;
+        ck.covariate_rules = isequaln(pb, v.covariate.pb) && ...
+            isequal(usecov, logical(v.usecov(:)')) && isequal(collinear, logical(v.collinear(:)'));
+    else
+        usecov = false(1, nCh); collinear = false(1, nCh);
+        ck.covariate_rules = ~any(v.usecov) && ~any(v.collinear);
+    end
+
+    % ---- gate masks, rebuilt from the observed labels ----
+    if is_grp
+        n_g1 = sum(isfinite(A) & gi == 1, 1);
+        n_g2 = sum(isfinite(A) & gi == 0, 1);
+        below = ~(n_g1 >= 8 & n_g2 >= 8);
+        n_fin = n_g1 + n_g2;
+        gate0 = ~below & ~collinear;
+    else
+        n_g1 = []; n_g2 = [];
+        n_fin = sum(isfinite(A) & isfinite(y), 1);
+        below = n_fin < 8;
+        gate0 = (sum(isfinite(A), 1) >= 8) & ~collinear;
+    end
+    gate = gate0 & ~below;
+    complete = all(isfinite(A), 1);
+    ev = gate & (~usecov | complete);
+    incomplete = usecov & ~complete;
+    ck.gate = isequal(gate0, logical(v.gate0(:)')) && isequal(gate, logical(v.gate(:)')) && ...
+        isequal(complete, logical(v.complete(:)')) && isequal(ev, logical(v.evaluable(:)')) && ...
+        isequal(~ev, below | collinear | incomplete);
+    reason = repmat({''}, 1, nCh);
+    for k = find(~ev)
+        r = {};
+        if below(k),      r{end+1} = 'fewer than 8 subjects per group'; end %#ok<AGROW>
+        if collinear(k),  r{end+1} = 'log(count) collinear with group'; end %#ok<AGROW>
+        if incomplete(k), r{end+1} = 'incomplete column under the per-channel covariate'; end %#ok<AGROW>
+        reason{k} = strjoin(r, '; ');
+    end
+    ck.excluded = isequal(find(~ev), double(rs.excluded_channels.index(:)'));
+
+    % ---- inversion check on the pooled sample ----
+    [~, inv] = evalc('snpm_circ_check_inversion(A, gate0, S.chanlocs, imp)');
+    ck.inversion = isequaln(inv, v.inversion);
+    probe = [];
+    if strcmpi(P.circ_convention, 'turtlewave_pre_v4')
+        % Same files declared as if they were NOT inverted: the guard must refuse.
+        Q = P; Q.circ_convention = 'literature_uppeak0';
+        probe = struct('convention', Q.circ_convention, 'error_id', '', 'message', '');
+        try
+            evalc('core_snpm_analysis(Q)');
+        catch ME
+            probe.error_id = ME.identifier;
+            probe.message  = ME.message;
+        end
+        ck.inversion = ck.inversion && strcmp(probe.error_id, 'core_snpm:circPhaseConventionInverted');
+    end
+
+    % ---- observed statistic and the permuted-statistic function ----
+    sopt = struct('valid_channels', ev);
+    fl = [];
+    if is_u2
+        [stat, pm] = snpm_circ_watsons_u2(A, gi, sopt);
+        permfn = @(ix) snpm_circ_watsons_u2(A, gi(ix), sopt);
+        tag = 'circ_u2:labels'; dh = 0.005;
+    elseif is_grp
+        hctx = snpm_circ_hotelling_perm(gi, logC, usecov, ev);
+        [stat, pm] = hctx.eval(cos(A), sin(A));
+        fl = snpm_circ_fl_context(A, logC, usecov, ev);
+        permfn = @(ix) hotelling_eval(hctx, fl.Zfit + fl.R(ix, :), nCh);
+        tag = 'glm_permute:free'; dh = [];
+    else
+        [stat, pm] = snpm_circ_corr_anglinear(y, A, [], sopt);
+        n = numel(y);
+        fl = struct('Zfit', repmat(mean(y), n, 1), 'R', y - mean(y), ...
+            'eb', ones(n, 1), 'perm_type', 'free');
+        permfn = @(ix) snpm_circ_corr_anglinear(fl.Zfit + fl.R(ix, :), A, [], sopt);
+        tag = 'glm_permute:free'; dh = [];
+    end
+    ck.fl_context = isempty(fl) || (isequaln(fl.Zfit, v.fl_Zfit) && isequaln(fl.R, v.fl_R));
+    ck.observed_engine = isequaln(stat, v.stat) && isequaln(pm, v.p) && isequaln(dh, v.tfce_dh);
+    stat(~ev) = NaN; pm(~ev) = NaN;
+    adj = make_neighbors_sparse(S.neighbors, size(S.neighbors, 1));
+    if isempty(dh), enh = @(x) ClusterEnhancement(x, adj, E, H);
+    else,           enh = @(x) ClusterEnhancement(x, adj, E, H, dh); end
+    tfce = enh(stat);
+    ck.observed_maps = isequaln(stat, rs.T.real_T) && isequaln(pm, rs.p.real) && ...
+        isequaln(tfce, rs.T.real_TFCE);
+
+    % ---- replay the loop from the recorded indices ----
+    idx = plog.indices;
+    nP = size(idx, 1);
+    ck.loop_tag = strcmp(plog.tag, tag) && nP == P.permutations;
+    maxT = zeros(nP, 1); maxM = zeros(nP, 1);
+    for i = 1:nP
+        [s, pp] = permfn(idx(i, :)');
+        s(~ev) = NaN; pp(~ev) = NaN;
+        maxT(i) = max(enh(s), [], 'omitnan');
+        maxM(i) = max_cluster_mass(pp, s, true, alpha, adj);
+    end
+    maxT = sort(maxT, 'descend'); maxM = sort(maxM, 'descend');
+    ck.tfce_null = isequaln(maxT, rs.T.tMaxTFCE);
+    ck.mass_null = isequaln(maxM, mn.value);
+    ck.cluster_p = cluster_p_match(rs.Clusters, mn.value, nP);
+    pT = nan(1, nCh);
+    for k = find(isfinite(tfce))
+        pT(k) = (snpm_count_at_least(maxT, tfce(k)) + 1) / (nP + 1);
+    end
+    ck.p_tfce = isequaln(pT, rs.p.correctedTFCE);
+
+    % ---- descriptive panel, recomputed from the analysed angles ----
+    if is_grp, sets = {gi == 1, gi == 0}; else, sets = {true(size(A, 1), 1)}; end
+    ok = numel(rs.circ_descriptive.group) == numel(sets);
+    for k = 1:numel(sets)
+        a = A(sets{k}, ev); a = a(isfinite(a)); nn = numel(a);
+        r  = abs(sum(exp(1i * a))) / nn;
+        mu = mod(rad2deg(angle(sum(exp(1i * a)))), 360);
+        sd = rad2deg(sqrt(-2 * log(max(r, realmin))));
+        pv = min(max(exp(sqrt(1 + 4*nn + 4*(nn^2 - (nn*r)^2)) - (1 + 2*nn)), 0), 1);
+        g = rs.circ_descriptive.group(k);
+        ok = ok && isequal(g.n, nn) && isequal(g.mean_deg, mu) && isequal(g.sd_deg, sd) && ...
+            isequal(g.R, r) && isequal(g.rayleigh_z, nn * r^2) && isequal(g.rayleigh_p, pv);
+    end
+    ck.descriptive = ok;
+
+    % ---- assemble ----
+    C = struct();
+    C.comparison = P.comparison;
+    if is_u2
+        C.statistic = 'watson_U2';
+    elseif is_grp
+        C.statistic = 'hotelling_F';
+    else
+        C.statistic = 'circlinear_F';
+    end
+    C.alpha = alpha; C.tfce_E = E; C.tfce_H = H;
+    if isempty(dh), C.tfce_dh = 0.1; else, C.tfce_dh = dh; end
+    C.cluster_statistic = 'mass = sum(stat)/n_channels over channels with p_uncorrected < alpha';
+    C.import = imp;
+    C.subject_ids = subj(:);
+    C.source_file = src_file;
+    C.source_row  = src_row;
+    C.measure_col = measure_col;
+    C.measure_row = measure_row;
+    C.angles_imported = A_imported;
+    C.angles = A;
+    C.group  = gi;
+    C.y      = y;
+    C.counts = Cnt;
+    C.log_count = logC;
+    C.covariate = v.covariate;
+    C.usecov    = usecov;
+    C.collinear = collinear;
+    C.n_group1 = n_g1; C.n_group2 = n_g2; C.n_finite = n_fin;
+    C.gate0 = gate0; C.gate = gate;
+    C.complete = complete; C.evaluable = ev;
+    C.excluded_below_gate  = below & ~ev;
+    C.excluded_collinear   = collinear & ~ev;
+    C.excluded_incomplete  = incomplete & ~ev;
+    C.excluded_reason      = reason;
+    C.inversion       = v.inversion;
+    C.inversion_probe = probe;
+    if isempty(fl)
+        C.fl_Zfit = []; C.fl_R = []; C.perm_type = 'labels';
+    else
+        C.fl_Zfit = fl.Zfit; C.fl_R = fl.R; C.perm_type = fl.perm_type;
+    end
+    C.stat = stat; C.p_uncorrected = pm; C.tfce = tfce;
+    C.tfce_null_sorted = maxT;
+    C.cluster_mass_null_sorted = mn.value;
+    C.cluster_mass_null_source = 'recorded in snpm_perm_correction (tap glm:cluster_mass_null)';
+    C.p_correctedTFCE = pT;
+    C.replay_checks = fieldnames(ck)';
+    C.replay_detail = cellfun(@(f) logical(ck.(f)), C.replay_checks);
+    C.replay_ok = all(C.replay_detail);
+end
+
+function [s, pp] = hotelling_eval(hctx, Yp, nCh)
+% The stacked response: columns 1..nCh = cos, nCh+1..2nCh = sin.
+    [s, pp] = hctx.eval(Yp(:, 1:nCh), Yp(:, nCh+1:end));
+end
+
+function S = circ_wide(file)
+% core_snpm_circ/read_wide: subject column = first name containing 'subject',
+% ids as sub%03d when numeric.
+    T = readtable(file);
+    vn = T.Properties.VariableNames;
+    is_s = contains(lower(vn), 'subject');
+    raw = T{:, find(is_s, 1)};
+    if isnumeric(raw)
+        S.subj = arrayfun(@(x) sprintf('sub%03d', x), raw, 'UniformOutput', false);
+    else
+        S.subj = cellstr(string(raw));
+    end
+    S.subj = S.subj(:);
+    S.cols = vn(~is_s);
+    S.M = T{:, ~is_s};
+end
+
+function M = circ_align(S, cols, subj)
+% Count matrix in the angle file's channel and subject order (exact set match).
+    [tf, cl] = ismember(cols, S.cols);
+    [ts, rl] = ismember(subj, S.subj);
+    assert(all(tf) && all(ts) && numel(S.cols) == numel(cols) && numel(S.subj) == numel(subj), ...
+        'export_parity:circCounts', 'count file does not match its angle file');
+    M = S.M(rl, cl);
+end
+
+function v = pget(s, f, d)
+    if isfield(s, f) && ~isempty(s.(f)), v = s.(f); else, v = d; end
+end
+
+% =======================================================================
 % PLAIN-TYPE CONVERSION (scipy.io.loadmat-safe)
 % =======================================================================
 function v = flat(v)
@@ -962,6 +1435,32 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('subject 1''s value in %s, so each of those channels has exactly one tied pair in the EEG matrix; the', strjoin(B.tie_channels, ', '));
     w('behaviour matrix has no ties. `results.p.real` for correlationS is MATLAB `corr(..., ''Type'', ''Spearman'')`,');
     w('whose p-value method depends on n and on ties; the statistic `T.real_T` does not.');
+    w('`inputs/miss_corr_eeg_cov.csv` is `corr_eeg.csv` with one EEG cell blank in each of %s (covariates complete),', ...
+        strjoin(B.miss_cov_channels, ' and '));
+    w('so those two channels are masked by the complete-column rule and the Freedman-Lane fit uses all 30 subjects.');
+    w('`inputs/small_corr_covariates_n5.csv` is the first 5 rows of `corr_covariates.csv`, `Subject` and `age` only.');
+    w('');
+    w('Circular inputs. `example_data/circ_*` are radians on [0, 2*pi) with zero at the up-state peak. Built here:');
+    w('`inputs/circ_gate_*.csv` are copies of the `circ_phase_*` pair with four channels edited. `%s`: 9 of 16 group-A', B.circ_gate_channels{1});
+    w('angles blank (7 left, below the 8-per-group gate) and its counts set to 20 everywhere, so the gate is its only reason.');
+    w('`%s`: one group-B angle blank while the count covariate is in use, so the column is incomplete and excluded.', B.circ_gate_channels{2});
+    w('`%s`: every group-A count set above every group-B count, so log(count) is disjoint by group (collinear) and', B.circ_gate_channels{3});
+    w('the channel is excluded. `%s`: counts 20 everywhere (constant, so the covariate is dropped and the channel', B.circ_gate_channels{4});
+    w('uses the covariate-free Hotelling with pairwise deletion), group-A row 3 count 0 (its angle is dropped by the');
+    w('count rule) and group-B row 5 angle blank; it stays in with 15 + 15 angles.');
+    w('`inputs/circ_luna_deg_group*.csv` = `mod(rad2deg(a) - 90, 360)` of the example angles (degrees, Luna convention,');
+    w('declared `deg` + `luna_zerocross0`; import adds 90 deg). `inputs/circ_tw_inverted_group*.csv` = `mod(a + pi, 2*pi)`');
+    w('(declared `rad` + `turtlewave_pre_v4`; import adds 180 deg). Both reuse the example count files. Text round-trips');
+    w('through CSV, so the imported angles equal the example angles only to ~1e-14 rad, not bit for bit.');
+    w('`inputs/circ_anglinear_measure_miss_y.csv` is `circ_anglinear_measure.csv` with `measure` blank for %s and', ...
+        strjoin(B.circ_missy_subjects(1:end-1), ', '));
+    w('`Inf` for %s (Inf counts as missing). `inputs/circ_anglinear_angles_miss.csv` is `circ_anglinear_angles.csv` with', ...
+        B.circ_missy_subjects{end});
+    w('3 angles blank in each of %s.', strjoin(B.circ_missy_channels, ', '));
+    w('circ_corrAngLinear drops every subject whose measure is not finite right after subject matching: they are absent');
+    w('from `circ.subject_ids`, `circ.y`, `circ.angles` and every map, and listed in `results.circ.dropped_subjects`');
+    w('(count `results.circ.measure_nan_removed`). Missing angles stay with their row and are deleted per channel, so');
+    w('`results.per_channel_n` is the same in the observed map and in every permuted map.');
     w('');
     w('## Order of permutation loops per analysis');
     w('');
@@ -1042,6 +1541,35 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('');
     w('`glm.loops(k)` describes the same loop as `perm_log(k)`.');
     w('');
+    w('**Circular tier** (circ_phase_group, circ_phase_group_u2, circ_corrAngLinear): ONE loop, `circ:<comparison>`,');
+    w('inside `snpm_perm_correction`; the TFCE and cluster-mass nulls share its draws. There is no global test and no');
+    w('post-hoc. The observed labelling is NOT forced into row 1. Each row of `perm_log(1).indices` is one `randperm(n)`:');
+    w('');
+    w('| Analysis | Tag | How a row `ix` is applied |');
+    w('|---|---|---|');
+    w('| circ_phase_group (Hotelling) | `glm_permute:free` | Freedman-Lane on the STACKED response `Y = [cos(A), sin(A)]`, n x 2*nCh (columns 1..nCh = cos of channel 1..nCh, nCh+1..2nCh = sin of the same channels). `Y_perm = circ.fl_Zfit + circ.fl_R(ix, :)`: ONE index moves every column, so cos and sin of a subject always move together. The permuted statistic is evaluated on `Y_perm(:, 1:nCh)`, `Y_perm(:, nCh+1:end)` directly (it is off the unit circle; there is no angle). `circ.group` and the count covariate stay fixed. |');
+    w('| circ_phase_group_u2 (Watson U^2) | `circ_u2:labels` | label permutation: the permuted map is U^2 of the FIXED angles with group vector `circ.group(ix)`. Nothing is re-centred. |');
+    w('| circ_corrAngLinear | `glm_permute:free` | Freedman-Lane with the intercept as the only nuisance: `y_perm = circ.fl_Zfit + circ.fl_R(ix)` (n x 1; `fl_Zfit` = mean of y; subjects with a non-finite y were dropped before this, so y is complete), against the FIXED angles. |');
+    w('');
+    w('**Event-count covariate (Hotelling only).** Per channel ch, the nuisance is `[1, log(count(:, ch))]` where');
+    w('`circ.usecov(ch)` is true and the intercept alone elsewhere; the design for the statistic is `X = [1, logC_ch, g]`');
+    w('(or `[1, g]`), `g` = `circ.group` (1 = group A, 0 = group B). The same `logC_ch` column is used for the cos and the sin');
+    w('column of that channel. `fl_Zfit`/`fl_R` are the per-channel least-squares fit and residual of each stacked column on');
+    w('its nuisance, fitted once before the loop (`snpm_circ_fl_context`). Covariate channels: `F = T2 (nu-1)/(2 nu)` with');
+    w('`nu = n - 3`, `T2 = (c''B) S^-1 (c''B)'' / (c''(X''X)^-1 c)`, `S` the 2 x 2 residual covariance of the full model on `nu`, `F ~');
+    w('F(2, nu - 1)`. Covariate-free channels: classic pooled two-sample Hotelling with per-channel pairwise deletion,');
+    w('`nu = n1 + n2 - 2`. A permuted residual row carries its NaN with it. `usecov` is false where sd(log count) < 0.05 or');
+    w('the channel is collinear. A cell with an angle but count <= 0 or missing has its ANGLE set to NaN before anything else.');
+    w('Watson U^2 never uses the covariate, but the count files still decide the evaluable set (same gate as Hotelling).');
+    w('');
+    w('**Gate (computed once, from the observed labels, never per permutation).** A channel is evaluable when it has >= 8');
+    w('finite angles in each group (circ_corrAngLinear: >= 8 subjects with an angle, y being complete), is not collinear, and, if');
+    w('`usecov`, is complete. Non-evaluable channels are NaN in the observed map and in every permuted map, before TFCE.');
+    w('TFCE: `ClusterEnhancement(stat, adj, 0.5, 2, dh)` with dh = 0.1 (Hotelling, circular-linear) or 0.005 (U^2) for');
+    w('the observed AND every permuted map. Cluster forming: channels with parametric p < 0.05, connected through');
+    w('`montage.neighbors`; cluster mass = sum(stat)/n_channels (stat = F or U^2 itself, NOT squared). TFCE null = max over');
+    w('channels of the TFCE map (non-negative statistics). p = (b + 1)/(N + 1) with ties at relative 1e-12 counted.');
+    w('');
     w('## Field dictionary');
     w('');
     w('Top level of every fixture:');
@@ -1049,13 +1577,13 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| Field | Type / shape | Meaning |');
     w('|---|---|---|');
     w('| `case_name` | char | fixture name (= file name without `.mat`) |');
-    w('| `tier` | char | `legacy` or `glm` |');
+    w('| `tier` | char | `legacy`, `glm` or `circ` |');
     w('| `description` | char | what the case is for |');
     w('| `seed`, `rng_algorithm` | scalar, char | `rng(seed, rng_algorithm)` was called immediately before the run |');
     w('| `permutations` | scalar | permutations REQUESTED (`params.permutations`) |');
     w('| `matlab_version`, `created` | char | provenance |');
     w('| `params` | struct | the params struct passed to `core_snpm_analysis` (paths are absolute, this machine) |');
-    w('| `source_files` | struct | per input (`data1_file`, `data2_file`, `data_file`, `covariate_file`): `.absolute` and `.relative_to_repo` |');
+    w('| `source_files` | struct | per input (`data1_file`, `data2_file`, `data_file`, `covariate_file`, `count1_file`, `count2_file`): `.absolute` and `.relative_to_repo` |');
     w('| `inputs` | struct | the input files as `readtable` returned them, before any processing (below) |');
     w('| `montage` | struct | the channels the run analysed and their adjacency (below) |');
     w('| `perm_log` | struct array, K x 1 | one entry per permutation loop, in call order (below) |');
@@ -1063,9 +1591,11 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| `results_text` | cellstr | the text summary the pipeline returned |');
     w('| `engine` | struct | legacy tier only: the matrices the engines were handed, the cluster-size null, the global channel set (below) |');
     w('| `glm` | struct | GLM tier only: designs and replayed nulls (below) |');
+    w('| `circ` | struct | circular tier only: every stage of the circular pipeline and the replayed null (below) |');
     w('');
     w('`inputs` -- legacy tier has `data1`, `data2` (empty for `onesampleT_single`), `covariates` (empty when unused);');
-    w('GLM tier has `data`. Each data block:');
+    w('GLM tier has `data`; circular tier has `angles1`, `angles2`, `counts1`, `counts2` (two-group analyses) or `angles1`,');
+    w('`measure` (circ_corrAngLinear), the others empty, all in the file''s own units and convention. Each data block:');
     w('');
     w('| Field | Type / shape | Meaning |');
     w('|---|---|---|');
@@ -1185,8 +1715,54 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| `loops(k).cluster_mass_null_source` | char | provenance of the field above |');
     w('| `loops(k).replay_ok`, `.replay_detail` | logical, 1 x 6 | the export script''s replay reproduced [stat, p, tfce, tfce-null, cluster p from the recorded mass null, the recorded mass null itself] exactly |');
     w('');
+    w('`results`, circular tier: `T.real_T` (F or U^2), `T.real_TFCE`, `T.tMaxTFCE` (sorted descending), `T.critical_T_TFCE`,');
+    w('`T.excluded_channels`, `p.real`, `p.correctedTFCE`, `Clusters(c)` (`.channels`, `.mass`, `.p`, `.threshold` = alpha,');
+    w('`.permutations`), the significant-channel sets, `alpha`, `chanlocs`, `excluded_channels` (one combined reason string),');
+    w('`per_channel_n` (finite angles per channel), `hide_condition_b`, `circ` (`.import`, `.rotation_deg`, `.convention`,');
+    w('`.units`, `.covariate`, `.gate_min_per_group` = 8, `.evaluable`, `.n_group1`, `.n_group2`, and `.rho` for');
+    w('circ_corrAngLinear), `circ_descriptive` (`.group(k)`: `.label`, `.n` angles pooled over evaluable channels, `.mean_deg`,');
+    w('`.sd_deg` = circular SD in degrees, `.R`, `.rayleigh_z` = nR^2, `.rayleigh_p`; `.n_channels`, `.note`), `glm.effect_label`,');
+    w('`data_summary`. No `global_stat`/`global_pval`: the tier has no whole-head test, deliberately.');
+    w('');
+    w('`circ` (circular tier only; rebuilt by the export script from the input files with the pipeline''s own functions, each');
+    w('stage checked against what `core_snpm_circ` recorded, then the loop replayed from `perm_log(1).indices`):');
+    w('');
+    w('| Field | Type / shape | Meaning |');
+    w('|---|---|---|');
+    w('| `comparison`, `statistic` | char | `hotelling_F`, `watson_U2` or `circlinear_F` |');
+    w('| `alpha`, `tfce_E`, `tfce_H`, `tfce_dh` | scalars | 0.05, 0.5, 2, and 0.1 or 0.005 (U^2) |');
+    w('| `cluster_statistic` | char | how cluster mass is computed |');
+    w('| `import` | struct | `snpm_circ_import` record of angle file 1: `.units`, `.convention`, `.rotation_deg` (added before wrapping), `.resolution_deg`, `.quantised`, `.whole_degree`, `.n_finite`, `.label`. Import = `mod((deg + rotation_deg) * pi/180, 2*pi)`, `deg` = raw (deg) or raw*180/pi (rad); NaN stays NaN. File 2 gets the same transform. |');
+    w('| `subject_ids`, `source_file`, `source_row` | n x 1 | analysed row r is row `source_row(r)` of angle file `source_file(r)` (1 = `inputs.angles1`, 2 = `inputs.angles2`). Two-group: group A rows then group B rows, file order. |');
+    w('| `measure_col`, `measure_row` | char, n x 1 | circ_corrAngLinear: the y column and the row of `inputs.measure` matched to each analysed row (subjects intersected in angle-file order) |');
+    w('| `angles_imported` | n x nCh, radians | after import and channel selection (analysed order), BEFORE the count rule |');
+    w('| `angles` | n x nCh, radians | as analysed: `angles_imported` with the angle of every cell whose count is missing or <= 0 set to NaN |');
+    w('| `group` | n x 1 | 1 = group A (file 1), 0 = group B; empty for circ_corrAngLinear |');
+    w('| `y` | n x 1 | circ_corrAngLinear measure; empty otherwise |');
+    w('| `counts` | n x nCh | event counts aligned to `angles` (by subject id and channel name); empty for circ_corrAngLinear |');
+    w('| `log_count` | n x nCh | `log(counts)`, NaN where the count is missing or <= 0: the per-channel covariate |');
+    w('| `covariate` | struct | `snpm_circ_count_covariate` report: `.mode` (`per_channel`), `.pb` (1 x nCh point-biserial r of log count vs group), `.pb_max`, `.pb_median`, `.n_dropped_constant`, `.n_collinear`, `.n_cells_no_count`, `.frac_cells_no_count`, `.collinearity_max` (0.8); circ_corrAngLinear: `.mode` = `none` |');
+    w('| `usecov` | logical 1 x nCh | the count covariate enters the channel''s design (false where constant, sd < 0.05, or collinear) |');
+    w('| `collinear` | logical 1 x nCh | log count disjoint by group or abs(pb) > 0.8 |');
+    w('| `n_group1`, `n_group2`, `n_finite` | 1 x nCh | finite angles per group / in total (circ_corrAngLinear: subjects with angle and y) |');
+    w('| `gate0` | logical 1 x nCh | >= 8 per group and not collinear: the channel set the inversion check pools over |');
+    w('| `gate`, `complete`, `evaluable` | logical 1 x nCh | gate after the statistic''s own per-group count; column complete; `evaluable = gate & (~usecov | complete)`, the ONE channel set of the observed and every permuted map |');
+    w('| `excluded_below_gate`, `excluded_collinear`, `excluded_incomplete` | logical 1 x nCh | why each non-evaluable channel left (a channel can have several reasons) |');
+    w('| `excluded_reason` | cellstr 1 x nCh | the same in words, `''''` for an analysed channel |');
+    w('| `inversion` | struct | the convention check: `.channels` (frontal third by chanlocs X among `gate0`, 1-based), `.n_angles` pooled, `.mean_deg` (pooled mean direction), `.deviation_deg` (wrapped to (-180, 180]), `.verdict` (`pass`, `suspect` = warning at abs(dev) > 70, `skipped`). abs(dev) >= 110 is an error and never reaches a fixture. |');
+    w('| `inversion_probe` | struct or empty | turtlewave fixture only: the same run declared `literature_uppeak0`; `.error_id` must be `core_snpm:circPhaseConventionInverted`, `.message` carries the numbers |');
+    w('| `fl_Zfit`, `fl_R` | n x 2nCh (Hotelling) or n x 1 (circular-linear) | Freedman-Lane fit and residual; non-evaluable columns: `fl_Zfit` 0 and `fl_R` NaN. Empty for U^2. |');
+    w('| `perm_type` | char | `free` (Freedman-Lane) or `labels` (U^2) |');
+    w('| `stat`, `p_uncorrected`, `tfce` | 1 x nCh | observed maps, NaN outside `evaluable` (= `results.T.real_T`, `results.p.real`, `results.T.real_TFCE`) |');
+    w('| `tfce_null_sorted` | n_draws x 1, **sorted descending** | replayed max-TFCE null (= `results.T.tMaxTFCE`) |');
+    w('| `cluster_mass_null_sorted` | n_draws x 1, **sorted descending** | max cluster mass per permutation (0 when none), recorded inside `snpm_perm_correction`; every `Clusters(c).p` is computed against it |');
+    w('| `p_correctedTFCE` | 1 x nCh | replayed TFCE-corrected p (= `results.p.correctedTFCE`) |');
+    w('| `replay_checks`, `replay_detail`, `replay_ok` | cellstr, logical 1 x K, logical | each stage the export rebuilt independently from the input files and found equal to the pipeline: montage, import, count rule, covariate rules (point-biserial, usecov, collinear), gate masks (gate0, gate, complete, evaluable), excluded set, inversion check (and probe), Freedman-Lane context, engine statistic, observed maps, loop tag and size, TFCE null, mass null, cluster p, TFCE p, descriptive panel |');
+    w('');
     w('## Not in these fixtures');
     w('');
     w('- **A global test for single-effect GLM presets.** The pipeline computes none (mixed2way has one per effect).');
-    w('- Circular and mixed-model analyses (later phases).');
+    w('- **A global test for the circular tier.** None exists, by design; `circ_descriptive` is the no-inference substitute.');
+    w('- The circular `per_subject` count mode, the `custom` convention, and Tier-1 linearised measures.');
+    w('- Mixed-model analyses (a later phase).');
 end

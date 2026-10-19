@@ -112,7 +112,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
 
     iopt.label = 'Angles file 1';
     [A, imp1] = snpm_circ_import(D1.M, iopt);
-    yv = [];
+    yv = []; measure_dropped = {};   % ids dropped for a missing measure (circ_corrAngLinear)
 
     if is_grp
         % Group B angles must live on the same channels; reorder by name.
@@ -125,7 +125,31 @@ function [results_struct, results_text] = core_snpm_circ(params)
     else
         % Circular-linear: match subjects between the angle file and the
         % single-column linear measure file.
-        [A, yv] = match_measure(A, D1, D2, params);
+        [A, yv, msubj] = match_measure(A, D1, D2, params);
+        % A subject with no finite measure value has no response row at ANY
+        % channel, so it is dropped whole, here, before the channel setup,
+        % the gate, the descriptives and the inversion check. Left in, its NaN
+        % would sit in the Freedman-Lane residual and move with every
+        % permutation, so each permuted map would delete a DIFFERENT subject's
+        % row: the analysed row set would vary across the null (and could trip
+        % the fixed-gate assertion). Missing ANGLES are different: they stay
+        % with their row and are deleted per channel on this fixed row set.
+        keep = isfinite(yv);                       % Inf counts as missing
+        measure_dropped = msubj(~keep);
+        if any(~keep)
+            warning('core_snpm:circMeasureNaNRows', ...
+                ['%d of %d matched subjects have a missing (or non-finite) value for the ' ...
+                 'linear measure and cannot enter the circular-linear test at any ' ...
+                 'channel; they are dropped from the analysis: %s.'], ...
+                sum(~keep), numel(keep), strjoin(measure_dropped(:)', ', '));
+            A  = A(keep, :);
+            yv = yv(keep);
+        end
+        if numel(yv) < 8
+            error('core_snpm:circTooFewSubjects', ...
+                ['Only %d subjects have both angles and a finite measure value ' ...
+                 '(need >= 8).'], numel(yv));
+        end
         gi = [];
         n1g = size(A,1); n2g = 0;
     end
@@ -143,6 +167,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
     select_mode  = chsel.select_mode;
     keptcols     = chsel.channel_mapping.original_data_columns;
     nCh          = size(A, 2);
+    A_imported   = A;   % for snpm_perm_tap only: before the count-file NaN rule
     fprintf('%s montage: %d/%d data columns matched to channel locations\n', ...
         params.channels, nCh, numel(D1.cols));
     if size(neighbors, 1) ~= nCh
@@ -166,7 +191,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
     % Pooled over BOTH groups, so it is label-invariant and cannot contaminate
     % the inference; restricted to frontal channels that pass the gate.
     gate0 = gate_mask(A, gi, is_grp, 8) & ~collinear;
-    snpm_circ_check_inversion(A, gate0, chanlocs, imp1);
+    inversion = snpm_circ_check_inversion(A, gate0, chanlocs, imp1);
 
     %% ---- estimability gate (computed ONCE, held FIXED) ----------------
     gate = gate0;
@@ -219,11 +244,28 @@ function [results_struct, results_text] = core_snpm_circ(params)
     else
         sopt = struct('valid_channels', evaluable);
         [stat, pm, ~, ~, rho] = snpm_circ_corr_anglinear(yv, A, [], sopt);
-        flctx = struct('Zfit', repmat(mean(yv, 'omitnan'), nSubj, 1), ...
-            'R', yv - mean(yv, 'omitnan'), 'eb', ones(nSubj,1), 'perm_type', 'free');
+        % Subjects with a missing measure were dropped at import, so y is
+        % complete and the permuted response never carries a NaN.
+        assert(all(isfinite(yv)), 'core_snpm:circMeasureNaN', ...
+            'The measure reached the permutation with a non-finite value.');
+        flctx = struct('Zfit', repmat(mean(yv), nSubj, 1), ...
+            'R', yv - mean(yv), 'eb', ones(nSubj,1), 'perm_type', 'free');
         perm_fn = make_corr_perm(flctx, A, sopt, evaluable, stat);
     end
 
+    % Parity recorder (scripts/export_parity_fixtures.m). Inert unless switched
+    % on: it consumes no random number and nothing reads it back.
+    if snpm_perm_tap('ison')
+        tap = struct('comparison', comparison, 'A_imported', A_imported, 'A', A, ...
+            'gi', gi, 'y', yv, 'logC', logC, 'usecov', usecov, ...
+            'collinear', collinear, 'gate0', gate0, 'gate', gate, ...
+            'complete', complete, 'evaluable', evaluable, 'stat', stat, 'p', pm, ...
+            'tfce_dh', tfce_dh, 'import', imp1, 'covariate', cov_report, ...
+            'inversion', inversion, 'keptcols', keptcols);
+        if exist('flctx', 'var'), tap.fl_Zfit = flctx.Zfit; tap.fl_R = flctx.R; end
+        snpm_perm_tap('record', 'circ:engine_inputs', tap);
+    end
+    snpm_perm_tap('record', ['loop:circ:' comparison], []);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_fn, neighbors, E, H, ...
         alpha, nperm, 'F', evaluable, tfce_dh);
 
@@ -288,7 +330,12 @@ function [results_struct, results_text] = core_snpm_circ(params)
         'units', imp1.units, 'covariate', cov_report, 'gate_min_per_group', 8, ...
         'evaluable', evaluable, 'cluster_statistic', 'mass (sum stat / n channels)', ...
         'n_group1', n1g, 'n_group2', n2g);
-    if is_corr, results_struct.circ.rho = rho; end
+    if is_corr
+        results_struct.circ.rho = rho;
+        % Subjects dropped up front for a missing measure value (ids + count).
+        results_struct.circ.measure_nan_removed = numel(measure_dropped);
+        results_struct.circ.dropped_subjects    = measure_dropped(:)';
+    end
     results_struct.circ_descriptive = desc;
     % Recorded in the report header via the existing effect-label slot. NOTE:
     % glm.contrast_type is deliberately NOT set, so stat_info keeps resolving
@@ -319,7 +366,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
 
     results_text = circ_text(params, comparison, imp1, cov_report, desc, ...
         excluded_channels, uncorrsigch, correctTFCEsigch, sigclusters, SnPMsigch, ...
-        outputSname, nSubj, n1g, n2g);
+        outputSname, nSubj, n1g, n2g, measure_dropped);
 
     try
         generateAnalysisReport(results_struct, params, base_filename, outputSname, ...
@@ -575,7 +622,7 @@ function S = align_subjects(S, ref_ids, what)
     S.subj = ref_ids;
 end
 
-function [A, y] = match_measure(A1, D1, D2, params)
+function [A, y, subj] = match_measure(A1, D1, D2, params)
 % circ_corrAngLinear: angles (wide) + a single linear measure column, paired by
 % subject.
     if isempty(D1.subj) || isempty(D2.subj)
@@ -604,6 +651,7 @@ function [A, y] = match_measure(A1, D1, D2, params)
     end
     A = A1(i1, :);
     y = D2.M(i2, k);
+    subj = subj(:);
 end
 
 % =========================================================================
@@ -640,7 +688,7 @@ function excl = excluded_info(evaluable, chanlocs, context_label)
 end
 
 function txt = circ_text(params, comparison, imp, cov, desc, excl, unc, tfce, ...
-        sigclusters, snpmch, outputSname, nSubj, n1g, n2g)
+        sigclusters, snpmch, outputSname, nSubj, n1g, n2g, measure_dropped)
     txt = {
         '=== SnPM Circular (Tier 2) Analysis Results ===', '', ...
         ['Comparison: ' comparison ' (' stat_label(comparison) ')'], ...
@@ -651,6 +699,11 @@ function txt = circ_text(params, comparison, imp, cov, desc, excl, unc, tfce, ..
         ['Event-count covariate: ' cov.mode], ...
         ['Permutations: ' num2str(params.permutations)], ...
         sprintf('Subjects: %d (group A %d, group B %d)', nSubj, n1g, n2g) }';
+    if ~isempty(measure_dropped)
+        txt{end+1} = sprintf(['Subjects dropped for a missing measure value: %d (%s); ' ...
+            'they are excluded at every channel'], numel(measure_dropped), ...
+            strjoin(measure_dropped(:)', ', '));
+    end
     if ~strcmp(cov.mode, 'none')
         txt{end+1} = sprintf(['Count/group confound: point-biserial r median %.2f, ' ...
             'max |r| %.2f; covariate dropped at %d channels (constant), ' ...

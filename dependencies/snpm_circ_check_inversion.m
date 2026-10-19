@@ -1,7 +1,8 @@
-function snpm_circ_check_inversion(A, gate, chanlocs, imp)
+function info = snpm_circ_check_inversion(A, gate, chanlocs, imp)
 %SNPM_CIRC_CHECK_INVERSION  Hard-stop on a 180-degree phase-convention error.
 %
 %   snpm_circ_check_inversion(A, gate, chanlocs, imp)
+%   info = snpm_circ_check_inversion(...)   also returns what was checked
 %
 % Runs on the POOLED sample across both groups, which makes it label-invariant
 % and therefore incapable of contaminating the inference, and is restricted to
@@ -22,9 +23,17 @@ function snpm_circ_check_inversion(A, gate, chanlocs, imp)
 % INPUTS  A angles (radians, already rotated), gate 1 x nCh logical estimability
 %         mask, chanlocs, imp the struct returned by SNPM_CIRC_IMPORT.
 %
+% OUTPUT (optional; the check itself is unchanged whether or not it is asked
+% for) info: .channels (1-based, analysed order, the channels pooled),
+% .n_angles, .mean_deg, .deviation_deg (wrapped to (-180, 180]) and .verdict =
+% 'pass' | 'suspect' (warning issued) | 'skipped' (nothing to pool). The
+% 'inverted' outcome is the error, so it never reaches the caller.
+%
 % See also SNPM_CIRC_IMPORT, CORE_SNPM_CIRC.
 % Pooled grand mean direction over frontal, estimable channels. Label-invariant
 % (it pools both groups), so running it cannot contaminate the inference.
+    info = struct('channels', zeros(1, 0), 'n_angles', 0, 'mean_deg', NaN, ...
+        'deviation_deg', NaN, 'verdict', 'skipped');
     ch = find(gate);
     if isempty(ch), return; end
     if isfield(chanlocs, 'X')
@@ -36,9 +45,12 @@ function snpm_circ_check_inversion(A, gate, chanlocs, imp)
         end
     end
     a = A(:, ch); a = a(isfinite(a));
+    info.channels = ch(:)';
+    info.n_angles = numel(a);
     if isempty(a), return; end
     mu  = mod(rad2deg(angle(sum(exp(1i * a)))), 360);
     dev = mod(mu + 180, 360) - 180;           % wrap to (-180, 180]
+    info.mean_deg = mu; info.deviation_deg = dev; info.verdict = 'pass';
     fprintf(['Convention check: pooled grand mean direction over %d frontal ' ...
         'estimable channels = %.1f deg (%+.1f deg from the up-state peak)\n'], ...
         numel(ch), mu, dev);
@@ -57,6 +69,7 @@ function snpm_circ_check_inversion(A, gate, chanlocs, imp)
              'will re-run after the 180 deg rotation and must then pass.'], ...
             mu, dev, imp.convention, imp.rotation_deg, mod(mu + 180, 360));
     elseif abs(dev) > 70
+        info.verdict = 'suspect';
         warning('core_snpm:circPhaseConventionSuspect', ...
             ['Pooled grand mean preferred phase is %+.1f deg from the up-state ' ...
              'peak (convention ''%s''). That is a large deviation; confirm the ' ...

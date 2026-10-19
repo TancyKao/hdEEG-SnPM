@@ -60,6 +60,7 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
 
     % ---- null distribution of the max cluster mass ----
     max_cluster_mass = zeros(possible_permutations, 1);
+    snpm_perm_tap('record', 'loop:lmm:cluster', []);   % parity recorder marker (inert when off)
     for permIndex = 1:possible_permutations
         if mod(permIndex, 100) == 0
             disp([num2str(permIndex), ' out of ', num2str(possible_permutations), ' LMM cluster permutations completed...']);
@@ -67,6 +68,9 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
         meta_perm = snpm_lmm_permute_meta(meta, spec, spec.perm);
         [~, pwald, pp] = snpm_lmm_fit(power, meta_perm, spec, evaluable);
         [pp, pwald] = mask_map(pp, pwald, evaluable);
+        if snpm_perm_tap('ison')   % parity recorder: the permuted map the null is built from
+            snpm_perm_tap('record', 'lmm:perm_cluster_map', struct('wald', pwald, 'p', pp));
+        end
         pc = local_find_pclusters(pp, pwald, alpha, sparse_adj);
         if isempty(pc)
             max_cluster_mass(permIndex) = 0;
@@ -75,6 +79,7 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
         end
     end
     max_cluster_mass = sort(max_cluster_mass, 'descend');
+    snpm_perm_tap('record', 'lmm:cluster_mass_null', max_cluster_mass);   % parity recorder (inert when off)
 
     % ---- assemble Clusters with permutation p-values ----
     if isempty(real_clusters)

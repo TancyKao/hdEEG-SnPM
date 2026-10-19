@@ -22,6 +22,7 @@ status on error — suitable for a PBS/Slurm job. All scripts call
 | `run_spectral_analysis.m`| multi-folder spectral SnPM (folder = factor level; unpairedT/pairedT/onesampleT/anova1/rmanova; band×stage sweep) | `spectral_to_snpm_params` → `core_snpm_analysis` |
 | `run_event_report.m`   | event-level (spindle/SO) report (group t-map + HTML) | `export_event_report` |
 | `export_parity_fixtures.m` | not an analysis: writes MATLAB reference results plus the exact permutation indices, for checking another implementation against MATLAB (see below) | `snpm_perm_tap` + `core_snpm_analysis` |
+| `lmm_boundary_stall_rate.m` | not an analysis: counts how often `fitlme` stops at a subject standard deviation of 0 that is not the best fit, on simulated null data, with and without the refit guard | `snpm_lmm_fitlme` |
 
 There is **no `run_circular_analysis.m` template**. The circular (phase/angle) tier is driven by
 building a `params` struct directly — see

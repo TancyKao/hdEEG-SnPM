@@ -74,6 +74,19 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     fprintf('LMM: %d trials, %d channel columns, %d meta columns\n', ...
         size(power, 1), numel(channel_cols), numel(meta_cols));
 
+    %% Rows with a missing model variable: dropped ONCE, before anything else
+    % (transform, channel setup, evaluable mask), so the observed fit and every
+    % permutation use one row set; then the design is checked against the
+    % permutation scheme (group constant within subject for group_label, >= 3
+    % subjects, ...). See snpm_lmm_drop_missing_meta.
+    drop_spec = struct('dv', params.lmm_dv, 'fixed', params.lmm_fixed, 'random', params.lmm_random, ...
+        'subject', subj_col, 'group', grp_col, 'perm', perm_scheme);
+    [meta, power, dropped_rows] = snpm_lmm_drop_missing_meta(meta, power, drop_spec);
+    if dropped_rows.n > 0
+        fprintf('LMM: %d trials left after dropping %d with a missing model variable\n', ...
+            size(power, 1), dropped_rows.n);
+    end
+
     %% Data type transform (applied to channel power, mirrors core_snpm_analysis)
     % Capture raw negativity BEFORE transforming: logscale/normalize legitimately
     % produce negatives, so the source magnitude guard below must inspect the RAW
@@ -186,6 +199,15 @@ function [results_struct, results_text] = core_snpm_lmm(params)
             100 * excluded_channels.n / numel(evaluable));
     end
 
+    % Parity recorder (scripts/export_parity_fixtures.m). Inert unless switched
+    % on: it consumes no random number and nothing reads it back.
+    if snpm_perm_tap('ison')
+        snpm_perm_tap('record', 'lmm:engine_inputs', struct('power', power, 'meta', meta, ...
+            'spec', spec, 'evaluable', evaluable, 'tail', tail, 'alpha', alpha, 'E', E, 'H', H, ...
+            'keptcols', chsel.channel_mapping.original_data_columns, ...
+            'channel_cols', {channel_cols}));
+    end
+
     %% Statistical analysis
     [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail, params.permutations, evaluable);
     Clusters = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, params.permutations, evaluable);
@@ -260,6 +282,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     results_struct.lmm.perm_scheme  = spec.perm;
     results_struct.lmm.n_trials     = size(power, 1);
     results_struct.lmm.n_subjects   = nsubj;
+    results_struct.lmm.dropped_rows = dropped_rows;   % rows dropped for a missing model variable
     if ismember(grp_col, meta.Properties.VariableNames)
         results_struct.lmm.group_levels = categories(categorical(meta.(grp_col)));
     else
@@ -363,6 +386,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
         ['Tail: ' tail], ...
         ['Permutations: ' num2str(params.permutations)], ...
         ['Trials: ' num2str(results_struct.lmm.n_trials) ', Subjects: ' num2str(nsubj)], ...
+        snpm_lmm_dropped_text(dropped_rows), ...
         '', '--- Statistical Results ---', ...
         ['Uncorrected significant channels: ' num2str(length(uncorrsigch))], ...
         ['TFCE corrected significant channels: ' num2str(length(correctTFCEsigch))], ...

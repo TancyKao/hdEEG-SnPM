@@ -40,6 +40,17 @@ function out = snpm_perm_tap(cmd, tag, value)
 %   'lmm:within_subject' | 'lmm:group_label'    snpm_lmm_permute_meta, ONE draw
 %       value = row index into the trial table (within_subject) or the
 %               subject-level index perm (group_label)
+%   'lmm:engine_inputs'                    core_snpm_lmm, once per run
+%       value = struct: power (trials x nCh, analysed order, after transform),
+%               meta (the metadata table as read), spec (the LMM spec handed to
+%               the engines), evaluable, tail, alpha, E, H, keptcols,
+%               channel_cols. Recorded immediately before snpm_lmm_TFCE.
+%   'lmm:perm_stat'                        snpm_lmm_TFCE, once per permutation
+%       value = 1 x nCh permuted statistic map (t or F), NaN outside evaluable
+%   'lmm:perm_cluster_map'                 snpm_lmm_cluster, once per permutation
+%       value = struct: wald, p (1 x nCh, after the evaluable mask)
+%   'lmm:cluster_mass_null'                snpm_lmm_cluster, once per run
+%       value = the sorted max cluster-mass null the cluster p is computed against
 %   'circ_u2:labels'                       core_snpm_circ Watson U2, ONE draw
 %       value = the index applied to the group-label vector
 %   'circ:engine_inputs'                   core_snpm_circ, once per run
@@ -67,7 +78,9 @@ function out = snpm_perm_tap(cmd, tag, value)
 %               against (GLM and circular tiers share this driver)
 %   'loop:...' | 'scope:...'               markers, value = []. Written by the
 %       orchestrators immediately before a permutation loop so the per-draw
-%       entries that follow can be attributed to it.
+%       entries that follow can be attributed to it. The mixed-model engines
+%       write their own ('loop:lmm:TFCE' in snpm_lmm_TFCE, 'loop:lmm:cluster'
+%       in snpm_lmm_cluster), since each runs its own loop.
 %   All indices are 1-based.
 %
 % The legacy generators cannot know which loop asked for them; .caller says

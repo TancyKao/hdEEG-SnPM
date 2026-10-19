@@ -206,6 +206,10 @@ function write_model_card(fid, lmm, nperm)
     spec_row(fid, 'Permutation scheme', esc(perm), true);
     spec_row(fid, 'Tail', esc(tailw), true);
     spec_row(fid, 'Trials &middot; Subjects', sprintf('%s &middot; %s', num_or_dash(ntr), num_or_dash(nsub)), false);
+    if isfield(lmm, 'dropped_rows') && isstruct(lmm.dropped_rows)
+        dtxt = snpm_lmm_dropped_text(lmm.dropped_rows);
+        spec_row(fid, 'Rows dropped', esc(strtrim(regexprep(dtxt, '^[^:]*:', ''))), false);
+    end
     if ~isempty(grp_levels), spec_row(fid, 'Groups', esc(grp_levels), true); end
     if ~isempty(rand_eff),   spec_row(fid, 'Random effects', esc(rand_eff), false); end
     spec_row(fid, 'Permutations', fmt_int(nperm), false);

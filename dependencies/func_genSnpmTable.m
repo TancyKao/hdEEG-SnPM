@@ -85,6 +85,17 @@ if isfield(S, 'excluded_channels') && isstruct(S.excluded_channels)
     writetable(T_excl, output_xls, 'Sheet', 'excludedChannels')
 end
 
+% Mixed-model tier: rows (trials) dropped before the analysis because a model
+% variable was missing (snpm_lmm_drop_missing_meta). One summary line plus a
+% row per variable, written whenever the run recorded the field.
+if isfield(S, 'lmm') && isfield(S.lmm, 'dropped_rows') && isstruct(S.lmm.dropped_rows)
+    d = S.lmm.dropped_rows;
+    item = [{'summary'}, d.columns(:)'];
+    val  = [{snpm_lmm_dropped_text(d)}, arrayfun(@(n) sprintf('%d missing', n), d.per_column(:)', 'UniformOutput', false)];
+    writetable(table(string(item(:)), string(val(:)), 'VariableNames', {'Item', 'Value'}), ...
+        output_xls, 'Sheet', 'droppedRows')
+end
+
 % Pairwise post-hoc comparisons (GLM tier): one row per pair, RUN OR NOT. A
 % pair is tested on the rows of its two levels only, so it can rest on fewer
 % subjects than the effect, and a pair that cannot be estimated is not run at

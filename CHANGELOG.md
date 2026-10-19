@@ -64,6 +64,54 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
 
 ### Fixed
 
+- **Mixed model: a fit that stopped at zero subject variance** (`mixedmodel`;
+  `dependencies/snpm_lmm_fit.m`, new `dependencies/snpm_lmm_fitlme.m`). Affects every
+  `mixedmodel` run in which any channel fit, observed or permuted, came back with a random-effect
+  standard deviation (SD) of 0, usually the subject SD. `fitlme` estimates each random-effect SD
+  relative to the residual SD, and its likelihood is symmetric about 0, so 0 is always a flat
+  point; the default optimiser sometimes stopped there when a positive SD fitted the data clearly
+  better. The statistic was then that of a model with no subject effect. On the 3-group example in
+  `test_lmm_snpm` (Tier 5) the group F was 20.75 where the best fit gives 8.59, with a
+  log-likelihood about 6 higher. For a between-group effect this makes the statistic too large:
+  in the observed map that is anti-conservative at that channel, in a permuted map it inflates
+  the null and makes the test conservative. For a within-subject effect the statistic is still
+  wrong but can move either way. The stall is common when the subject SD is small next to the
+  trial-to-trial SD: on simulated data with no effect and a subject SD 0.4 times the residual SD,
+  142 of 200 fits stopped at 0 although the best fit was elsewhere
+  (`scripts/lmm_boundary_stall_rate.m` reproduces the counts). Now, when any random-effect SD comes back at 0 (at most 0.001
+  times the residual SD), the model is refitted once from a random start drawn from a private
+  random stream, so the permutation draws are unchanged, and the refit is kept only if its
+  likelihood is higher; a refit that fails is discarded. Fits away from 0 are returned exactly as
+  before, so a run with no fit at 0 gives identical results. Affected runs change at the affected
+  channels and permutations.
+
+- **Mixed model: trials with missing model variables** (`mixedmodel`; `core_snpm_lmm.m`, new
+  `dependencies/snpm_lmm_drop_missing_meta.m`). Affects `mixedmodel` runs whose table has a blank
+  or `NaN` in the dependent variable (when it is a metadata column; a missing channel value is
+  still handled by the complete-column rule), a column named in the fixed or random formula, the
+  subject column, or (for the `group_label` permutation) the group column. `fitlme` used to drop those
+  trials silently at every channel, so the reported trial and subject counts included rows that
+  were never fitted. Worse, under `group_label` each subject's group was taken from its first
+  trial, so a group label missing on a later trial, or a group that changed within a subject,
+  meant even the unpermuted relabelling did not reproduce the data, and the null was built on a
+  different design from the observed statistic (an invalid test). Under `within_subject` a
+  missing dependent variable was shuffled onto other trials, so the set of fitted trials
+  changed from one permutation to the next. Now those trials are dropped once, before
+  anything else, with a warning (`snpm:lmmMetaNaNRows`) giving the count per column and any
+  subject that lost all its trials; the counts are recorded in `results_struct.lmm.dropped_rows`
+  and shown in the results text, the HTML model card and an Excel `droppedRows` sheet, and the
+  reported trial and subject counts are those analysed. Columns not in the model never drop a
+  row. The design is then checked: fewer than 3 subjects (`core_snpm_lmm:tooFewSubjects`), a group
+  that varies within a subject under `group_label` (`core_snpm_lmm:groupVariesWithinSubject`, also
+  refused when nothing is missing), or fewer than 2 groups or a group with fewer than 2 subjects
+  under `group_label` (`core_snpm_lmm:groupLevelTooFewSubjects`) is an error, as is a subject or
+  (under `group_label`) group column not listed in `lmm_meta_cols`
+  (`core_snpm_lmm:noSubjectColumn`, `core_snpm_lmm:noGroupColumn`); a subject left with one trial under
+  `within_subject` is a warning (`snpm:lmmSingleTrialSubject`). Dropping assumes the missingness
+  is unrelated to the effect tested (for example, awakenings with no report). Runs with complete
+  model variables are unchanged; a `group_label` run whose group varied within a subject now
+  stops with an error instead of producing an invalid map.
+
 - **Circular–linear correlation with a missing measure value** (`circ_corrAngLinear`;
   `core_snpm_circ.m`). Affects runs where the measure file has a blank or non-finite value for
   any subject who also has angles. Such a subject used to stay in the analysis: its missing

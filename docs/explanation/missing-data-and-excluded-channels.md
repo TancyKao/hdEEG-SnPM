@@ -349,6 +349,42 @@ warning `core_snpm:circMeasureNaNRows`, and is listed in `results_struct.circ.dr
 the results text and the report; a missing *angle* is deleted at that channel only, on the fixed
 set of remaining subjects, so every permuted map uses the same subjects at each channel.
 
+## The mixed model: a trial with a missing model variable is dropped
+
+The mixed model (`mixedmodel`) works on one row per trial, and its rule for missing *channel*
+values is the complete-column rule above: a channel is analysed only if it is complete across every
+analysed trial. Missing values in the *model variables* (the dependent variable when it is a
+metadata column rather than the channel power, any column named in the fixed or random formula, the
+subject column, and the group column when the permutation relabels groups) are handled one step
+earlier. A blank, a `NaN`, an empty text cell and an undefined category all count as missing. A
+trial with any of them missing is dropped before anything else is computed, so the observed fit and
+every permuted fit use the same trials. Other columns in the table, such as a trial time the model
+does not use, never drop a row.
+
+Before this rule `fitlme` dropped such trials itself, separately at every fit, and two things went
+wrong. The reported trial and subject counts included trials that were never fitted. And the
+permutation could disagree with the data: the `group_label` scheme gives each subject the group of
+its *first* trial, so a group label missing on a later trial, or a group that changes within a
+subject, meant that even the unpermuted relabelling did not reproduce the table that was fitted,
+and the null was built on a different design from the observed statistic. Under `within_subject`, a
+missing dependent variable was shuffled onto other trials, so each permutation fitted a different
+set of trials.
+
+The run warns (`snpm:lmmMetaNaNRows`) with the number of trials dropped, the number of missing
+values per column and any subject that lost every trial, and records the same in
+`results_struct.lmm.dropped_rows`, the results text, the HTML model card and an Excel `droppedRows`
+sheet. The reported trial and subject counts are the analysed ones. After the drop the design is
+checked: fewer than 3 subjects is an error; for `group_label`, a group that varies within a subject
+is an error (whether or not anything was missing), as is a design with fewer than 2 groups or a
+group with fewer than 2 subjects; for `within_subject`, a subject left with a single trial is a
+warning, because the shuffle cannot move its value.
+
+Dropping a trial assumes its missingness is unrelated to the effect being tested, as any
+complete-case analysis does. A missing report after an awakening because the participant did not
+respond is the typical case. If missingness depends on the effect (for example, reports missing
+mainly after deep-sleep awakenings when depth is the predictor), the estimate is biased and no
+permutation scheme repairs that.
+
 ## What you will see in your outputs
 
 A channel never leaves an analysis silently, whichever rule dropped it. When anything is

@@ -19,8 +19,11 @@
 % Scope: phase 1 = pairedT, unpairedT, onesampleT, correlationP, correlationS
 % (with and without covariates), anova1, ancova, regression, rmanova, mixed2way.
 % Phase 2 = the circular tier (circ_phase_group, circ_phase_group_u2,
-% circ_corrAngLinear), replayed like the GLM tier (fx.circ.replay_ok). The
-% mixed-model tier is recorded by the same hook but is not exported here.
+% circ_corrAngLinear), replayed like the GLM tier (fx.circ.replay_ok).
+% Phase 3 = the mixed linear model tier (mixedmodel, core_snpm_lmm), with
+% LMM_PERMUTATIONS permutations per loop (every permutation refits every
+% channel with fitlme, so 500 would take hours) and a per-channel fitlme
+% reference table per case under <OUT_DIR>/lmm_bench/ (fx.lmm.replay_ok).
 %
 % Nothing in the production results_struct is changed for this. What the
 % pipeline computes but does not keep comes from two places. The hook records
@@ -51,7 +54,24 @@ RESUME       = false;         % true = keep a fixture that already exists with t
                               % PERMUTATIONS and only run the missing cases (use after an
                               % interrupted export; false regenerates everything)
 KEEP_RUN_OUTPUTS = false;     % false = delete each run's outputs once its fixture is saved
+LMM_PERMUTATIONS = 200;       % mixed-model cases only: each permutation refits every channel
+LMM_REFIT_DRAWS  = 10;        % the LMM replay refits the first K draws of each loop from the
+                              % recorded indices (Inf = every draw; about as long as the run)
 % ================================================================
+% Optional overrides, so several exports can run side by side from the command line, e.g.
+%   matlab -batch "EXPORT_OVERRIDES = struct('ONLY_CASES', {{'lmm_factor'}}); run('scripts/export_parity_fixtures.m')"
+if exist('EXPORT_OVERRIDES', 'var')
+    for ov = fieldnames(EXPORT_OVERRIDES)'
+        switch ov{1}
+            case 'ONLY_CASES',       ONLY_CASES       = EXPORT_OVERRIDES.ONLY_CASES;
+            case 'RESUME',           RESUME           = EXPORT_OVERRIDES.RESUME;
+            case 'LMM_REFIT_DRAWS',  LMM_REFIT_DRAWS  = EXPORT_OVERRIDES.LMM_REFIT_DRAWS;
+            case 'LMM_PERMUTATIONS', LMM_PERMUTATIONS = EXPORT_OVERRIDES.LMM_PERMUTATIONS;
+            case 'OUT_DIR',          OUT_DIR          = EXPORT_OVERRIDES.OUT_DIR;   % e.g. a smoke run
+            otherwise, error('export_parity:badOverride', 'Unknown override %s.', ov{1});
+        end
+    end
+end
 
 cd(ROOT);                     % core_snpm_analysis resolves assets from pwd
 addpath(genpath(ROOT));
@@ -71,35 +91,39 @@ if ~isempty(ONLY_CASES)
     cases = cases(ismember({cases.name}, ONLY_CASES));
 end
 
-fprintf('export_parity_fixtures: %d cases, %d permutations, seed %d -> %s\n', ...
-    numel(cases), PERMUTATIONS, SEED, OUT_DIR);
+fprintf('export_parity_fixtures: %d cases, %d permutations (%d for mixed-model cases), seed %d -> %s\n', ...
+    numel(cases), PERMUTATIONS, LMM_PERMUTATIONS, SEED, OUT_DIR);
 
 summary = cell(numel(cases), 1);
 for ci = 1:numel(cases)
     c = cases(ci);
     out_file = fullfile(OUT_DIR, [c.name '.mat']);
+    nperm = PERMUTATIONS;
+    if strcmp(c.tier, 'lmm'), nperm = LMM_PERMUTATIONS; end
     if RESUME && exist(out_file, 'file')
-        old = load(out_file); %#ok<UNRCH>
-        if isequal(old.seed, SEED) && isequal(old.permutations, PERMUTATIONS)
-            summary{ci} = readme_row(c, old, SEED, PERMUTATIONS);
+        old = load(out_file);
+        if isequal(old.seed, SEED) && isequal(old.permutations, nperm)
+            summary{ci} = readme_row(c, old, SEED, nperm);
             fprintf('[%2d/%2d] %-34s kept (RESUME)\n', ci, numel(cases), c.name);
             continue
         end
     end
     P = c.params;
-    P.permutations = PERMUTATIONS;
+    P.permutations = nperm;
     P.output_path  = fullfile(RUN_DIR, c.name);
     if exist(P.output_path, 'dir'), rmdir(P.output_path, 's'); end
     mkdir(P.output_path);
 
     t0 = tic;
     [results_struct, results_text, raw_log] = run_case(P, SEED);
-    % Four kinds of entry are not permutation draws: the matrices the legacy
+    % Five kinds of entry are not permutation draws: the matrices the legacy
     % engines were handed and the legacy cluster-size null (-> fx.engine), the
     % cluster-mass null of each GLM / circular loop (-> fx.glm.loops, fx.circ),
-    % and what the circular engine was handed (-> fx.circ).
+    % what the circular engine was handed (-> fx.circ), and the mixed-model
+    % engine inputs, per-permutation maps and cluster-mass null (-> fx.lmm).
     is_aux  = ismember({raw_log.tag}, {'legacy:engine_inputs', 'legacy:cluster_null', ...
-        'glm:cluster_mass_null', 'circ:engine_inputs'});
+        'glm:cluster_mass_null', 'circ:engine_inputs', 'lmm:engine_inputs', ...
+        'lmm:perm_stat', 'lmm:perm_cluster_map', 'lmm:cluster_mass_null'});
     aux_log = raw_log(is_aux);
     raw_log = raw_log(~is_aux);
     close all force
@@ -110,7 +134,7 @@ for ci = 1:numel(cases)
     fx.description    = c.note;
     fx.seed           = SEED;
     fx.rng_algorithm  = 'twister';
-    fx.permutations   = PERMUTATIONS;
+    fx.permutations   = nperm;
     fx.matlab_version = version;
     fx.created        = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
     fx.params         = flat(P);
@@ -140,6 +164,18 @@ for ci = 1:numel(cases)
                  '(%s; failed: %s). The fixture would not be a valid reference; not saved.'], ...
                 c.name, replay_txt, strjoin(fx.circ.replay_checks(~fx.circ.replay_detail), ', '));
         end
+    elseif strcmp(c.tier, 'lmm')
+        fx.inputs = struct('data', table_block(P.data_file, P.lmm_meta_cols));
+        [fx.montage, fx.lmm, bench] = lmm_capture(P, results_struct, fx.perm_log, aux_log, c.name, LMM_REFIT_DRAWS);
+        replay_txt = sprintf('replay %d/%d checks ok, %d+%d draws refit', sum(fx.lmm.replay_detail), ...
+            numel(fx.lmm.replay_detail), numel(fx.lmm.refit_draws_tfce), numel(fx.lmm.refit_draws_cluster));
+        if ~fx.lmm.replay_ok
+            error('export_parity:replayMismatch', ...
+                ['%s: the recorded indices did not reproduce the pipeline''s own null ' ...
+                 '(%s; failed: %s). The fixture would not be a valid reference; not saved.'], ...
+                c.name, replay_txt, strjoin(fx.lmm.replay_checks(~fx.lmm.replay_detail), ', '));
+        end
+        write_bench_csv(fullfile(OUT_DIR, 'lmm_bench', [c.name '.csv']), bench);
     else
         fx.inputs  = legacy_inputs(P);
         fx.montage = legacy_montage(P, fx.inputs, results_struct);
@@ -154,7 +190,7 @@ for ci = 1:numel(cases)
         'export_parity:roundTrip', '%s: fixture did not round-trip through save/load.', c.name);
 
     if ~KEEP_RUN_OUTPUTS, rmdir(P.output_path, 's'); end
-    summary{ci} = readme_row(c, fx, SEED, PERMUTATIONS);
+    summary{ci} = readme_row(c, fx, SEED, nperm);
     fprintf('[%2d/%2d] %-34s %2d perm loops, %s, %.0f s\n', ci, numel(cases), c.name, ...
         numel(fx.perm_log), replay_txt, toc(t0));
 end
@@ -163,8 +199,11 @@ if ~KEEP_RUN_OUTPUTS && exist(RUN_DIR, 'dir') && numel(dir(RUN_DIR)) <= 2
 end
 
 if isempty(ONLY_CASES)
-    write_readme(fullfile(OUT_DIR, 'README.md'), cases, summary, SEED, PERMUTATIONS, INPUT_SEED, built);
+    write_readme(fullfile(OUT_DIR, 'README.md'), cases, summary, SEED, PERMUTATIONS, INPUT_SEED, built, LMM_PERMUTATIONS, LMM_REFIT_DRAWS);
     fprintf('README written: %s\n', fullfile(OUT_DIR, 'README.md'));
+    if any(strcmp({cases.tier}, 'lmm'))
+        write_bench_readme(fullfile(OUT_DIR, 'lmm_bench', 'README.md'), LMM_PERMUTATIONS);
+    end
 else
     fprintf('ONLY_CASES set: README.md left as it was (run with ONLY_CASES = {} to rewrite it).\n');
 end
@@ -341,6 +380,39 @@ function cases = case_table(EX, B)
          '10 channels: the 6 subjects are dropped whole before anything is computed (results.circ.' ...
          'dropped_subjects), the missing angles are deleted per channel on the fixed 24-subject row set.']);
     cases(end).params.measure_col = 'measure';
+
+    % ---- 9. mixed linear model tier (phase 3) ----
+    lmeta = {'Subject', 'group', 'time', 'sleepDepth'};
+    cases(end+1) = lmm('lmm_continuous', ex('lmm_long.csv'), lmeta, ...
+        'sleepDepth', 'POWER', '(1|Subject)', 'POWER', 'continuous', ...
+        ['sleepDepth ~ POWER + (1|Subject), 20 subjects x 15 trials, signed t of POWER; the permutation ' ...
+         'scheme is left to the pipeline (within_subject: the DV is shuffled within each subject).']);
+    cases(end+1) = lmm('lmm_factor', B.lmm_groups3, lmeta, ...
+        'POWER', 'group', '(1|Subject)', 'group', 'factor', ...
+        ['POWER ~ group + (1|Subject) with 3 groups (7/7/6 subjects): F of group from anova(lme), 2 and n-3 df; ' ...
+         'group_label permutation (whole subjects relabelled). Planted G3 offset on a neighbour cluster.']);
+    cases(end+1) = lmm('lmm_missing', B.lmm_missing, lmeta, ...
+        'sleepDepth', 'POWER', '(1|Subject)', 'POWER', 'continuous', ...
+        ['lmm_continuous with 4 incomplete channels (one missing cell in each of three, all of one subject''s ' ...
+         'trials in the fourth): all four are excluded before the fit and are NaN in every map.']);
+    cases(end+1) = lmm('lmm_meta_missing', B.lmm_meta_missing, lmeta, ...
+        'sleepDepth', 'POWER + group', '(1|Subject)', 'POWER', 'continuous', ...
+        ['lmm_continuous_groupcov input with missing MODEL metadata: ~10% of sleepDepth NaN and the group label blank ' ...
+         'on 3 non-first trials; those rows are dropped before anything else (lmm.dropped_rows). time is NaN on 5 ' ...
+         'rows but is not in the model, so it drops nothing.']);
+    cases(end+1) = lmm('lmm_continuous_groupcov', B.lmm_groups3, lmeta, ...
+        'sleepDepth', 'POWER + group', '(1|Subject)', 'POWER', 'continuous', ...
+        ['sleepDepth ~ POWER + group + (1|Subject): signed t of POWER with the 3-level group as a categorical ' ...
+         'covariate (two reference-coded columns), within_subject permutation.']);
+end
+
+function c = lmm(name, f, meta_cols, dv, fixed, random, effect, effect_type, note)
+    P = struct('comparison', 'mixedmodel', 'data_file', f, 'data_sheet', 'CSV File', ...
+        'channels', 'egi', 'datatype', 'absolute', 'tail', 'both', ...
+        'lmm_dv', dv, 'lmm_fixed', fixed, 'lmm_random', random, ...
+        'lmm_effect', effect, 'lmm_effect_type', effect_type);
+    P.lmm_meta_cols = meta_cols;
+    c = struct('name', name, 'tier', 'lmm', 'analysis', ['mixedmodel / ' effect_type], 'params', P, 'note', note);
 end
 
 function c = circ(name, comparison, f1, f2, k1, k2, units, convention, note)
@@ -534,6 +606,64 @@ function B = build_inputs(EX, IN_DIR, seed)
     B.circ_missy_measure = in('circ_anglinear_measure_miss_y.csv'); writetable(Ym, B.circ_missy_measure);
     B.circ_missy_subjects = cellstr(string(Ym.Subject(ymiss)))';
     B.circ_missy_channels = ach_nan;
+
+    % ---- mixed linear model: a FOURTH private stream ----
+    rs4 = RandStream('mt19937ar', 'Seed', seed + 3);
+    Lg = rd('lmm_long.csv');
+    lmeta = {'Subject', 'group', 'time', 'sleepDepth'};
+    lcols = setdiff(Lg.Properties.VariableNames, lmeta, 'stable');
+    SL = snpm_setup_channels('egi', {zeros(1, numel(lcols))}, lcols);
+    llab = {SL.chanlocs.labels};
+    [usub, ~, si] = unique(Lg.Subject, 'stable');
+    nsub = numel(usub);
+    % (a) three groups, a subject random intercept in every channel, and a G3
+    %     offset on E129 and its first-ring neighbours
+    glev = {'G1'; 'G2'; 'G3'};
+    sg = glev(mod(randperm(rs4, nsub) - 1, 3) + 1);       % 7 / 7 / 6 subjects
+    u = 2 * randn(rs4, nsub, 1);                          % subject intercept, sd 2 (keeps the
+                                                          % variance estimate off its boundary)
+    centre = find(strcmp(llab, 'E129'));
+    ring = SL.neighbors(centre, :); ring = ring(~isnan(ring));
+    lcl = llab([centre, ring]);
+    L3 = Lg;
+    L3.group = sg(si);
+    for i = 1:numel(llab)
+        L3.(llab{i}) = L3.(llab{i}) + u(si);
+    end
+    g3 = strcmp(L3.group, 'G3');
+    for i = 1:numel(lcl)
+        L3.(lcl{i})(g3) = L3.(lcl{i})(g3) + 4;
+    end
+    B.lmm_groups3 = in('lmm_long_groups3.csv');          writetable(L3, B.lmm_groups3);
+    B.lmm_group_of_subject = [cellstr(string(usub)), sg];
+    B.lmm_cluster = lcl;
+    % (b) incomplete channels
+    mk4 = llab(randperm(rs4, numel(llab), 4));
+    Lm = Lg;
+    for i = 1:3
+        Lm.(mk4{i})(randi(rs4, height(Lm))) = NaN;        % one missing trial
+    end
+    msub = usub(randi(rs4, nsub));
+    Lm.(mk4{4})(strcmp(Lm.Subject, msub)) = NaN;          % every trial of one subject
+    B.lmm_missing = in('lmm_long_missing.csv');          writetable(Lm, B.lmm_missing);
+    B.lmm_missing_channels = mk4;
+    B.lmm_missing_subject = char(string(msub));
+    % (c) missing MODEL metadata (drawn after (a)/(b), so their inputs are unchanged):
+    %     ~10% of sleepDepth NaN, the group label blank on 3 non-first trials, and
+    %     'time' (not in the model) NaN on 5 rows -- which must NOT drop a row
+    Lq = L3;
+    nr = height(Lq);
+    dvn = randperm(rs4, nr, round(0.10 * nr));
+    Lq.sleepDepth(dvn) = NaN;
+    first = false(nr, 1); [~, ia] = unique(Lq.Subject, 'stable'); first(ia) = true;
+    cand = find(~first);
+    gb = cand(randperm(rs4, numel(cand), 3));
+    Lq.group(gb) = {''};
+    tn = randperm(rs4, nr, 5);
+    Lq.time(tn) = NaN;
+    B.lmm_meta_missing = in('lmm_long_meta_missing.csv'); writetable(Lq, B.lmm_meta_missing);
+    B.lmm_meta_missing_rows = sort(unique([dvn(:); gb(:)]))';
+    B.lmm_meta_missing_counts = [numel(dvn), numel(gb), numel(tn)];
 end
 
 function T = scatter_nan(T, scalp, k, rs)
@@ -1312,6 +1442,503 @@ function v = pget(s, f, d)
 end
 
 % =======================================================================
+% CAPTURE: mixed linear model tier
+% =======================================================================
+function [M, L, bench] = lmm_capture(P, rs, plog, aux, name, refitK)
+% Rebuilds every stage of core_snpm_lmm from the input FILE: the analysed
+% power matrix and metadata, the spec, the evaluable mask, and the observed
+% per-channel fit. The fit is done HERE with fitlme and every option spelled
+% out (FitMethod ML, CovariancePattern FullCholesky, reference dummy coding,
+% residual df), and must equal the pipeline's default-option fit bit for bit,
+% which pins those options as the ones the pipeline uses. The recorded
+% per-permutation maps then feed an independent TFCE / max-null / cluster
+% replay over EVERY draw, and the first refitK draws of each loop are refitted
+% from the recorded indices and must reproduce the recorded maps exactly.
+    alpha = 0.05; E = 0.5; H = 2;
+    ck = struct();                         % named replay checks, in this order
+    tg = {aux.tag};
+    ei = aux(strcmp(tg, 'lmm:engine_inputs'));
+    mn = aux(strcmp(tg, 'lmm:cluster_mass_null'));
+    ps = aux(strcmp(tg, 'lmm:perm_stat'));
+    pc = aux(strcmp(tg, 'lmm:perm_cluster_map'));
+    assert(isscalar(ei) && isscalar(mn) && numel(plog) == 2, 'export_parity:auxCount', ...
+        '%s: expected one lmm:engine_inputs record, one cluster-mass null and two loops; got %d, %d, %d.', ...
+        name, numel(ei), numel(mn), numel(plog));
+    assert(strcmp(plog(1).name, 'lmm:TFCE') && strcmp(plog(2).name, 'lmm:cluster'), ...
+        'export_parity:lmmLoops', '%s: unexpected loop names %s, %s.', name, plog(1).name, plog(2).name);
+    nP = plog(1).n_draws; nPc = plog(2).n_draws;
+    assert(numel(ps) == nP && numel(pc) == nPc && nP == P.permutations && nPc == P.permutations, ...
+        'export_parity:lmmDraws', '%s: draw / map counts disagree.', name);
+    v = ei.value;
+    assert(strcmp(P.datatype, 'absolute'), 'lmm_capture replays datatype ''absolute'' only.');
+
+    % ---- the analysed table, rebuilt from the file ----
+    T = readtable(P.data_file);
+    meta = T(:, P.lmm_meta_cols);
+    channel_cols = setdiff(T.Properties.VariableNames, P.lmm_meta_cols, 'stable');
+    raw = T{:, channel_cols};
+    % rows with a missing model variable leave first (core_snpm_lmm, same helper)
+    pperm = pget(P, 'lmm_perm', '');
+    if isempty(pperm)
+        if strcmpi(P.lmm_effect_type, 'factor'), pperm = 'group_label'; else, pperm = 'within_subject'; end
+    end
+    [meta, raw, D] = snpm_lmm_drop_missing_meta(meta, raw, struct('dv', P.lmm_dv, 'fixed', P.lmm_fixed, ...
+        'random', P.lmm_random, 'subject', pget(P, 'lmm_subject', 'Subject'), ...
+        'group', pget(P, 'lmm_group', 'group'), 'perm', pperm));
+    ck.dropped_rows = isequal(D, rs.lmm.dropped_rows);
+    S = snpm_setup_channels(P.channels, {raw}, channel_cols);
+    power = S.data{1};
+    M = montage_struct(P.channels, S);
+    nCh = numel(M.labels);
+    ck.montage = isequal(M.labels, {rs.chanlocs.labels}) && ...
+        isequal(double(M.data_columns(:)'), double(v.keptcols(:)')) && size(S.neighbors, 1) == nCh;
+    ck.power = isequaln(power, v.power);
+    ck.meta  = isequaln(meta, v.meta);
+
+    % ---- the spec (core_snpm_lmm defaults) ----
+    sp = struct();
+    sp.dv = P.lmm_dv; sp.fixed = P.lmm_fixed; sp.random = P.lmm_random;
+    sp.effect = P.lmm_effect; sp.effect_type = P.lmm_effect_type;
+    sp.subject = pget(P, 'lmm_subject', 'Subject');
+    sp.group   = pget(P, 'lmm_group', 'group');
+    sp.perm = pget(P, 'lmm_perm', '');
+    if isempty(sp.perm)
+        if strcmpi(sp.effect_type, 'factor'), sp.perm = 'group_label'; else, sp.perm = 'within_subject'; end
+    end
+    cats = {sp.subject, sp.group};
+    tok = regexp(sp.random, '\|\s*([A-Za-z]\w*)', 'tokens');
+    for i = 1:numel(tok), cats{end+1} = tok{i}{1}; end %#ok<AGROW>
+    sp.categorical = intersect(cats, meta.Properties.VariableNames, 'stable');
+    ck.spec = isequal(sp, v.spec) && strcmp(v.tail, P.tail);
+    formula = sprintf('%s ~ %s + %s', sp.dv, sp.fixed, sp.random);
+    is_factor = strcmpi(sp.effect_type, 'factor');
+    nre = numel(regexp(sp.random, '\(', 'start'));        % random-effect terms
+    fit_opts = {'FitMethod', 'ML', 'CovariancePattern', repmat({'FullCholesky'}, 1, nre), ...
+        'DummyVarCoding', 'reference', 'Optimizer', 'quasinewton', 'StartMethod', 'default'};
+    base = meta;
+    for i = 1:numel(sp.categorical)
+        cv = sp.categorical{i};
+        if ~iscategorical(base.(cv)), base.(cv) = categorical(base.(cv)); end
+    end
+
+    % ---- evaluable mask: complete across every analysed row ----
+    ev = all(isfinite(power), 1);
+    ex = rs.excluded_channels;
+    ck.evaluable = isequal(ev, logical(v.evaluable(:)')) && isequal(find(~ev), rs.T.excluded_channels) && ...
+        ex.n == sum(~ev) && isequal(double(ex.index(:)'), find(~ev));
+
+    % ---- observed fit, channel by channel, timed ----
+    O = lmm_observed(base, power, ev, formula, fit_opts, sp, is_factor);
+    ck.default_options = all(O.default_identical(ev));
+    ck.cov_fe_formula  = max(O.cov_fe_reldiff(ev)) < 1e-8;
+    ck.loglik_formula  = max(O.loglik_absdiff(ev)) < 1e-8;
+    stat = O.stat; pm = O.p; stat(~ev) = NaN; pm(~ev) = NaN;
+    ck.stat = isequaln(stat, rs.T.real_T);
+    ck.p    = isequaln(pm, rs.p.real);
+    adj = make_neighbors_sparse(S.neighbors, size(S.neighbors, 1));
+    tfce = lmm_enhance(stat, adj, E, H, nCh);
+    ck.tfce = isequaln(tfce, rs.T.real_TFCE);
+
+    % ---- recorded per-permutation maps -> TFCE null, cluster-mass null ----
+    PS = vertcat(ps.value);                              % nP x nCh (t or F)
+    PW = cell2mat(arrayfun(@(e) e.value.wald, pc(:), 'UniformOutput', false));
+    PP = cell2mat(arrayfun(@(e) e.value.p,    pc(:), 'UniformOutput', false));
+    ck.perm_maps_masked = all(isnan(PS(:, ~ev)), 'all') && all(PW(:, ~ev) == 0, 'all') && all(isnan(PP(:, ~ev)), 'all');
+    both = strcmpi(P.tail, 'both');
+    maxT = zeros(nP, 1);
+    for i = 1:nP
+        e = lmm_enhance(PS(i, :), adj, E, H, nCh);
+        if both, cand = abs(e(ev)); else, cand = e(ev); end
+        mx = max(cand, [], 'omitnan');
+        if isempty(mx) || ~isfinite(mx), mx = Inf; end
+        maxT(i) = mx;
+    end
+    maxT = sort(maxT, 'descend');
+    ck.tfce_null = isequaln(maxT, rs.T.tMaxTFCE) && isequal(rs.T.critical_T_TFCE, maxT(floor(alpha * nP) + 1));
+    pT = nan(1, nCh);
+    for k = find(isfinite(tfce))
+        if both, obs = abs(tfce(k)); else, obs = tfce(k); end
+        pT(k) = (snpm_count_at_least(maxT, obs) + 1) / (nP + 1);
+    end
+    ck.p_tfce = isequaln(pT, rs.p.correctedTFCE);
+    maxM = zeros(nPc, 1);
+    for i = 1:nPc
+        cl = lmm_clusters(PP(i, :), PW(i, :), alpha, adj);
+        if ~isempty(cl), maxM(i) = max([cl.mass]); end
+    end
+    maxM = sort(maxM, 'descend');
+    ck.mass_null = isequaln(maxM, mn.value);
+    % observed clusters, from the observed fit
+    wald = O.wald; wald(~ev) = 0;
+    ocl = lmm_clusters(pm, wald, alpha, adj);
+    if isempty(ocl)
+        ok = isscalar(rs.Clusters) && isempty(rs.Clusters.channels) && rs.Clusters.p == 1;
+    else
+        ok = numel(ocl) == numel(rs.Clusters);
+        for c = 1:numel(ocl)
+            ok = ok && isequal(ocl(c).channels, rs.Clusters(c).channels) && isequal(ocl(c).mass, rs.Clusters(c).mass) && ...
+                isequal(rs.Clusters(c).p, (snpm_count_at_least(mn.value, ocl(c).mass) + 1) / (nPc + 1));
+        end
+    end
+    ck.clusters = ok;
+
+    % ---- refit the first refitK draws of each loop from the recorded indices ----
+    kT = 1:min(refitK, nP); kC = 1:min(refitK, nPc);
+    okT = true; okC = true;
+    for i = kT
+        mp = lmm_apply_draw(meta, sp, plog(1).indices(i, :));
+        R = lmm_refit(mp, power, ev, formula, fit_opts, sp, is_factor);
+        s = R.stat; s(~ev) = NaN;
+        okT = okT && isequaln(s, PS(i, :));
+    end
+    for i = kC
+        mp = lmm_apply_draw(meta, sp, plog(2).indices(i, :));
+        R = lmm_refit(mp, power, ev, formula, fit_opts, sp, is_factor);
+        pp = R.p; pp(~ev) = NaN; w = R.wald; w(~ev) = 0;
+        okC = okC && isequaln(pp, PP(i, :)) && isequaln(w, PW(i, :));
+    end
+    ck.refit_tfce = okT;
+    ck.refit_cluster = okC;
+    ck.loop_tags = strcmp(plog(1).tag, ['lmm:' sp.perm]) && strcmp(plog(2).tag, ['lmm:' sp.perm]);
+
+    % ---- global whole-head test: the effect on the mean over evaluable channels ----
+    G = lmm_refit(meta, mean(power(:, ev), 2, 'omitnan'), true, formula, fit_opts, sp, is_factor);
+    ck.global = isequaln(G.stat, rs.lmm.global_stat) && isequaln(G.p, rs.lmm.global_pval);
+
+    % ---- assemble ----
+    L = struct();
+    L.formula = formula;
+    L.dv = sp.dv; L.fixed = sp.fixed; L.random = sp.random;
+    L.effect = sp.effect; L.effect_type = sp.effect_type;
+    L.perm_scheme = sp.perm; L.subject_col = sp.subject; L.group_col = sp.group;
+    L.categorical = sp.categorical;
+    L.tail = P.tail;
+    L.fitlme_options = struct('FitMethod', 'ML', 'CovariancePattern', 'FullCholesky', ...
+        'DummyVarCoding', 'reference', 'Optimizer', 'quasinewton', 'StartMethod', 'default', ...
+        'coefficient_DFMethod', 'residual', 'anova_DFMethod', 'residual', ...
+        'note', ['fitlme(tbl, formula) with no options, as snpm_lmm_fit calls it; these are the defaults ' ...
+                 'in effect, checked per channel (check default_options)'], ...
+        'boundary_refit', ['snpm_lmm_fitlme: when any random-effect SD <= 1e-3 x residual SD, refit once with ' ...
+                 'StartMethod random from a private mt19937ar stream (seed 20261019) and keep the refit if its ' ...
+                 'log-likelihood is higher by more than 1e-6. Every fit here (observed, refit draws, global) ' ...
+                 'and in the pipeline goes through it.']);
+    if is_factor
+        L.effect_rule = ['F = anova(lme) row whose Term equals effect (FStat, DF1, DF2 = n - rank(X), pValue); ' ...
+            'wald = F. Non-finite F -> stat NaN, wald 0, p NaN.'];
+    else
+        L.effect_rule = ['t = lme.Coefficients row whose Name equals effect (else the first Name containing it): ' ...
+            'tStat, DF = n - rank(X), pValue two-sided; wald = t^2. Non-finite t -> stat NaN, wald 0, p NaN.'];
+    end
+    L.cluster_statistic = ['clusters = connected components (montage.neighbors) of channels with p_uncorrected < alpha, ' ...
+        'whatever the tail; mass = sum(wald)/n_channels; null = max mass per permutation, 0 when none'];
+    L.alpha = alpha; L.tfce_E = E; L.tfce_H = H; L.tfce_dh = 0.1;
+    L.power = power;
+    L.meta = flat(meta);
+    L.meta_categorical = flat(base(:, sp.categorical));    % as the fit sees them
+    L.categorical_levels = struct();                         % category order = reference coding order
+    for i = 1:numel(sp.categorical)
+        L.categorical_levels.(sp.categorical{i}) = categories(base.(sp.categorical{i}))';
+    end
+    L.n_obs = size(power, 1);
+    L.dropped_rows = D;    % rows (1-based, into the input file) dropped for a missing model variable
+    L.dropped_rule = ['before anything else, rows with ismissing() in any model variable are dropped from meta and ' ...
+        'power together: the DV (if a meta column), every meta column named in fixed or random, the subject column, ' ...
+        'and the group column when perm = group_label (snpm_lmm_drop_missing_meta). Other meta columns never drop a row.'];
+    L.evaluable = ev;
+    L.excluded_reason = ex.reason;
+    L.coef_names = O.coef_names;
+    L.effect_coef_rows = O.effect_rows;
+    L.coef_estimate = O.coef_est; L.coef_se = O.coef_se; L.coef_t = O.coef_t;
+    L.coef_df = O.coef_df; L.coef_p = O.coef_p;
+    L.stat = stat; L.p_uncorrected = pm; L.wald = wald;
+    L.df1 = O.df1; L.df2 = O.df2;
+    L.loglik = O.loglik;
+    L.re_names = O.re_names; L.re_std = O.re_std; L.residual_std = O.res_std;
+    L.tfce = tfce;
+    L.perm_stat = PS;
+    L.perm_cluster_wald = PW; L.perm_cluster_p = PP;
+    L.tfce_null_sorted = maxT;
+    L.cluster_mass_null_sorted = mn.value;
+    L.cluster_mass_null_source = 'recorded in snpm_lmm_cluster (tap lmm:cluster_mass_null)';
+    L.p_correctedTFCE = pT;
+    L.global_stat = G.stat; L.global_p = G.p;
+    L.refit_draws_tfce = kT; L.refit_draws_cluster = kC;
+    L.fit_ms = O.fit_ms; L.anova_ms = O.anova_ms;
+    L.replay_checks = fieldnames(ck)';
+    L.replay_detail = cellfun(@(f) logical(ck.(f)), L.replay_checks);
+    L.replay_ok = all(L.replay_detail);
+
+    % ---- benchmark table (one row per channel) ----
+    bench = struct('labels', {M.labels}, 'O', O, 'ev', ev, 'is_factor', is_factor, ...
+        'stat', stat, 'p', pm, 'wald', wald, 'n_obs', size(power, 1));
+end
+
+function O = lmm_observed(base, power, ev, formula, fit_opts, sp, is_factor)
+% The observed fit with explicit options, plus everything the Python
+% benchmark needs, plus three checks per channel: the default-option fit is
+% identical; Cov(beta) = inv(X' V^-1 X) at the ML estimates; the ML
+% log-likelihood formula.
+    nCh = size(power, 2);
+    O = struct('stat', nan(1, nCh), 'wald', zeros(1, nCh), 'p', nan(1, nCh), ...
+        'df1', nan(1, nCh), 'df2', nan(1, nCh), 'loglik', nan(1, nCh), ...
+        'default_identical', false(1, nCh), 'cov_fe_reldiff', nan(1, nCh), 'loglik_absdiff', nan(1, nCh), ...
+        'fit_ms', nan(1, nCh), 'anova_ms', nan(1, nCh), 'res_std', nan(1, nCh));
+    first = true;
+    for ch = find(ev)
+        tbl = base; tbl.POWER = power(:, ch);
+        t0 = tic; lme = snpm_lmm_fitlme(tbl, formula, fit_opts{:}); O.fit_ms(ch) = 1000 * toc(t0);
+        t0 = tic; av = anova(lme, 'DFMethod', 'residual'); O.anova_ms(ch) = 1000 * toc(t0);
+        lme0 = snpm_lmm_fitlme(tbl, formula);
+        av0 = anova(lme0);
+        cf = lme.Coefficients;
+        cf0 = lme0.Coefficients;
+        O.default_identical(ch) = isequal(cf0.Name, cf.Name) && ...
+            isequaln([cf0.Estimate, cf0.SE, cf0.tStat, cf0.DF, cf0.pValue], [cf.Estimate, cf.SE, cf.tStat, cf.DF, cf.pValue]) && ...
+            isequaln(lme0.LogLikelihood, lme.LogLikelihood) && isequaln(av0.FStat, av.FStat) && isequaln(av0.DF2, av.DF2);
+        if first
+            O.coef_names = cf.Name(:)';
+            nc = numel(O.coef_names);
+            [O.coef_est, O.coef_se, O.coef_t, O.coef_df, O.coef_p] = deal(nan(nc, nCh));
+            if is_factor
+                O.effect_rows = find(strncmp(O.coef_names, [sp.effect '_'], numel(sp.effect) + 1));
+            else
+                r = find(strcmp(O.coef_names, sp.effect), 1);
+                if isempty(r), r = find(contains(O.coef_names, sp.effect), 1); end
+                O.effect_rows = r;
+            end
+            [psi, ~, st] = covarianceParameters(lme);
+            O.re_names = cell(1, 0);
+            for g = 1:numel(psi)
+                gname = cellstr(st{g}.Group); tname = cellstr(st{g}.Name1);
+                for q = 1:size(psi{g}, 1)
+                    O.re_names{end+1} = sprintf('%s:%s', gname{1}, tname{q});
+                end
+            end
+            O.re_std = nan(numel(O.re_names), nCh);
+            first = false;
+        end
+        assert(isequal(cf.Name(:)', O.coef_names), 'coefficient names differ between channels');
+        O.coef_est(:, ch) = cf.Estimate; O.coef_se(:, ch) = cf.SE; O.coef_t(:, ch) = cf.tStat;
+        O.coef_df(:, ch) = cf.DF; O.coef_p(:, ch) = cf.pValue;
+        O.loglik(ch) = lme.LogLikelihood;
+        [psi, mse] = covarianceParameters(lme);
+        k = 0;
+        for g = 1:numel(psi)
+            d = sqrt(diag(psi{g}));
+            O.re_std(k + (1:numel(d)), ch) = d; k = k + numel(d);
+        end
+        O.res_std(ch) = sqrt(mse);
+        % Cov(beta) and the ML log-likelihood from the variance components
+        X = designMatrix(lme, 'Fixed'); Z = designMatrix(lme, 'Random'); y = response(lme);
+        D = [];
+        for g = 1:numel(psi)
+            nl = size(designMatrix(lme, 'Random', g), 2) / size(psi{g}, 1);
+            D = blkdiag(D, kron(eye(nl), psi{g}));
+        end
+        V = full(Z * D * Z') + mse * eye(numel(y));
+        A = X' * (V \ X); C = inv(A); b = A \ (X' * (V \ y));
+        O.cov_fe_reldiff(ch) = max(abs(C(:) - lme.CoefficientCovariance(:))) / max(abs(C(:)));
+        rr = y - X * b; n = numel(y);
+        ll = -0.5 * (n * log(2 * pi) + 2 * sum(log(diag(chol(V)))) + rr' * (V \ rr));
+        O.loglik_absdiff(ch) = abs(ll - lme.LogLikelihood);
+        R = lmm_extract(lme, av, sp, is_factor);
+        O.stat(ch) = R.stat; O.wald(ch) = R.wald; O.p(ch) = R.p; O.df1(ch) = R.df1; O.df2(ch) = R.df2;
+    end
+end
+
+function R = lmm_refit(meta, power, ev, formula, fit_opts, sp, is_factor)
+% stat / wald / p per channel, the snpm_lmm_fit rule, fitted with explicit options.
+    nCh = size(power, 2);
+    R = struct('stat', nan(1, nCh), 'wald', zeros(1, nCh), 'p', nan(1, nCh));
+    base = meta;
+    for i = 1:numel(sp.categorical)
+        cv = sp.categorical{i};
+        if ~iscategorical(base.(cv)), base.(cv) = categorical(base.(cv)); end
+    end
+    if isscalar(ev), ev = true(1, nCh) & ev; end
+    for ch = find(ev)
+        tbl = base; tbl.POWER = power(:, ch);
+        lme = snpm_lmm_fitlme(tbl, formula, fit_opts{:});
+        av = [];
+        if is_factor, av = anova(lme, 'DFMethod', 'residual'); end
+        x = lmm_extract(lme, av, sp, is_factor);
+        R.stat(ch) = x.stat; R.wald(ch) = x.wald; R.p(ch) = x.p;
+    end
+end
+
+function x = lmm_extract(lme, av, sp, is_factor)
+    x = struct('stat', NaN, 'wald', 0, 'p', NaN, 'df1', NaN, 'df2', NaN);
+    if is_factor
+        r = find(strcmp(av.Term, sp.effect), 1);
+        if ~isempty(r) && isfinite(av.FStat(r))
+            x.stat = av.FStat(r); x.wald = x.stat; x.p = av.pValue(r);
+            x.df1 = av.DF1(r); x.df2 = av.DF2(r);
+        end
+    else
+        names = lme.Coefficients.Name;
+        r = find(strcmp(names, sp.effect), 1);
+        if isempty(r), r = find(contains(names, sp.effect), 1); end
+        if ~isempty(r) && isfinite(lme.Coefficients.tStat(r))
+            x.stat = lme.Coefficients.tStat(r); x.wald = x.stat^2; x.p = lme.Coefficients.pValue(r);
+            x.df1 = 1; x.df2 = lme.Coefficients.DF(r);
+        end
+    end
+end
+
+function mp = lmm_apply_draw(meta, sp, idx)
+% One recorded draw applied to the metadata (snpm_lmm_permute_meta).
+%   within_subject: idx = row index, DV_perm = DV(idx)
+%   group_label   : idx = subject-level order; subject s (first-appearance
+%                   order) takes the group of subject idx(s)
+    mp = meta;
+    switch sp.perm
+        case 'within_subject'
+            d = meta.(sp.dv);
+            mp.(sp.dv) = d(idx(:));
+        case 'group_label'
+            [~, ia, sidx] = unique(meta.(sp.subject), 'stable');
+            g = meta.(sp.group);
+            sg = g(ia);
+            mp.(sp.group) = sg(idx(sidx));
+        otherwise
+            error('export_parity:lmmScheme', 'unknown scheme %s', sp.perm);
+    end
+end
+
+function m = lmm_enhance(stat, adj, E, H, nCh)
+% snpm_lmm_TFCE/enhance_map.
+    m = reshape(ClusterEnhancement(stat, adj, E, H), 1, []);
+    if numel(m) < nCh, m(numel(m)+1:nCh) = 0; end
+    m(isnan(stat)) = NaN;
+end
+
+function cl = lmm_clusters(p_model, wald, alpha, adj)
+% snpm_lmm_cluster/local_find_pclusters.
+    mask = double(p_model < alpha); mask(isnan(p_model)) = 0;
+    cc = snpm_find_clusters_graphalgs(mask, 0.5, adj);
+    cl = struct('channels', {}, 'mass', {});
+    for c = 1:numel(cc)
+        ch = cc{c};
+        if isempty(ch), continue; end
+        cl(end+1) = struct('channels', ch, 'mass', sum(wald(ch), 'omitnan') / numel(ch)); %#ok<AGROW>
+    end
+end
+
+function write_bench_csv(path, B)
+% One row per analysed channel; full precision (%.17g); NaN written as NaN.
+    d = fileparts(path);
+    if ~exist(d, 'dir'), mkdir(d); end
+    O = B.O;
+    hdr = {'channel_index', 'label', 'evaluable', 'n_obs', 'stat_type', 'stat', 'p', 'df1', 'df2', 'wald'};
+    for c = 1:numel(O.coef_names)
+        nm = regexprep(O.coef_names{c}, '[^A-Za-z0-9_]', '');
+        hdr = [hdr, {['est_' nm], ['se_' nm], ['t_' nm], ['df_' nm], ['p_' nm]}]; %#ok<AGROW>
+    end
+    hdr = [hdr, {'loglik'}];
+    for r = 1:numel(O.re_names)
+        hdr{end+1} = ['re_std_' regexprep(O.re_names{r}, '[^A-Za-z0-9_]', '')]; %#ok<AGROW>
+    end
+    hdr = [hdr, {'residual_std', 'fit_ms', 'anova_ms', 'cov_fe_reldiff', 'loglik_absdiff', 'default_options_identical'}];
+    if B.is_factor, st = 'F'; else, st = 't'; end
+    fid = fopen(path, 'w');
+    assert(fid > 0, 'Cannot write %s', path);
+    cu = onCleanup(@() fclose(fid));
+    fprintf(fid, '%s\n', strjoin(hdr, ','));
+    g = @(x) sprintf('%.17g', x);
+    for ch = 1:numel(B.labels)
+        row = {sprintf('%d', ch), B.labels{ch}, sprintf('%d', B.ev(ch)), sprintf('%d', B.n_obs), st, ...
+            g(B.stat(ch)), g(B.p(ch)), g(O.df1(ch)), g(O.df2(ch)), g(B.wald(ch))};
+        for c = 1:numel(O.coef_names)
+            row = [row, {g(O.coef_est(c, ch)), g(O.coef_se(c, ch)), g(O.coef_t(c, ch)), g(O.coef_df(c, ch)), g(O.coef_p(c, ch))}]; %#ok<AGROW>
+        end
+        row = [row, {g(O.loglik(ch))}]; %#ok<AGROW>
+        for r = 1:numel(O.re_names), row{end+1} = g(O.re_std(r, ch)); end %#ok<AGROW>
+        row = [row, {g(O.res_std(ch)), g(O.fit_ms(ch)), g(O.anova_ms(ch)), g(O.cov_fe_reldiff(ch)), ...
+            g(O.loglik_absdiff(ch)), sprintf('%d', O.default_identical(ch))}]; %#ok<AGROW>
+        fprintf(fid, '%s\n', strjoin(row, ','));
+    end
+end
+
+function L = fitlme_settings_lines()
+% The fitlme settings a statsmodels port must match (shared by README.md and
+% lmm_bench/README.md). Plain text, not fprintf formats.
+    L = {
+        '- `FitMethod` = `ML`, not REML: statsmodels `MixedLM.fit(reml=False)`.'
+        '- `CovariancePattern` = `FullCholesky` per random-effect term; for `(1|Subject)` this is one variance (statsmodels'
+        '  `groups=Subject`, `re_formula="1"`).'
+        '- Fixed effects include an intercept. `DummyVarCoding` = `reference`: a categorical with k levels gives k-1 indicator'
+        '  columns named `<var>_<level>`, the reference being the FIRST level of `lmm.categorical_levels.<var>` (`categorical()`'
+        '  of text sorts the levels). Coefficients come in TABLE-VARIABLE order, not formula order: `POWER` is appended last, so'
+        '  `POWER + group` gives `(Intercept), group_G2, group_G3, POWER` (`lmm.coef_names`). Look coefficients up by name.'
+        '- `Optimizer` = `quasinewton`, `StartMethod` = `default`, default tolerances. Expect agreement to optimiser tolerance,'
+        '  not to the last bit.'
+        '- SE: `sqrt(diag(CoefficientCovariance))`, `CoefficientCovariance = inv(X'' V^-1 X)` at the ML estimates,'
+        '  `V = Z D Z'' + sigma^2 I` (checked per channel: `cov_fe_reldiff`). If statsmodels'' `bse_fe` disagrees beyond'
+        '  optimiser tolerance, compute `inv(X'' V^-1 X)` from its variance estimates instead.'
+        '- t = Estimate / SE. Coefficient DF = `residual` = n - p (p = number of fixed-effect columns), NOT Satterthwaite and NOT'
+        '  the normal approximation: p = 2 * t.sf(|t|, n - p). statsmodels'' `pvalues` are z-based and must be recomputed.'
+        '- F (`anova(lme)`, `DFMethod` = `residual`, marginal test): F = (Lb)'' (L C L'')^-1 (Lb) / r, L selecting the r'
+        '  coefficient columns of the term (`lmm.effect_coef_rows`), C = `CoefficientCovariance`; DF1 = r, DF2 = n - p,'
+        '  p = f.sf(F, r, n - p).'
+        '- Log-likelihood: ML, `-0.5 (n log 2pi + log det V + r'' V^-1 r)` (checked per channel: `loglik_absdiff`).'
+        '- Variance components: `lmm.re_std` = sqrt of the random-effect variance; `lmm.residual_std` = sqrt(residual variance),'
+        '  both ML. A variance on its boundary comes back as about 1e-16, not exactly 0.'
+        '- Zero-variance guard (`snpm_lmm_fitlme`, used for every fit here and in the pipeline): the ML deviance is symmetric'
+        '  in theta = subject SD / residual SD, so theta = 0 always has zero gradient and quasinewton can stop there when it'
+        '  is not the maximum. When any random-effect SD <= 1e-3 x residual SD the model is refitted once from a random start'
+        '  (`StartMethod` `random`, private mt19937ar stream, seed 20261019, global stream untouched) and the refit is kept'
+        '  if its log-likelihood is higher by more than 1e-6. MATLAB values are therefore the ML optimum, not a stall at 0.'
+        '- Timings are per channel as measured on the exporting machine; if a parallel pool was open, `parfor` in `snpm_lmm_fit` ran in parallel and the timings are not serial.'
+        };
+end
+
+function write_bench_readme(path, LMM_NPERM)
+    d = fileparts(path);
+    if ~exist(d, 'dir'), mkdir(d); end
+    fid = fopen(path, 'w');
+    assert(fid > 0, 'Cannot write %s', path);
+    c = onCleanup(@() fclose(fid));
+    t = @(x) fprintf(fid, '%s\n', x);
+    t('# fitlme reference table for the mixed-model tier');
+    t('');
+    t(['Written by `scripts/export_parity_fixtures.m` (MATLAB ' version ') on ' char(datetime('now', 'Format', 'yyyy-MM-dd')) '. Do not edit by hand.']);
+    t('');
+    t('One CSV per mixed-model parity fixture (`<case>.csv` belongs to `<case>.mat`): the OBSERVED per-channel fit, one row per');
+    t('channel of the analysed montage in analysed order (`montage.labels`). These are the numbers a statsmodels `MixedLM`');
+    t('fit has to reproduce; the tolerance for the Python parity tests is set from that comparison. Numbers are written');
+    t('with 17 significant digits; NaN = not fitted (channel excluded) or not defined.');
+    t('');
+    t(sprintf(['The permutation part of each fixture (%d draws per loop) is in the `.mat`; this table covers only the observed ' ...
+        'fit.'], LMM_NPERM));
+    t('');
+    t('## Columns');
+    t('');
+    t('| Column | Meaning |');
+    t('|---|---|');
+    t('| `channel_index`, `label` | 1-based analysed index, channel label |');
+    t('| `evaluable` | 1 = complete across every row and fitted; 0 = excluded (every other column NaN) |');
+    t('| `n_obs` | rows (trials) in the fit |');
+    t('| `stat_type` | `t` (continuous effect: the coefficient t) or `F` (factor effect: `anova(lme)`) |');
+    t('| `stat`, `p`, `df1`, `df2`, `wald` | the effect statistic as the pipeline uses it: model p; t: df1 = 1, df2 = coefficient DF; F: DF1, DF2; wald = t^2 or F |');
+    t('| `est_<coef>`, `se_<coef>`, `t_<coef>`, `df_<coef>`, `p_<coef>` | every fixed-effect coefficient (name stripped to letters, digits and `_`; `Intercept` = `(Intercept)`) |');
+    t('| `loglik` | ML log-likelihood |');
+    t('| `re_std_<group><term>` | random-effect standard deviation, e.g. `re_std_SubjectIntercept` |');
+    t('| `residual_std` | residual standard deviation |');
+    t('| `fit_ms`, `anova_ms` | wall time of `fitlme` and of `anova` for this channel, milliseconds, serial, this machine (warm) |');
+    t('| `cov_fe_reldiff` | max abs difference between `CoefficientCovariance` and `inv(X'' V^-1 X)` from the ML variance components, relative to the largest entry |');
+    t('| `loglik_absdiff` | abs difference between `LogLikelihood` and the closed-form ML log-likelihood |');
+    t('| `default_options_identical` | 1 = `fitlme(tbl, formula)` and the call with every option below spelled out returned identical coefficients, SE, t, DF, p, log-likelihood and anova F / DF2 |');
+    t('');
+    t('## fitlme settings');
+    t('');
+    L = fitlme_settings_lines();
+    for i = 1:numel(L), t(L{i}); end
+    t('');
+    t('Model, formula, categorical columns and their level order, and the coefficient names of each case: `lmm.formula`,');
+    t('`lmm.categorical_levels`, `lmm.coef_names` in the matching fixture, and the parity README.');
+end
+
+% =======================================================================
 % PLAIN-TYPE CONVERSION (scipy.io.loadmat-safe)
 % =======================================================================
 function v = flat(v)
@@ -1375,7 +2002,7 @@ function s = loop_list(L)
     s = strjoin(parts, '<br>');
 end
 
-function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
+function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, LMM_REFIT)
     fid = fopen(path, 'w');
     assert(fid > 0, 'Cannot write %s', path);
     c = onCleanup(@() fclose(fid));
@@ -1388,7 +2015,8 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('');
     w('MATLAB is the reference. A Python analysis passes when, given the inputs in a fixture and');
     w('the permutation indices in `perm_log`, it reproduces `results`. Each fixture is one run of');
-    w('`core_snpm_analysis(params)` after `rng(%d,''twister'')`, %d requested permutations.', SEED, NPERM);
+    w('`core_snpm_analysis(params)` after `rng(%d,''twister'')`, %d requested permutations (%d for the mixed-model', SEED, NPERM, LMM_NPERM);
+    w('tier, where every permutation refits every channel with `fitlme`).');
     w('Inputs this script builds (under `inputs/`) come from a private stream seeded %d.', INPUT_SEED);
     w('');
     w('Load with `scipy.io.loadmat(path, simplify_cells=True)`. MATLAB struct -> dict, struct array ->');
@@ -1461,6 +2089,20 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('from `circ.subject_ids`, `circ.y`, `circ.angles` and every map, and listed in `results.circ.dropped_subjects`');
     w('(count `results.circ.measure_nan_removed`). Missing angles stay with their row and are deleted per channel, so');
     w('`results.per_channel_n` is the same in the observed map and in every permuted map.');
+    w('');
+    w('Mixed-model inputs. `example_data/lmm_long.csv` is long format, one row per trial: 20 subjects x 15 trials,');
+    w('`Subject`, `group` (G1/G2), `time` (1..15), `sleepDepth` (the DV of the continuous cases), then E1..E256. Built here');
+    w('from it with a private stream seeded %d: `inputs/lmm_long_groups3.csv` has `group` reassigned per subject to three', INPUT_SEED + 3);
+    w('levels (7 / 7 / 6 subjects; %s), a subject intercept (sd 2) added to every analysed channel,', ...
+        strjoin(cellfun(@(a, b) [a '=' b], B.lmm_group_of_subject(:, 1), B.lmm_group_of_subject(:, 2), 'UniformOutput', false)', ', '));
+    w('and +4 added to the G3 rows of E129 and its first-ring neighbours (%s). `inputs/lmm_long_missing.csv` is', strjoin(B.lmm_cluster, ', '));
+    w('`lmm_long.csv` with one trial blank in each of %s, and every trial of %s blank in %s.', ...
+        strjoin(B.lmm_missing_channels(1:3), ', '), B.lmm_missing_subject, B.lmm_missing_channels{4});
+    w('`inputs/lmm_long_meta_missing.csv` is `lmm_long_groups3.csv` with %d `sleepDepth` values NaN, the `group` label', B.lmm_meta_missing_counts(1));
+    w('blank on %d non-first trials and `time` NaN on %d rows. The %d rows with a missing MODEL variable (DV or group) are', ...
+        B.lmm_meta_missing_counts(2), B.lmm_meta_missing_counts(3), numel(B.lmm_meta_missing_rows));
+    w('dropped before anything else (`lmm.dropped_rows.rows`, 1-based into the input file); `time` is not in the model');
+    w('and drops nothing. Every other array in that fixture (`lmm.power`, `lmm.meta`, the maps) is on the kept rows.');
     w('');
     w('## Order of permutation loops per analysis');
     w('');
@@ -1570,6 +2212,39 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('`montage.neighbors`; cluster mass = sum(stat)/n_channels (stat = F or U^2 itself, NOT squared). TFCE null = max over');
     w('channels of the TFCE map (non-negative statistics). p = (b + 1)/(N + 1) with ties at relative 1e-12 counted.');
     w('');
+    w('**Mixed-model tier** (`mixedmodel`, `core_snpm_lmm`): TWO loops, always in this order, each drawing its own');
+    w('permutations (the cluster loop does not reuse the TFCE loop''s draws):');
+    w('');
+    w('1. `lmm:TFCE` -- `snpm_lmm_TFCE`: per draw, refit every evaluable channel, TFCE the statistic map, keep the max.');
+    w('2. `lmm:cluster` -- `snpm_lmm_cluster`: per draw, refit every evaluable channel, form clusters, keep the largest mass.');
+    w('');
+    w('The observed fits (one in each engine, identical) and the whole-head global test draw nothing. The observed');
+    w('labelling is NOT forced into row 1. One draw = one call of `snpm_lmm_permute_meta`; only the metadata moves, the');
+    w('channel matrix never does:');
+    w('');
+    w('| Scheme (`lmm.perm_scheme`) | Tag | `indices` row | How a row `ix` is applied |');
+    w('|---|---|---|---|');
+    w('| `within_subject` (default for `continuous`) | `lmm:within_subject` | 1 x n_trials | `DV_perm = DV(ix)`. `ix` moves rows only within a subject: subjects in order of first appearance, `randperm(n_s)` per subject with more than one row (one-row subjects draw nothing). |');
+    w('| `group_label` (default for `factor`) | `lmm:group_label` | 1 x n_subjects | subjects in order of first appearance (`unique(Subject, ''stable'')`); subject s takes the group of subject `ix(s)` on all of its rows. One `randperm(n_subjects)`. |');
+    w('');
+    w('**Per-channel fit.** `fitlme(tbl, lmm.formula)` where `tbl` = the metadata table with the categorical columns');
+    w('(`lmm.categorical`) converted by `categorical()` and the channel appended as the LAST variable, `POWER`. Statistic:');
+    w('`lmm.effect_rule`. A channel outside `lmm.evaluable` (not complete across every row) is never fitted: stat and p');
+    w('are NaN and wald is 0 in the observed map and in every permuted map. TFCE: `ClusterEnhancement(stat, adj, 0.5, 2)`,');
+    w('dh = 0.1, signed for t; TFCE null = max over evaluable channels of |TFCE| (tail both) or TFCE (one-sided; F is');
+    w('non-negative), +Inf if a permutation has no finite value. Cluster forming: channels with model p < 0.05 (the');
+    w('two-sided model p, whatever the tail), connected through `montage.neighbors`; mass = sum(wald)/n_channels, wald =');
+    w('t^2 or F (the sum-of-Wald mass of Stephan et al. 2021, ported as it is); 0 when a permutation has no cluster.');
+    w('p = (b + 1)/(N + 1) with ties at relative 1e-12 counted, for both.');
+    w('');
+    w('**What `fitlme` does, for a statsmodels port** (every channel of every fixture checked: the call with no options and');
+    w('the call with the options below spelled out return identical numbers, `default_options_identical`):');
+    w('');
+    L = fitlme_settings_lines();
+    for i = 1:numel(L), fprintf(fid, '%s\n', L{i}); end
+    w('');
+    w('The per-channel numbers of the observed fit are also written as CSV under `lmm_bench/` (see `lmm_bench/README.md`).');
+    w('');
     w('## Field dictionary');
     w('');
     w('Top level of every fixture:');
@@ -1577,7 +2252,7 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| Field | Type / shape | Meaning |');
     w('|---|---|---|');
     w('| `case_name` | char | fixture name (= file name without `.mat`) |');
-    w('| `tier` | char | `legacy`, `glm` or `circ` |');
+    w('| `tier` | char | `legacy`, `glm`, `circ` or `lmm` |');
     w('| `description` | char | what the case is for |');
     w('| `seed`, `rng_algorithm` | scalar, char | `rng(seed, rng_algorithm)` was called immediately before the run |');
     w('| `permutations` | scalar | permutations REQUESTED (`params.permutations`) |');
@@ -1592,9 +2267,10 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| `engine` | struct | legacy tier only: the matrices the engines were handed, the cluster-size null, the global channel set (below) |');
     w('| `glm` | struct | GLM tier only: designs and replayed nulls (below) |');
     w('| `circ` | struct | circular tier only: every stage of the circular pipeline and the replayed null (below) |');
+    w('| `lmm` | struct | mixed-model tier only: the analysed table, the model, every observed fit, the recorded permuted maps and the replayed nulls (below) |');
     w('');
     w('`inputs` -- legacy tier has `data1`, `data2` (empty for `onesampleT_single`), `covariates` (empty when unused);');
-    w('GLM tier has `data`; circular tier has `angles1`, `angles2`, `counts1`, `counts2` (two-group analyses) or `angles1`,');
+    w('GLM and mixed-model tiers have `data` (mixed model: the long table, metadata = `params.lmm_meta_cols`); circular tier has `angles1`, `angles2`, `counts1`, `counts2` (two-group analyses) or `angles1`,');
     w('`measure` (circ_corrAngLinear), the others empty, all in the file''s own units and convention. Each data block:');
     w('');
     w('| Field | Type / shape | Meaning |');
@@ -1624,10 +2300,10 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('');
     w('| Field | Type / shape | Meaning |');
     w('|---|---|---|');
-    w('| `name` | char | `legacy/TFCE`, `legacy/cluster`, or the GLM loop name built from the markers |');
-    w('| `tag` | char | generator and branch: `signflip:exact|random`, `relabel:exact|random`, `rowperm:exact|random`, `glm_permute:free|within` |');
+    w('| `name` | char | `legacy/TFCE`, `legacy/cluster`, `lmm:TFCE`, `lmm:cluster`, or the GLM / circular loop name built from the markers |');
+    w('| `tag` | char | generator and branch: `signflip:exact|random`, `relabel:exact|random`, `rowperm:exact|random`, `glm_permute:free|within`, `circ_u2:labels`, `lmm:within_subject|group_label` |');
     w('| `kind` | char | `signflip`, `relabel`, `rowperm` or `row_index` |');
-    w('| `branch` | char | `exact`, `random`, `free` or `within` |');
+    w('| `branch` | char | `exact`, `random`, `free`, `within`, `labels`, `within_subject` or `group_label` |');
     w('| `site`, `caller` | char | `function:line` that recorded the draw, and its caller |');
     w('| `n_draws`, `n_units` | scalars | size of `indices` |');
     w('| `indices` | double n_draws x n_units | row i = permutation i, in the order the loop used them. NOT sorted. See the tables above for how a row is applied. |');
@@ -1759,10 +2435,57 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B)
     w('| `p_correctedTFCE` | 1 x nCh | replayed TFCE-corrected p (= `results.p.correctedTFCE`) |');
     w('| `replay_checks`, `replay_detail`, `replay_ok` | cellstr, logical 1 x K, logical | each stage the export rebuilt independently from the input files and found equal to the pipeline: montage, import, count rule, covariate rules (point-biserial, usecov, collinear), gate masks (gate0, gate, complete, evaluable), excluded set, inversion check (and probe), Freedman-Lane context, engine statistic, observed maps, loop tag and size, TFCE null, mass null, cluster p, TFCE p, descriptive panel |');
     w('');
+    w('`results`, mixed-model tier: `T.real_T` (t or F), `T.real_TFCE`, `T.tMaxTFCE` (sorted descending), `T.critical_T_TFCE`,');
+    w('`T.excluded_channels`, `p.real` (model p), `p.correctedTFCE`, `Clusters(c)` (`.channels`, `.mass`, `.p`, `.threshold` =');
+    w('alpha, `.permutations`; one entry with empty `channels` and p = 1 when there is none), the significant-channel sets,');
+    w('`alpha`, `chanlocs`, `excluded_channels` (`.reason` = the completeness rule), `lmm` (`.formula`, `.effect`, `.effect_type`,');
+    w('`.perm_scheme`, `.n_trials`, `.n_subjects`, `.group_levels`, `.global_stat` / `.global_pval` = the effect fitted on the');
+    w('mean over evaluable channels, PNG names), `data_summary`.');
+    w('');
+    w('`lmm` (mixed-model tier only; rebuilt by the export script from the input file, each stage checked against what');
+    w('`core_snpm_lmm` recorded or returned):');
+    w('');
+    w('| Field | Type / shape | Meaning |');
+    w('|---|---|---|');
+    w('| `formula`, `dv`, `fixed`, `random`, `effect`, `effect_type` | char | the model exactly as fitted: `formula` = `<dv> ~ <fixed> + <random>` |');
+    w('| `perm_scheme`, `subject_col`, `group_col`, `tail` | char | the scheme the pipeline derived (`within_subject` for continuous, `group_label` for factor) |');
+    w('| `categorical`, `categorical_levels` | cellstr, struct of cellstr | columns converted by `categorical()` before the fit, and their level order (first = reference) |');
+    w('| `fitlme_options` | struct | the defaults in effect (see "What `fitlme` does" above) |');
+    w('| `effect_rule`, `cluster_statistic` | char | how the statistic and the cluster mass are computed |');
+    w('| `alpha`, `tfce_E`, `tfce_H`, `tfce_dh` | scalars | 0.05, 0.5, 2, 0.1 |');
+    w('| `power` | n_trials x nCh | the analysed channel matrix (after channel selection, analysed order); row r = row r of `inputs.data` |');
+    w('| `meta` | struct of n_trials x 1 columns | the metadata as read (text as cellstr); `meta_categorical` = the categorical columns as the fit sees them |');
+    w('| `n_obs` | scalar | rows (trials) |');
+    w('| `evaluable` | logical 1 x nCh | complete across every row: the one channel set of the observed and every permuted map |');
+    w('| `excluded_reason` | char | why a channel left |');
+    w('| `coef_names` | cellstr 1 x nCoef | fixed-effect coefficient names in fitlme order |');
+    w('| `effect_coef_rows` | 1-based | the coefficient(s) the effect is (continuous: one row; factor: the term''s k-1 indicator rows) |');
+    w('| `coef_estimate`, `coef_se`, `coef_t`, `coef_df`, `coef_p` | nCoef x nCh | every fixed-effect coefficient of the observed fit, NaN on excluded channels |');
+    w('| `stat`, `p_uncorrected`, `wald` | 1 x nCh | observed effect statistic, model p, wald (t^2 or F; 0 where not finite or excluded) |');
+    w('| `df1`, `df2` | 1 x nCh | effect df: continuous 1 and the coefficient DF (n - p); factor DF1, DF2 of `anova` |');
+    w('| `loglik` | 1 x nCh | ML log-likelihood |');
+    w('| `re_names`, `re_std`, `residual_std` | cellstr 1 x q, q x nCh, 1 x nCh | random-effect standard deviations (`<group>:<term>`) and residual SD |');
+    w('| `tfce` | 1 x nCh | observed TFCE map (= `results.T.real_TFCE`) |');
+    w('| `perm_stat` | n_draws x nCh | RECORDED permuted statistic map of each `lmm:TFCE` draw, row i = `perm_log(1).indices(i, :)` |');
+    w('| `perm_cluster_wald`, `perm_cluster_p` | n_draws x nCh | RECORDED permuted wald and model-p maps of each `lmm:cluster` draw, row i = `perm_log(2).indices(i, :)` |');
+    w('| `tfce_null_sorted` | n_draws x 1, **sorted descending** | max-TFCE null replayed from `perm_stat` (= `results.T.tMaxTFCE`) |');
+    w('| `cluster_mass_null_sorted` | n_draws x 1, **sorted descending** | max cluster mass per permutation, recorded inside `snpm_lmm_cluster`; every `Clusters(c).p` is computed against it |');
+    w('| `p_correctedTFCE` | 1 x nCh | replayed TFCE-corrected p (= `results.p.correctedTFCE`) |');
+    w('| `global_stat`, `global_p` | scalars | the effect refitted on the mean over evaluable channels (= `results.lmm.global_stat` / `global_pval`) |');
+    w('| `refit_draws_tfce`, `refit_draws_cluster` | 1-based | draws the export refitted from the recorded indices (the first %d of each loop) |', LMM_REFIT);
+    w('| `fit_ms`, `anova_ms` | 1 x nCh | wall time of the observed `fitlme` and `anova` per channel, this machine, serial |');
+    w('| `replay_checks`, `replay_detail`, `replay_ok` | cellstr, logical 1 x K, logical | montage, analysed matrix, metadata, spec, evaluable set, default options = explicit options, Cov(beta) formula, log-likelihood formula, observed stat / p / TFCE, permuted maps masked, TFCE null, TFCE p, mass null, observed clusters and their p, the refitted draws reproduce the recorded maps bit for bit (both loops), loop tags, global test |');
+    w('');
+    w('A Python port can test its fit and its correction separately: the fit against `lmm.coef_*`, `stat`, `p_uncorrected`');
+    w('by tolerance; the correction EXACTLY, by feeding `perm_stat` / `perm_cluster_wald` / `perm_cluster_p` to its own');
+    w('TFCE and cluster code and comparing with `tfce_null_sorted`, `cluster_mass_null_sorted` and `results`.');
+    w('');
     w('## Not in these fixtures');
     w('');
     w('- **A global test for single-effect GLM presets.** The pipeline computes none (mixed2way has one per effect).');
     w('- **A global test for the circular tier.** None exists, by design; `circ_descriptive` is the no-inference substitute.');
     w('- The circular `per_subject` count mode, the `custom` convention, and Tier-1 linearised measures.');
-    w('- Mixed-model analyses (a later phase).');
+    w('- Mixed-model: crossed or several random-effect terms (e.g. `(1|Subject) + (1|time)`, Stephan et al. 2021), random');
+    w('  slopes, interaction effects (`POWER:group`), one-sided tails, `logscale` / `normalize`, source space, and a run with a');
+    w('  parallel pool. Each would need its own case.');
 end

@@ -62,7 +62,7 @@ repo root, which is in the repository — there is nothing to generate.
 | **Regression** `regression` | Scales with a predictor? | 1 file | `predictor_col` (+ `covariate_cols`) | t on slope vs `fitlm` | `glm_regression.csv` |
 | **RM-ANOVA** `rmanova` | 3+ within conditions differ? | 1 file, long | `subject_col` + `condition_col` | F (within perm); with ≥3 conditions, a pairwise post-hoc t per pair (two-condition test on subjects who have both) | `glm_rmanova.csv` |
 | **Two-way mixed ANOVA** `mixed2way` | Condition effect differs between groups? | 1 file, long, **balanced**: every subject has exactly one row per condition and one group | `group_col` + `subject_col` + `condition_col` | three effects in one report: group F (subject means), condition F and interaction F (full model, within perm); details below | `glm_mixed2way.csv` (2×2); `glm_mixed2way_2x3.csv` (2×3) |
-| **Mixed model** `mixedmodel` | Trial-level effect (many obs/subject)? | 1 long file | `Subject` + DV + fixed + effect | `fitlme` t/F (Stephan 2021) | `lmm_long.csv` |
+| **Mixed model** `mixedmodel` | Trial-level effect (many obs/subject)? | 1 long file | `Subject` + DV + fixed + effect | `fitlme` t/F (Stephan 2021); trials with a missing model variable (dependent variable, formula columns, subject, group under `group_label`) are dropped up front and counted in `lmm.dropped_rows`, which assumes the missingness is unrelated to the effect (e.g. no-report awakenings); `group_label` requires the group to be constant within subject; fits at a zero random-effect variance are refitted (details below) | `lmm_long.csv` |
 | **Source-level t** (any wide t-test with Recording system `source2447`) | Which cortical voxels differ? | wide file(s), cols `src0001..src2447` (magnitudes) | — (same as the scalp t-test) | permutation t + TFCE + cluster-**extent**, on the source graph | none ships — source input comes from your own GeoSource export (see the [how-to](../how-to/run-a-source-level-analysis.md)) |
 
 **Pairwise post-hoc comparisons (`anova1`, `ancova`, `rmanova`, `mixed2way`).** When the tested
@@ -176,6 +176,33 @@ strength* — never both in one model. There is **no Rayleigh mask**: weakly-cou
 and adjusted, not deleted. *Current build:* the engine reads these two files as integer event
 counts and rejects non-integer input (`core_snpm:circCountsInvalid`); the log(Z) path lands with
 the queued engine change.
+
+**Mixed model (`core_snpm_lmm`): missing model variables and the fit.** A trial with a missing
+value (blank, `NaN`, empty text or undefined category) in a model variable is dropped before the
+datatype transform, the channel setup and the evaluable-channel mask. The model variables are
+the dependent variable (`lmm_dv`) when it is a metadata column, every metadata column named in
+`lmm_fixed` or `lmm_random`, the subject column (`lmm_subject`), and the group column
+(`lmm_group`) when the permutation is `group_label`. When the dependent variable is `POWER` (the
+channel), its missing values fall under the complete-column rule instead. Other `lmm_meta_cols`
+never drop a row. Dropping assumes the missingness is unrelated to the effect tested, for example
+awakenings with no report. Counts are in `results_struct.lmm.dropped_rows` (`.n`, `.n_input`,
+`.columns`, `.per_column`, `.rows`, `.subjects_lost`), the results text, the HTML model card and
+the Excel `droppedRows` sheet (written on every `mixedmodel` run, "none" when nothing was
+dropped); `lmm.n_trials` and `lmm.n_subjects` are the analysed counts. Each per-channel fit that
+returns a random-effect standard deviation at 0 (at most 0.001 times the residual standard
+deviation) is refitted once from a random start drawn from a private random stream, which leaves
+the permutation draws unchanged, and the refit is kept only if its log-likelihood is higher
+(`dependencies/snpm_lmm_fitlme.m`).
+
+| Constraint | Identifier |
+|---|---|
+| Subject column not in `lmm_meta_cols` ⇒ reject | `core_snpm_lmm:noSubjectColumn` |
+| `group_label`: group column not in `lmm_meta_cols` ⇒ reject | `core_snpm_lmm:noGroupColumn` |
+| Trials with a missing model variable are dropped up front | `snpm:lmmMetaNaNRows` (warning) |
+| Fewer than 3 subjects after the drop ⇒ reject | `core_snpm_lmm:tooFewSubjects` |
+| `group_label`: group must be constant within each subject (checked with or without missingness) | `core_snpm_lmm:groupVariesWithinSubject` |
+| `group_label`: at least 2 groups with at least 2 subjects each | `core_snpm_lmm:groupLevelTooFewSubjects` |
+| `within_subject`: a subject left with one trial (its value cannot move under the shuffle) | `snpm:lmmSingleTrialSubject` (warning) |
 
 **Source path coverage.** The source2447 system is wired into `core_snpm_analysis` (the wide
 t-tests — `pairedT`/`onesampleT`/`unpairedT`) and `core_snpm_lmm` (`mixedmodel`). The GLM

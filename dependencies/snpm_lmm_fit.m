@@ -43,6 +43,10 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec, evaluable)
 %             poison, via NaN) cluster mass. This is the documented contract
 %             and it is now enforced on BOTH the continuous and factor paths.
 %   p_model : model p-value of the effect of interest. NaN for unfit channels.
+%
+% Each channel is fitted through snpm_lmm_fitlme: plain fitlme(tbl, formula),
+% plus one private-stream random-start refit when a random-effect SD comes
+% back at 0 and that is not the likelihood maximum (see that file).
 
     nCh = size(power, 2);
 
@@ -100,7 +104,9 @@ function [stat, wald, p_model] = snpm_lmm_fit(power, meta, spec, evaluable)
         tbl.POWER = col(valid);
 
         try
-            lme = fitlme(tbl, formula);
+            % fitlme, refitted from a private-stream random start only when it
+            % stops at a zero random-effect variance that is not the optimum
+            lme = snpm_lmm_fitlme(tbl, formula);
         catch
             continue   % singular / non-convergent fit -> leave as NaN/0
         end

@@ -97,6 +97,7 @@ function [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail,
     possible_permutations = permutations;
     maxTFCE = zeros(possible_permutations, 1);
     n_degenerate = 0;
+    snpm_perm_tap('record', 'loop:lmm:TFCE', []);   % parity recorder marker (inert when off)
     for permIndex = 1:possible_permutations
         if mod(permIndex, 100) == 0
             disp([num2str(permIndex), ' out of ', num2str(possible_permutations), ' LMM permutations completed...']);
@@ -104,6 +105,7 @@ function [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail,
         meta_perm = snpm_lmm_permute_meta(meta, spec, spec.perm);
         perm_stat = snpm_lmm_fit(power, meta_perm, spec, evaluable);
         perm_stat(~evaluable) = NaN;   % identical channel set to the observed map
+        snpm_perm_tap('record', 'lmm:perm_stat', perm_stat);   % parity recorder (inert when off)
         tfce = enhance_map(perm_stat, sparse_adj, E, H, nCh);
         switch tail
             case 'both'

@@ -19,6 +19,12 @@ function export_report(DATA, OUT, opts)
 %   DATA='.../hdeeg_analysis_all_sub';
 %   OUT ='.../AnalyzeTools/SnPM_2025/test_data';   % where sleep_eeg_report.html lives
 %   export_report(DATA, OUT, struct('permutations',1000));
+%
+% MONTAGE (defaults: the 178-ch hd-EEG montage)
+%   opts.chanlocs_file  - .mat on the path holding the chanlocs struct, as a
+%                         variable named like the file or `chanlocs` (default 'EEG178chanlocs')
+%   opts.neighbors_file - .mat holding variable `neighbors` (default 'NeighborMatrix_178')
+%   opts.headrad        - topoplot head radius (default 0.65; ~0.5 for a 10-20 montage)
 
     if nargin < 3, opts = struct(); end
     nperm  = getdef(opts,'permutations',1000);
@@ -47,12 +53,19 @@ function export_report(DATA, OUT, opts)
             'opts.exclude_chan_subject must be an N x 2 cell array {subject, channel}.');
     end
 
-    Lc=load('EEG178chanlocs'); chanlocs=Lc.EEG178chanlocs;
-    Ln=load('NeighborMatrix_178'); neighbors=Ln.neighbors;
+    clf_=getdef(opts,'chanlocs_file','EEG178chanlocs'); [~,clv]=fileparts(clf_);
+    Lc=load(clf_); if isfield(Lc,clv), chanlocs=Lc.(clv); else, chanlocs=Lc.chanlocs; end
+    Ln=load(getdef(opts,'neighbors_file','NeighborMatrix_178')); neighbors=Ln.neighbors;
+    hrad=getdef(opts,'headrad',0.65);
     chanlabels={chanlocs.labels};
+    assert(size(neighbors,1)==numel(chanlocs), 'export_report:montage', ...
+        'Neighbour matrix has %d rows, chanlocs has %d channels.', size(neighbors,1), numel(chanlocs));
 
     fprintf('Scanning dataset...\n');
     [R, bandlabels, bandrange, freqs, maskinfo] = scan_dataset(DATA, folders, labels, exchan);
+    assert(~isempty(R) && size(R(1).abs,2)==numel(chanlocs), 'export_report:montage', ...
+        'Data have %d channels, chanlocs has %d. Set opts.chanlocs_file / opts.neighbors_file.', ...
+        size(R(1).abs,2), numel(chanlocs));
     % A mask entry that matched nothing (typo'd subject or channel label) must be
     % fatal: the methods line would otherwise claim a mask that was never applied.
     for e=1:numel(maskinfo)
@@ -139,9 +152,9 @@ function export_report(DATA, OUT, opts)
                     meanA=mean(A,1,'omitnan'); meanB=mean(B,1,'omitnan');
                     allv=[meanA meanB]; allv=allv(~isnan(allv));
                     clim=[prctile(allv,2) prctile(allv,98)]; if ~(clim(1)<clim(2)), clim=[min(allv) max(allv)]; end
-                    save_topo(meanA,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condA_mean.png',stg,pw,bandlabels{bi})));
-                    save_topo(meanB,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condB_mean.png',stg,pw,bandlabels{bi})));
-                    save_topo(T.real_T,chanlocs,[-3 3],iU,iT,'jet',fullfile(OUT,sprintf('%s_%s_%s_Tmap.png',stg,pw,bandlabels{bi})),C);
+                    save_topo(meanA,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condA_mean.png',stg,pw,bandlabels{bi})),[],hrad);
+                    save_topo(meanB,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condB_mean.png',stg,pw,bandlabels{bi})),[],hrad);
+                    save_topo(T.real_T,chanlocs,[-3 3],iU,iT,'jet',fullfile(OUT,sprintf('%s_%s_%s_Tmap.png',stg,pw,bandlabels{bi})),C,hrad);
                     % Companion map with the CLUSTER layer instead of the TFCE
                     % layer: black = uncorrected, white = cluster-significant,
                     % plus the numbered box. Blanking .ring suppresses the
@@ -149,7 +162,7 @@ function export_report(DATA, OUT, opts)
                     % number is still drawn, so the white dots stay readable.
                     Cn = C; if ~isempty(Cn), [Cn.ring] = deal([]); end
                     save_topo(T.real_T,chanlocs,[-3 3],iU,iC,'jet', ...
-                        fullfile(OUT,sprintf('%s_%s_%s_Tmap_cluster.png',stg,pw,bandlabels{bi})),Cn);
+                        fullfile(OUT,sprintf('%s_%s_%s_Tmap_cluster.png',stg,pw,bandlabels{bi})),Cn,hrad);
                     k=numel(G)+1; G(k)=struct('band',bandlabels{bi},'meanA',meanA,'meanB',meanB,'tmap',T.real_T,'sigU',iU,'sigT',iT,'clim',clim,'clu',C);
                     fprintf('  %-4s %-10s n=%d TFCE=%d clu=%d (%d cluster%s, min p=%.4f)\n', ...
                         stg, bandlabels{bi}, ns, vT, vC, numel(C), plural(numel(C)), vP);
@@ -165,7 +178,7 @@ function export_report(DATA, OUT, opts)
                     CLU.(pwfield(pw)).(stg).(bf(bandlabels{bi})) = C;
                 end
             end
-            make_grid(G, chanlocs, stg, pw, fullfile(OUT,sprintf('GRID_%s_%s.png',stg,pw)), condA, condB);
+            make_grid(G, chanlocs, stg, pw, fullfile(OUT,sprintf('GRID_%s_%s.png',stg,pw)), condA, condB, hrad);
         end
     end
 
@@ -509,13 +522,14 @@ function periodogram_fig(R,stg,pw,freqs,fmin,fmax,bandrange,fname,condA,condB,la
     try, print(fig,fname,'-dpng','-r150'); catch, end; close(fig);
 end
 
-function save_topo(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,fname,clu)
+function save_topo(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,fname,clu,hrad)
     if nargin<8, clu=[]; end
+    if nargin<9, hrad=0.65; end
     f=figure('Color','w','Position',[50 50 380 320],'Visible','off');
-    try, topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu); colorbar; catch, end
+    try, topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,hrad); colorbar; catch, end
     try, print(f,fname,'-dpng','-r130'); catch, end; close(f);
 end
-function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu)
+function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,hrad)
     % map + manually-overlaid significance dots: black = uncorrected,
     % white = corrected (drawn on top). Manual overlay because topoplot's
     % emarker2 supports only one marker set.
@@ -525,9 +539,11 @@ function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu)
     % dots. Cluster NUMBERS are drawn outside the head with a leader line, and
     % ONLY when there are 2+ clusters (see label_clusters).
     if nargin<7, clu=[]; end
-    mr=max([chanlocs.radius]);   % plot all 178 channels (radius up to ~0.67)
-    % headrad 0.65 draws a proper head outline (visible nose + ears) just inside the channel rim
-    a={vec,chanlocs,'style','map','electrodes','off','whitebk','on','plotrad',mr,'headrad',0.65};
+    if nargin<8, hrad=0.65; end
+    mr=max([chanlocs.radius]);   % plot all channels (178-ch: radius up to ~0.67)
+    % 178-ch: headrad 0.65 draws a proper head outline (visible nose + ears) just
+    % inside the channel rim; a 10-20 montage needs ~0.5 (opts.headrad)
+    a={vec,chanlocs,'style','map','electrodes','off','whitebk','on','plotrad',mr,'headrad',hrad};
     if ~isempty(clim)&&clim(1)<clim(2), a=[a,{'maplimits',clim}]; end
     topoplot(a{:}); colormap(gca,cmap); hold on;
     [Y,X]=topo_xy(chanlocs);
@@ -643,16 +659,17 @@ function [Y,X]=topo_xy(ch)
     Th=pi/180*[ch.theta]; Rd=[ch.radius]; [x,y]=pol2cart(Th,Rd);
     sq=0.5/max(Rd); X=x*sq; Y=y*sq;
 end
-function make_grid(G,chanlocs,stg,pw,fname,condA,condB)
+function make_grid(G,chanlocs,stg,pw,fname,condA,condB,hrad)
+    if nargin<8, hrad=0.65; end
     nB=numel(G); if nB==0, return; end
     f=figure('Color','w','Position',[20 20 720 max(220,170*nB)],'Visible','off');
     tl=tiledlayout(nB,3,'TileSpacing','compact','Padding','compact');
     title(tl,sprintf('%s  %s  (%s mean | %s mean | T-map)',upper(stg),pw,condA,condB),'Interpreter','none');
     for r=1:nB
-        nexttile; topo_cell(G(r).meanA,chanlocs,G(r).clim,[],[],'parula');
+        nexttile; topo_cell(G(r).meanA,chanlocs,G(r).clim,[],[],'parula',[],hrad);
         if r==1, title([condA ' mean']); end; ylabel(G(r).band,'Interpreter','none');
-        nexttile; topo_cell(G(r).meanB,chanlocs,G(r).clim,[],[],'parula'); if r==1, title([condB ' mean']); end
-        nexttile; topo_cell(G(r).tmap,chanlocs,[-3 3],G(r).sigU,G(r).sigT,'jet',G(r).clu); if r==1, title('T-map'); end
+        nexttile; topo_cell(G(r).meanB,chanlocs,G(r).clim,[],[],'parula',[],hrad); if r==1, title([condB ' mean']); end
+        nexttile; topo_cell(G(r).tmap,chanlocs,[-3 3],G(r).sigU,G(r).sigT,'jet',G(r).clu,hrad); if r==1, title('T-map'); end
     end
     try, print(f,fname,'-dpng','-r130'); catch, end; close(f);
 end

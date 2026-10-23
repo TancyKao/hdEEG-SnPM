@@ -25,6 +25,9 @@ function export_report(DATA, OUT, opts)
 %                         variable named like the file or `chanlocs` (default 'EEG178chanlocs')
 %   opts.neighbors_file - .mat holding variable `neighbors` (default 'NeighborMatrix_178')
 %   opts.headrad        - topoplot head radius (default 0.65; ~0.5 for a 10-20 montage)
+%   opts.chan_marker    - size (pt) of an open black circle at every channel (default 0 = none)
+%   opts.sig_marker     - size (pt) of the significance dots (default 11)
+%   opts.ring_marker    - size (pt) of the white cluster-outline ring (default 8)
 
     if nargin < 3, opts = struct(); end
     nperm  = getdef(opts,'permutations',1000);
@@ -56,7 +59,9 @@ function export_report(DATA, OUT, opts)
     clf_=getdef(opts,'chanlocs_file','EEG178chanlocs'); [~,clv]=fileparts(clf_);
     Lc=load(clf_); if isfield(Lc,clv), chanlocs=Lc.(clv); else, chanlocs=Lc.chanlocs; end
     Ln=load(getdef(opts,'neighbors_file','NeighborMatrix_178')); neighbors=Ln.neighbors;
-    hrad=getdef(opts,'headrad',0.65);
+    % topomap drawing: head radius and marker sizes
+    td=struct('hrad',getdef(opts,'headrad',0.65),'chan',getdef(opts,'chan_marker',0), ...
+              'sig',getdef(opts,'sig_marker',11),'ring',getdef(opts,'ring_marker',8));
     chanlabels={chanlocs.labels};
     assert(size(neighbors,1)==numel(chanlocs), 'export_report:montage', ...
         'Neighbour matrix has %d rows, chanlocs has %d channels.', size(neighbors,1), numel(chanlocs));
@@ -152,9 +157,9 @@ function export_report(DATA, OUT, opts)
                     meanA=mean(A,1,'omitnan'); meanB=mean(B,1,'omitnan');
                     allv=[meanA meanB]; allv=allv(~isnan(allv));
                     clim=[prctile(allv,2) prctile(allv,98)]; if ~(clim(1)<clim(2)), clim=[min(allv) max(allv)]; end
-                    save_topo(meanA,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condA_mean.png',stg,pw,bandlabels{bi})),[],hrad);
-                    save_topo(meanB,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condB_mean.png',stg,pw,bandlabels{bi})),[],hrad);
-                    save_topo(T.real_T,chanlocs,[-3 3],iU,iT,'jet',fullfile(OUT,sprintf('%s_%s_%s_Tmap.png',stg,pw,bandlabels{bi})),C,hrad);
+                    save_topo(meanA,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condA_mean.png',stg,pw,bandlabels{bi})),[],td);
+                    save_topo(meanB,chanlocs,clim,[],[],'parula',fullfile(OUT,sprintf('%s_%s_%s_condB_mean.png',stg,pw,bandlabels{bi})),[],td);
+                    save_topo(T.real_T,chanlocs,[-3 3],iU,iT,'jet',fullfile(OUT,sprintf('%s_%s_%s_Tmap.png',stg,pw,bandlabels{bi})),C,td);
                     % Companion map with the CLUSTER layer instead of the TFCE
                     % layer: black = uncorrected, white = cluster-significant,
                     % plus the numbered box. Blanking .ring suppresses the
@@ -162,7 +167,7 @@ function export_report(DATA, OUT, opts)
                     % number is still drawn, so the white dots stay readable.
                     Cn = C; if ~isempty(Cn), [Cn.ring] = deal([]); end
                     save_topo(T.real_T,chanlocs,[-3 3],iU,iC,'jet', ...
-                        fullfile(OUT,sprintf('%s_%s_%s_Tmap_cluster.png',stg,pw,bandlabels{bi})),Cn,hrad);
+                        fullfile(OUT,sprintf('%s_%s_%s_Tmap_cluster.png',stg,pw,bandlabels{bi})),Cn,td);
                     k=numel(G)+1; G(k)=struct('band',bandlabels{bi},'meanA',meanA,'meanB',meanB,'tmap',T.real_T,'sigU',iU,'sigT',iT,'clim',clim,'clu',C);
                     fprintf('  %-4s %-10s n=%d TFCE=%d clu=%d (%d cluster%s, min p=%.4f)\n', ...
                         stg, bandlabels{bi}, ns, vT, vC, numel(C), plural(numel(C)), vP);
@@ -178,7 +183,7 @@ function export_report(DATA, OUT, opts)
                     CLU.(pwfield(pw)).(stg).(bf(bandlabels{bi})) = C;
                 end
             end
-            make_grid(G, chanlocs, stg, pw, fullfile(OUT,sprintf('GRID_%s_%s.png',stg,pw)), condA, condB, hrad);
+            make_grid(G, chanlocs, stg, pw, fullfile(OUT,sprintf('GRID_%s_%s.png',stg,pw)), condA, condB, td);
         end
     end
 
@@ -522,14 +527,14 @@ function periodogram_fig(R,stg,pw,freqs,fmin,fmax,bandrange,fname,condA,condB,la
     try, print(fig,fname,'-dpng','-r150'); catch, end; close(fig);
 end
 
-function save_topo(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,fname,clu,hrad)
+function save_topo(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,fname,clu,td)
     if nargin<8, clu=[]; end
-    if nargin<9, hrad=0.65; end
+    if nargin<9, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8); end
     f=figure('Color','w','Position',[50 50 380 320],'Visible','off');
-    try, topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,hrad); colorbar; catch, end
+    try, topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,td); colorbar; catch, end
     try, print(f,fname,'-dpng','-r130'); catch, end; close(f);
 end
-function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,hrad)
+function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,td)
     % map + manually-overlaid significance dots: black = uncorrected,
     % white = corrected (drawn on top). Manual overlay because topoplot's
     % emarker2 supports only one marker set.
@@ -539,11 +544,11 @@ function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,hrad)
     % dots. Cluster NUMBERS are drawn outside the head with a leader line, and
     % ONLY when there are 2+ clusters (see label_clusters).
     if nargin<7, clu=[]; end
-    if nargin<8, hrad=0.65; end
+    if nargin<8, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8); end
     mr=max([chanlocs.radius]);   % plot all channels (178-ch: radius up to ~0.67)
     % 178-ch: headrad 0.65 draws a proper head outline (visible nose + ears) just
     % inside the channel rim; a 10-20 montage needs ~0.5 (opts.headrad)
-    a={vec,chanlocs,'style','map','electrodes','off','whitebk','on','plotrad',mr,'headrad',hrad};
+    a={vec,chanlocs,'style','map','electrodes','off','whitebk','on','plotrad',mr,'headrad',td.hrad};
     if ~isempty(clim)&&clim(1)<clim(2), a=[a,{'maplimits',clim}]; end
     topoplot(a{:}); colormap(gca,cmap); hold on;
     [Y,X]=topo_xy(chanlocs);
@@ -556,8 +561,14 @@ function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,hrad)
             '-','Color',[0.45 0.45 0.45],'LineWidth',0.75);
     end
 
-    if ~isempty(blackIdx), plot(Y(blackIdx),X(blackIdx),'.','Color','k','MarkerSize',11); end
-    if ~isempty(whiteIdx), plot(Y(whiteIdx),X(whiteIdx),'.','Color','w','MarkerSize',11); end
+    % channel positions (open circles), under the significance dots. With
+    % circles on, all markers go to z = 2.1 (topoplot's electrode height) so
+    % the blanking ring (z = 1) does not cut channels on the head rim, e.g.
+    % 10-20 O1/Oz/O2. Off (default): z = 0, as before.
+    zz=@(v) 2.1*(td.chan>0)*ones(size(v));
+    if td.chan>0, plot3(Y,X,zz(Y),'o','MarkerEdgeColor','k','MarkerFaceColor','none','MarkerSize',td.chan,'LineWidth',1.5); end
+    if ~isempty(blackIdx), plot3(Y(blackIdx),X(blackIdx),zz(blackIdx),'.','Color','k','MarkerSize',td.sig); end
+    if ~isempty(whiteIdx), plot3(Y(whiteIdx),X(whiteIdx),zz(whiteIdx),'.','Color','w','MarkerSize',td.sig); end
     for c=1:numel(clu)
         ix=clu(c).idx; if isempty(ix), continue; end
         % .ring is authoritative when present (empty = whole-montage cluster,
@@ -565,8 +576,8 @@ function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,hrad)
         if isfield(clu,'ring'), rg=clu(c).ring; else, rg=ix; end
         % outline the cluster (open marker, distinct from the filled sig dots)
         if ~isempty(rg)
-            plot(Y(rg),X(rg),'o','MarkerEdgeColor','w','MarkerFaceColor','none', ...
-                'MarkerSize',8,'LineWidth',1.1);
+            plot3(Y(rg),X(rg),zz(rg),'o','MarkerEdgeColor','w','MarkerFaceColor','none', ...
+                'MarkerSize',td.ring,'LineWidth',1.1);
         end
     end
     % numbers last, on the white margin: gray reads there without a backing box
@@ -659,17 +670,17 @@ function [Y,X]=topo_xy(ch)
     Th=pi/180*[ch.theta]; Rd=[ch.radius]; [x,y]=pol2cart(Th,Rd);
     sq=0.5/max(Rd); X=x*sq; Y=y*sq;
 end
-function make_grid(G,chanlocs,stg,pw,fname,condA,condB,hrad)
-    if nargin<8, hrad=0.65; end
+function make_grid(G,chanlocs,stg,pw,fname,condA,condB,td)
+    if nargin<8, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8); end
     nB=numel(G); if nB==0, return; end
     f=figure('Color','w','Position',[20 20 720 max(220,170*nB)],'Visible','off');
     tl=tiledlayout(nB,3,'TileSpacing','compact','Padding','compact');
     title(tl,sprintf('%s  %s  (%s mean | %s mean | T-map)',upper(stg),pw,condA,condB),'Interpreter','none');
     for r=1:nB
-        nexttile; topo_cell(G(r).meanA,chanlocs,G(r).clim,[],[],'parula',[],hrad);
+        nexttile; topo_cell(G(r).meanA,chanlocs,G(r).clim,[],[],'parula',[],td);
         if r==1, title([condA ' mean']); end; ylabel(G(r).band,'Interpreter','none');
-        nexttile; topo_cell(G(r).meanB,chanlocs,G(r).clim,[],[],'parula',[],hrad); if r==1, title([condB ' mean']); end
-        nexttile; topo_cell(G(r).tmap,chanlocs,[-3 3],G(r).sigU,G(r).sigT,'jet',G(r).clu,hrad); if r==1, title('T-map'); end
+        nexttile; topo_cell(G(r).meanB,chanlocs,G(r).clim,[],[],'parula',[],td); if r==1, title([condB ' mean']); end
+        nexttile; topo_cell(G(r).tmap,chanlocs,[-3 3],G(r).sigU,G(r).sigT,'jet',G(r).clu,td); if r==1, title('T-map'); end
     end
     try, print(f,fname,'-dpng','-r130'); catch, end; close(f);
 end

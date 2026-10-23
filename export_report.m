@@ -25,6 +25,8 @@ function export_report(DATA, OUT, opts)
 %                         variable named like the file or `chanlocs` (default 'EEG178chanlocs')
 %   opts.neighbors_file - .mat holding variable `neighbors` (default 'NeighborMatrix_178')
 %   opts.headrad        - topoplot head radius (default 0.65; ~0.5 for a 10-20 montage)
+%   opts.plotrad        - topoplot plotting and interpolation radius (default [] =
+%                         outermost channel); set it with headrad to pull rim channels inside the head
 %   opts.chan_marker    - size (pt) of an open black circle at every channel (default 0 = none)
 %   opts.sig_marker     - size (pt) of the significance dots (default 11)
 %   opts.ring_marker    - size (pt) of the white cluster-outline ring (default 8)
@@ -61,7 +63,8 @@ function export_report(DATA, OUT, opts)
     Ln=load(getdef(opts,'neighbors_file','NeighborMatrix_178')); neighbors=Ln.neighbors;
     % topomap drawing: head radius and marker sizes
     td=struct('hrad',getdef(opts,'headrad',0.65),'chan',getdef(opts,'chan_marker',0), ...
-              'sig',getdef(opts,'sig_marker',11),'ring',getdef(opts,'ring_marker',8));
+              'sig',getdef(opts,'sig_marker',11),'ring',getdef(opts,'ring_marker',8), ...
+              'prad',getdef(opts,'plotrad',[]));
     chanlabels={chanlocs.labels};
     assert(size(neighbors,1)==numel(chanlocs), 'export_report:montage', ...
         'Neighbour matrix has %d rows, chanlocs has %d channels.', size(neighbors,1), numel(chanlocs));
@@ -529,7 +532,7 @@ end
 
 function save_topo(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,fname,clu,td)
     if nargin<8, clu=[]; end
-    if nargin<9, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8); end
+    if nargin<9, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8,'prad',[]); end
     f=figure('Color','w','Position',[50 50 380 320],'Visible','off');
     try, topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,td); colorbar; catch, end
     try, print(f,fname,'-dpng','-r130'); catch, end; close(f);
@@ -544,14 +547,16 @@ function topo_cell(vec,chanlocs,clim,blackIdx,whiteIdx,cmap,clu,td)
     % dots. Cluster NUMBERS are drawn outside the head with a leader line, and
     % ONLY when there are 2+ clusters (see label_clusters).
     if nargin<7, clu=[]; end
-    if nargin<8, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8); end
+    if nargin<8, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8,'prad',[]); end
     mr=max([chanlocs.radius]);   % plot all channels (178-ch: radius up to ~0.67)
     % 178-ch: headrad 0.65 draws a proper head outline (visible nose + ears) just
     % inside the channel rim; a 10-20 montage needs ~0.5 (opts.headrad)
-    a={vec,chanlocs,'style','map','electrodes','off','whitebk','on','plotrad',mr,'headrad',td.hrad};
+    if isempty(td.prad), pr=mr; else, pr=td.prad; end
+    a={vec,chanlocs,'style','map','electrodes','off','whitebk','on','plotrad',pr,'headrad',td.hrad};
+    if ~isempty(td.prad), a=[a,{'intrad',pr}]; end   % map fills out to the plotting radius
     if ~isempty(clim)&&clim(1)<clim(2), a=[a,{'maplimits',clim}]; end
     topoplot(a{:}); colormap(gca,cmap); hold on;
-    [Y,X]=topo_xy(chanlocs);
+    [Y,X]=topo_xy(chanlocs,pr);
 
     % Label geometry first: the leader lines must go UNDER the significance
     % markers, so they are drawn before the dots.
@@ -664,14 +669,15 @@ function [lab, rlab] = label_clusters(clu, Y, X)
         end
     end
 end
-function [Y,X]=topo_xy(ch)
-    % match topoplot's projection with plotrad = max channel radius (enlarged head):
-    % squeeze so the outermost channel sits at rmax=0.5
+function [Y,X]=topo_xy(ch,pr)
+    % match topoplot's projection: squeeze so radius plotrad sits at rmax=0.5
+    % (plotrad defaults to the outermost channel radius)
     Th=pi/180*[ch.theta]; Rd=[ch.radius]; [x,y]=pol2cart(Th,Rd);
-    sq=0.5/max(Rd); X=x*sq; Y=y*sq;
+    if nargin<2, pr=max(Rd); end
+    sq=0.5/pr; X=x*sq; Y=y*sq;
 end
 function make_grid(G,chanlocs,stg,pw,fname,condA,condB,td)
-    if nargin<8, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8); end
+    if nargin<8, td=struct('hrad',0.65,'chan',0,'sig',11,'ring',8,'prad',[]); end
     nB=numel(G); if nB==0, return; end
     f=figure('Color','w','Position',[20 20 720 max(220,170*nB)],'Visible','off');
     tl=tiledlayout(nB,3,'TileSpacing','compact','Padding','compact');

@@ -156,6 +156,7 @@ the legacy stat-function switches. Hard constraints, all enforced with named err
 | `datatype` must be `absolute` | `core_snpm:circDatatypeNotSupported` |
 | `tail` must be `both` (all three statistics are non-negative, one-tailed) | `core_snpm:circTailNotSupported` |
 | `circ_corrAngLinear`: subjects missing the measure are dropped whole up front (listed in `results_struct.circ.dropped_subjects`); missing angles are deleted per channel on that fixed row set; fewer than 8 subjects left ⇒ reject | `core_snpm:circMeasureNaNRows` (warning) / `core_snpm:circTooFewSubjects` |
+| Channel exclusion reason (`results_struct.excluded_channels.reason`): `circ_phase_group`/`circ_phase_group_u2` "not estimable: fewer than 8 subjects per group, incomplete column under a per-channel covariate, or log(count) collinear with group"; `circ_corrAngLinear` (paired by subject, no groups, no count covariate) "not estimable: fewer than 8 subjects with both an angle and a measure value" | (excluded channel) |
 
 Permutation scheme is **Freedman–Lane on the stacked (cos,sin) response**, `free` (whole-subject
 relabelling) — between-subject only; there is no within-subject circular scheme yet. Cluster
@@ -189,13 +190,22 @@ awakenings with no report. Counts are in `results_struct.lmm.dropped_rows` (`.n`
 `.columns`, `.per_column`, `.rows`, `.subjects_lost`), the results text, the HTML model card and
 the Excel `droppedRows` sheet (written on every `mixedmodel` run, "none" when nothing was
 dropped); `lmm.n_trials` and `lmm.n_subjects` are the analysed counts. Each per-channel fit that
-returns a random-effect standard deviation at 0 (at most 0.001 times the residual standard
-deviation) is refitted once from a random start drawn from a private random stream, which leaves
-the permutation draws unchanged, and the refit is kept only if its log-likelihood is higher
-(`dependencies/snpm_lmm_fitlme.m`). Before any fit, a channel whose value is constant within each
+returns a random-effect component at 0 is refitted once from a random start drawn from a private
+random stream, which leaves the permutation draws unchanged, and the refit is kept only if its
+log-likelihood is higher by more than 1e-6 (absolute; a log-likelihood difference does not depend
+on units) (`dependencies/snpm_lmm_fitlme.m`). "At 0" means the component's standard deviation
+times the root mean square of the design column it multiplies (1 for an intercept, the predictor
+for a slope) is at most 0.001 times the residual standard deviation, so the decision does not
+depend on the units of the predictor or of the response; for intercept-only models this is the
+same rule as before. Before any fit, a channel whose value is constant within each
 subject (within-subject share of its variation ≤ 1e-6, `dependencies/snpm_lmm_within_ratio.m`,
 grouped by subject only so the decision is the same for every permutation) is excluded when it is
-the response or the `within_subject` predictor. As a backstop at every fit, a fit with no usable
+the response or the `within_subject` predictor. Under `group_label` with a metadata response
+such a channel is kept (relabelling subjects moves the response and POWER together, so it is a
+subject-level covariate), except when the random part has a POWER slope by subject
+(`(POWER|Subject)`, `(1 + POWER|Subject)`), whose variance cannot be estimated there; a channel
+with one value on every trial is excluded under `group_label` too (POWER is then collinear with
+the intercept and `fitlme` refuses the fit). As a backstop at every fit, a fit with no usable
 residual variation (`dependencies/snpm_lmm_degenerate.m`: the response reproduced by the fixed
 effects, or by the fixed and random effects when they leave some residual degrees of freedom,
 to within 1e-20 of its uncentred sum of squares, or,
@@ -208,13 +218,16 @@ p NaN.
 | Subject column not in `lmm_meta_cols` ⇒ reject | `core_snpm_lmm:noSubjectColumn` |
 | `group_label`: group column not in `lmm_meta_cols` ⇒ reject | `core_snpm_lmm:noGroupColumn` |
 | `tail` must be `both` (the map is a two-sided t or an F; clusters use the two-sided model p) | `core_snpm_lmm:oneSidedTail` |
-| `group_label`: the effect's variables (split on `:` / `*`) must include `lmm_group`, or a coefficient of it (`<group>_<level>`, e.g. `group_B`), else every permuted map equals the observed one | `core_snpm_lmm:effectNotPermuted` |
+| `group_label`: the effect's variables (split on `:` / `*`) must include `lmm_group` itself, or `<group>_<level>` for a level present in the data (the name `fitlme` gives a reference-coded coefficient, e.g. `group_B`, or inside an interaction `group_B:POWER`), else every permuted map equals the observed one. A different column that merely starts with the group name (`group_size`) does not count; `<group>_<x>` for a level `x` that is not in the data is refused as an unknown effect instead, with the real coefficient names | `core_snpm_lmm:effectNotPermuted` |
+| `lmm_effect` must name a coefficient of the fixed part (`continuous`: exact name, else the first name containing it, as the fit resolves it) or a term of it (`factor`; the order of the variables in an interaction does not matter, `POWER:group` finds `group:POWER`), else every channel would be NaN. Checked from the metadata after the missing-row drop, before the channel setup and any fit; the message lists the available coefficient or term names. Names are those `fitlme` gives the fitted table: columns converted to categorical (subject, group, random-effect grouping variables) have their levels in sorted order (numbers numerically, logical `false`/`true`, so `group_true`), and the first level is the reference; a text column that is not converted keeps its levels in order of first appearance, so the reference is the first value in the file (`cond_post` when `pre` comes first); a logical column that is not converted is named `<var>_1` | `core_snpm_lmm:unknownEffect` |
 | `within_subject`: the DV must be a metadata column (not `POWER`), since the DV is what is shuffled | `core_snpm_lmm:dvNotMetadata` |
-| `within_subject`: the DV must vary within subjects (within-subject share of its variation > 1e-6) | `core_snpm_lmm:dvConstantWithinSubject` |
+| A metadata DV must vary within subjects (within-subject share of its variation > 1e-6): under `within_subject` the shuffle has nothing to permute; under `group_label` every fit would be a perfect fit (analyse subject means with `anova1`/`unpairedT`) | `core_snpm_lmm:dvConstantWithinSubject` |
+| `within_subject`: the effect must not be constant within every subject. Its variables (split on `:` / `*`; `group_B` → `group`) are checked with the within-subject share (a text or categorical column through one indicator per level, largest share); an effect with POWER, or with any variable that varies within subject (`group:time`), runs | `core_snpm_lmm:effectConstantWithinSubject` |
+| `group_label`, metadata DV: a channel with one value on every trial is excluded with "same value in every subject"; with a random POWER slope by subject, a channel constant within each subject is excluded with "predictor constant within each subject: its random slope by subject cannot be estimated" | (excluded channel) |
 | Channel constant within each subject (within-subject share ≤ 1e-6, `snpm_lmm_within_ratio`) when it is the response (`lmm_dv = 'POWER'`) or the `within_subject` predictor: excluded before the fit, reason in the excluded-channel list | (excluded channel) |
 | A fit with no usable residual variation (`snpm_lmm_degenerate`): stat NaN, Wald 0, p NaN; an observed one is listed as "perfect fit, statistic undefined" | (excluded channel) |
 | Every channel excluded (missing data or constant within subject) ⇒ reject | `core_snpm_lmm:noEvaluableChannels` |
-| Trials with a missing model variable are dropped up front | `snpm:lmmMetaNaNRows` (warning) |
+| Trials with a missing model variable (`NaN`, ±`Inf` in a numeric column, empty text, undefined category) are dropped up front | `snpm:lmmMetaNaNRows` (warning) |
 | Fewer than 3 subjects after the drop ⇒ reject | `core_snpm_lmm:tooFewSubjects` |
 | `group_label`: group must be constant within each subject (checked with or without missingness) | `core_snpm_lmm:groupVariesWithinSubject` |
 | `group_label`: at least 2 groups with at least 2 subjects each | `core_snpm_lmm:groupLevelTooFewSubjects` |
@@ -334,12 +347,19 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
 
 ## Permutation p-values and sampling
 
-- **Minimum-bias p everywhere.** All tiers (legacy t-tests/correlation, GLM, LMM) report the
-  permutation p as `(b + 1) / (N + 1)`, where `b` = permutations at least as extreme as the
-  observed statistic and `N` = permutation count. The p is never exactly 0; the smallest
-  reportable value is `~1/(N+1)` (the legacy tiers force the observed labeling into the null,
-  so their floor is `~2/(N+1)`). A result cannot clear α unless `N` is large enough — e.g.
-  `N = 100` floors p near 0.01–0.02, so use `permutations ≥ 5000–10000` for final inference.
+- **Minimum-bias p everywhere, with the observed labelling counted once.** The GLM, LMM and
+  circular tiers draw `N` fresh labellings that do not include the observed one and report
+  `(b + 1) / (N + 1)`, where `b` = permuted maxima at least as extreme as the observed
+  statistic. The legacy t-tests and correlations (including correlation with covariates) put
+  the observed labelling into the null themselves, as row 1 of a Monte-Carlo draw or as one
+  member of an exact enumeration, so they report `b / N` with `N` counting the observed
+  labelling and `b` counting it too; that is the same estimator (since 20 October 2026; before
+  that the legacy tiers added 1 again and counted the observed labelling twice, which was
+  conservative). The p is never exactly 0; the smallest reportable value is `1/(N+1)` for the
+  GLM/LMM/circular tiers and `1/N` for the legacy tiers (`2/N` for a two-sided legacy test with
+  equal groups or sign flips under exact enumeration, because the mirror labelling ties the observed one; the Monte-Carlo floor is `1/N`). A result
+  cannot clear α unless `N` is large enough — e.g. `N = 100` floors p near 0.01–0.02, so use
+  `permutations ≥ 5000–10000` for final inference.
 - **Ties are counted within a relative 10⁻¹²** (since 14 October 2026). `b` counts null values
   `≥ obs − 10⁻¹²·|obs|` (after orienting for the tail: absolute values for two-sided), in one
   helper, `dependencies/snpm_count_at_least.m`, used by the legacy TFCE and single-threshold
@@ -357,8 +377,9 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   test over the full set of labelings (denominator = the true group size); otherwise it samples
   with replacement (Monte-Carlo). This also removes a former hang when more permutations than
   distinct labelings were requested. *Small-n caveat:* an exact test has a coarse p-grid — e.g.
-  unpaired `nGrp = 3, nSubj = 6` → only 20 permutations → minimum p ≈ 0.048 — so significance
-  can be unreachable with very small samples regardless of the requested count.
+  unpaired `nGrp = 3, nSubj = 6` → only 20 permutations → minimum p = 1/20 = 0.05 one-sided and
+  2/20 = 0.10 two-sided — so significance can be unreachable with very small samples
+  regardless of the requested count.
 - **`unpairedT` accepts unequal group sizes.** Group A and group B may contain different numbers
   of subjects. (Before the 2026-08 fix this never worked at all: `core_snpm_analysis` combined an
   n1×1 and an n2×1 logical unconditionally, so any between-subjects t-test with differently-sized

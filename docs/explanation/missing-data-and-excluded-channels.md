@@ -353,7 +353,10 @@ The circular–linear analysis (`circ_corrAngLinear`) follows the same rule for 
 a subject whose measure value is missing (or not finite) is dropped whole, up front, with the
 warning `core_snpm:circMeasureNaNRows`, and is listed in `results_struct.circ.dropped_subjects`,
 the results text and the report; a missing *angle* is deleted at that channel only, on the fixed
-set of remaining subjects, so every permuted map uses the same subjects at each channel.
+set of remaining subjects, so every permuted map uses the same subjects at each channel. A channel
+with fewer than 8 subjects holding both an angle and a measure value is excluded with the reason
+"not estimable: fewer than 8 subjects with both an angle and a measure value"; the analysis is
+paired by subject and has no groups, so the two group analyses' wording does not apply to it.
 
 ## The mixed model: a trial with a missing model variable is dropped
 
@@ -362,7 +365,10 @@ values is the complete-column rule above: a channel is analysed only if it is co
 analysed trial. Missing values in the *model variables* (the dependent variable when it is a
 metadata column rather than the channel power, any column named in the fixed or random formula, the
 subject column, and the group column when the permutation relabels groups) are handled one step
-earlier. A blank, a `NaN`, an empty text cell and an undefined category all count as missing. A
+earlier. A blank, a `NaN`, an infinite value (`Inf` or `-Inf`) in a numeric column, an empty text
+cell and an undefined category all count as missing. An infinite value needs saying: `fitlme`
+does not drop such a trial but refuses the whole fit, so before it was treated as missing a single
+`Inf` in the dependent variable left every channel without a statistic. A
 trial with any of them missing is dropped before anything else is computed, so the observed fit and
 every permuted fit use the same trials. Other columns in the table, such as a trial time the model
 does not use, never drop a row.
@@ -430,14 +436,43 @@ each subject: its effect is between-subject only, which the within-subject shuff
 
 The same check applies to the dependent variable under `within_subject`. If it is constant within
 every subject, the shuffle has nothing to permute and every permuted map would equal the observed
-one, so the run is refused before any fit with `core_snpm_lmm:dvConstantWithinSubject`. Three
+one, so the run is refused before any fit with `core_snpm_lmm:dvConstantWithinSubject`. Under
+`group_label` a metadata dependent variable that is constant within every subject is refused with
+the same identifier: every fit would then be a perfect fit and the whole map would be blank, and
+the question is a subject-level one, for `anova1` or `unpairedT` on subject means.
+
+The effect itself is checked in the same way under `within_subject`. Shuffling the dependent
+variable inside each subject leaves every subject's mean of it in place, so an effect whose
+variables are all constant within each subject (the group, a coefficient such as `group_B`, a
+subject-level covariate such as age) hardly moves under the shuffle: the permuted statistics are
+the observed one plus a jitter whose sign is systematic, not a null. In a simulation with no group
+effect and POWER predicting the response, the false-positive rate at a nominal 0.05 was 0.35. Such
+a run is refused with `core_snpm_lmm:effectConstantWithinSubject`. An effect that involves POWER,
+or any variable that varies within subject (an interaction such as `group:time`), runs.
+
+Under `group_label` with a metadata response and POWER as a predictor, a channel whose POWER is
+constant within each subject is not excluded. Relabelling whole subjects moves each subject's
+response and POWER together, so the channel is a subject-level covariate, as in an analysis of
+covariance on subjects, and its statistic is no more extreme under relabelling than any other
+channel's (simulated false-positive rate nominal for both kinds of channel). Two cases are
+excluded once, before the permutations: a channel with one value on every trial, where POWER is
+collinear with the intercept and `fitlme` refuses every fit (reason "same value in every
+subject"; before, such a channel came back empty without being listed), and, when the random part
+has a POWER slope by subject, a channel constant within each subject, whose slope variance cannot
+be estimated (reason "predictor constant within each subject: its random slope by subject cannot
+be estimated"). Three
 other settings are refused up front for the same kind of reason: a one-sided `tail`
 (`core_snpm_lmm:oneSidedTail`; the map is a two-sided t or an F, so `mixedmodel` takes
 `tail = 'both'` only), a `group_label` effect that does not contain the group column
 (`core_snpm_lmm:effectNotPermuted`; relabelling subjects would leave every permuted map equal to
-the observed one), and a `within_subject` dependent variable that is not a metadata column
+the observed one; the effect counts as containing the group only through the group column itself
+or a coefficient of it, `group_B` for a level `B` present in the data, so an unrelated column such
+as `group_size` is refused), and a `within_subject` dependent variable that is not a metadata column
 (`core_snpm_lmm:dvNotMetadata`; the scheme shuffles the dependent variable, so it cannot be the
-channel value). If the exclusions leave no channel at all, the run stops with
+channel value). An effect that names no coefficient (continuous) or term (factor) of the fixed
+part is refused once the metadata is read, before any fit, with `core_snpm_lmm:unknownEffect` and a
+list of the names that are available; before this check such a run finished with every channel
+NaN. If the exclusions leave no channel at all, the run stops with
 `core_snpm_lmm:noEvaluableChannels`.
 
 ### The backstop at every fit

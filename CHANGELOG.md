@@ -64,6 +64,75 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
 
 ### Fixed
 
+- **Mixed model: an infinite value in a model column is dropped like a missing one**
+  (`mixedmodel`; `dependencies/snpm_lmm_drop_missing_meta.m`). `fitlme` refuses a fit whose
+  response contains `Inf`, and the per-channel catch then left every channel NaN; a trial with
+  ±`Inf` in a numeric model column (dependent variable, a formula column, the subject column, the
+  group column under `group_label`) is now dropped up front with the other missing trials, with the
+  same `snpm:lmmMetaNaNRows` warning and `droppedRows` reporting.
+- **Mixed model: an effect that names nothing in the model is refused** (`mixedmodel`;
+  `core_snpm_lmm.m`, new `dependencies/snpm_lmm_check_effect.m`). An `lmm_effect` that named no
+  coefficient (continuous) or term (factor) of the fixed part produced an all-NaN map without an
+  error. It is now refused from the metadata, before the channel setup and any fit, with
+  `core_snpm_lmm:unknownEffect`, e.g. "Effect 'POWERX' is not a coefficient of the fixed part
+  'POWER + cov' (coefficients: (Intercept), cov, POWER)" or "Effect 'POWER:time' is not a term of
+  the fixed part 'POWER*group' (terms: group, POWER, group:POWER)". A factor term written in
+  another variable order (`POWER:group`) is now resolved to the name `fitlme` uses
+  (`group:POWER`) instead of mapping NaN.
+- **Mixed model: the `group_label` effect check no longer accepts any `<group>_…` name**
+  (`core_snpm_lmm:effectNotPermuted`). A token now names the group only when it is the group column
+  or `<group>_<level>` for a level present in the data (`group_B`, also inside an interaction such
+  as `group_B:POWER`); an unrelated column such as `group_size` was accepted before and is now
+  refused with the same message. A `<group>_<x>` for a level not in the data (`group_C`) is
+  refused as an unknown effect, whose message lists the real coefficients. The names are taken
+  from one ordinary least-squares fit of the fixed part to the metadata prepared exactly as the
+  per-channel fits prepare it (new `dependencies/snpm_lmm_categorize.m`, shared with
+  `snpm_lmm_fit`), so they carry `fitlme`'s reference levels: a text column the fit does not
+  convert keeps its first-appearing level as the reference, and a logical group column is named
+  `group_true`.
+- **Mixed model: a within-subject shuffle on an effect constant within subject is refused**
+  (`mixedmodel`; `core_snpm_lmm.m`, new `dependencies/snpm_lmm_effect_within_share.m`). With
+  `lmm_perm = 'within_subject'` and an effect whose variables are all constant within every
+  subject (the group, `group_B`, a subject-level covariate), the shuffle leaves each subject's mean
+  response in place and gives no null: on simulated data with no group effect and POWER predicting
+  the response, the false-positive rate at a nominal 0.05 was 0.35. Such a run is now refused
+  before any fit with `core_snpm_lmm:effectConstantWithinSubject`. Effects involving POWER or a
+  within-subject variable (`group:time`) run as before.
+- **Mixed model, `group_label` with a metadata response** (`core_snpm_lmm.m`). A metadata
+  response constant within every subject is refused (`core_snpm_lmm:dvConstantWithinSubject`,
+  new message) instead of producing a map of perfect fits. A channel with one value on every trial
+  is now excluded and listed ("same value in every subject"); before, `fitlme` refused its fit
+  (rank-deficient fixed design) at every labelling and the channel came back NaN without being
+  listed. With a random POWER slope by subject, channels constant within each subject are
+  excluded ("predictor constant within each subject: its random slope by subject cannot be
+  estimated"). Without such a slope those channels are kept, as before: under subject
+  relabelling they are a valid subject-level covariate.
+- **Mixed model: the zero-variance refit trigger is unit-free** (`dependencies/snpm_lmm_fitlme.m`).
+  Each random-effect standard deviation is now multiplied by the root mean square of the design
+  column it multiplies before it is compared with 0.001 times the residual SD, so the decision no
+  longer depends on the units of a random-slope predictor (a slope on x and on 1000·x used to
+  decide differently). An intercept has scale 1: intercept-only models are bit-identical (1600
+  fits over the `lmm_boundary_stall_rate` designs compared with the previous code, 0 differ), and
+  `scripts/lmm_boundary_stall_rate.m` prints the same table. The refit is still kept only on a
+  log-likelihood gain above 1e-6 (absolute, deliberately: a log-likelihood difference does not
+  depend on units).
+- **Circular–linear exclusion reason named groups** (`circ_corrAngLinear`; `core_snpm_circ.m`).
+  The analysis is paired by subject, but its excluded channels carried the group analyses' reason
+  "not estimable: fewer than 8 subjects per group, incomplete column under a per-channel
+  covariate, or log(count) collinear with group". It now reads "not estimable: fewer than 8
+  subjects with both an angle and a measure value". The two group analyses are unchanged.
+- **Legacy permutation p counted the observed labelling twice** (`pairedT`, `unpairedT`,
+  `onesampleT`, `correlationP`, `correlationS`, including correlation with covariates;
+  `snpm_single_threshold_with_TFCE.m`, `snpm_cluster_analysis.m`). The observed labelling is
+  already one of the N labellings these engines evaluate (row 1 of a Monte-Carlo draw, or a
+  member of an exact enumeration) and is counted in b, yet the p added 1 to numerator and
+  denominator again. The max-statistic, TFCE and cluster p are now b/N, the exact permutation p
+  under full enumeration and the Phipson & Smyth estimator under Monte-Carlo. Every legacy
+  corrected p falls by less than 1/(N + 1): negligible at 10000 permutations, decisive at small
+  n with exact enumeration (paired, 5 subjects, one-sided: smallest p 1/32 = 0.031, was
+  2/33 = 0.061, so significance was unreachable). The GLM, circular and mixed-model tiers draw
+  labellings without the observed one and keep (b + 1)/(N + 1). Also corrects the documented
+  3-versus-3 minimum p (1/20 one-sided, 2/20 two-sided, not "about 0.048").
 - **Mixed model: settings the permutation test cannot handle are refused up front**
   (`mixedmodel`; `core_snpm_lmm.m`). Affects `mixedmodel` runs with any of three settings, which
   used to run and return a map that could not be read as a test. (1) `tail` `left` or `right`:

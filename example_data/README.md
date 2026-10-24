@@ -7,8 +7,8 @@ All files use the **256-channel EGI montage** (columns `E1`..`E256`), so set **R
 "EGI 256 (HydroCel)"** (the legacy label **"164 channels"** resolves to the same montage) and
 **Data Type = "absolute"**. A neighbour cluster of **17 channels** around **E129** carries the
 planted effect; everywhere else is noise. Use **Permutations ~ 500-1000** for a quick check
-(raise for real runs — final inference wants 5000-10000, because the permutation p is
-`(b+1)/(N+1)`). Each analysis should flag a significant cluster near E129.
+(raise for real runs — final inference wants 5000-10000, because the smallest permutation p
+is about 1/N). Each analysis should flag a significant cluster near E129.
 
 These files are synthetic. They exist so you can see an analysis run end to end and check that
 it recovers an effect that was deliberately planted; they are not sleep data and carry no

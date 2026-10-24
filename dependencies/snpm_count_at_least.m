@@ -10,7 +10,9 @@ function count = snpm_count_at_least(null, obs)
 %   count : same size as obs; count(k) = #{null >= obs(k) - TIE_RTOL*|obs(k)|}.
 %           The slack applies only where obs(k) is finite.
 %
-% Why (round-4 spec, approved 2026-10-14): the (b+1)/(N+1) estimator counts
+% Why (round-4 spec, approved 2026-10-14): the permutation p ((b+1)/(N+1) in
+% the GLM/LMM/circular tiers; b/N in the legacy tier, where the observed
+% labelling is already in the null, ruling D 2026-10-20) counts
 % null values >= observed in exact arithmetic. In the GLM, LMM and circular
 % tiers the observed statistic is computed on Y while an identity or
 % equivalent labelling is computed on Zfit + R(P): equal mathematically,

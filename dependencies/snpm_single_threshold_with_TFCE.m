@@ -476,7 +476,7 @@ switch compstring
         % per-channel corr() loop: a one-ulp difference between the observed
         % statistic and its own image under the identity relabelling can flip a
         % >= comparison against the max null, changing b by one and moving p by
-        % 1/(N+1) -- 0.005 at 200 permutations, enough to cross 0.05. The
+        % 1/N -- 0.005 at 200 permutations, enough to cross 0.05. The
         % uncorrected parametric p still comes from corr() per channel, which is
         % a separate quantity and not scored against any permutation null.
          if isempty(fl)
@@ -581,7 +581,7 @@ switch compstring
             % relabelling reproduces it bitwise and max-statistic ties are
             % exact. Do not replace this with corr(...,'Type','Spearman'): one
             % ulp of disagreement flips a >= against the max null and moves p by
-            % 1/(N+1). The uncorrected parametric p below is a separate quantity
+            % 1/N. The uncorrected parametric p below is a separate quantity
             % that is never scored against the null, so corr() is fine there.
              T.real_T = snpm_corr_columns(rank_x, rank_y);
              T.real_T(~evaluable_col) = NaN;
@@ -629,17 +629,25 @@ p.corrected=ones(1,number_of_inputs);
 p.corrected(isnan(T.real_T))=NaN;
 for i = 1:length(T.real_T)
     if isnan(T.real_T(i)); continue; end
-    % Minimum-bias FWE p (Nichols & Holmes 2001; Phipson & Smyth 2010):
-    %   p = (#{max-null >= obs} + 1)/(N + 1)
-    % applied uniformly to every permutation tier so p is never zero and the
-    % observed labelling counts as one of the N permutations.
+    % FWE p with the observed labelling counted ONCE (method spec 2026-10-20,
+    % ruling D; Nichols & Holmes 2001; Phipson & Smyth 2010):
+    %   p = #{max-null >= obs}/N
+    % The observed (identity) labelling is already one of the N rows of the
+    % null -- row 1 of a Monte-Carlo draw, or present in an exact enumeration
+    % -- and it is counted in b, so b >= 1 and p is never zero. Under exact
+    % enumeration b/N is the exact permutation p; under Monte-Carlo it equals
+    % (b'+1)/((N-1)+1), b' counting the N-1 random draws, which is the
+    % Phipson & Smyth estimator. Do NOT add 1 to numerator and denominator
+    % here: that counts the identity twice (the pre-2026-10-20 formula). The
+    % GLM, circular and mixed-model tiers draw N fresh labellings without the
+    % identity and correctly keep (b+1)/(N+1).
     switch tail
         case 'both'
             obs = abs(T.real_T(i));
         otherwise
             obs = T.real_T(i);
     end
-    p.corrected(i) = (snpm_count_at_least(T.tMax, obs) + 1)/(possible_permutations + 1);
+    p.corrected(i) = snpm_count_at_least(T.tMax, obs)/possible_permutations;
 end
 
  % single threshold TFCE
@@ -655,7 +663,7 @@ for i = 1:length(T.real_TFCE)
         otherwise
             obs = T.real_TFCE(i);
     end
-    p.correctedTFCE(i) = (snpm_count_at_least(T.tMaxTFCE, obs) + 1)/(possible_permutations + 1);
+    p.correctedTFCE(i) = snpm_count_at_least(T.tMaxTFCE, obs)/possible_permutations;
 end
 
 % Rule 3: an observed t that is 0 by definition is reported as undefined.

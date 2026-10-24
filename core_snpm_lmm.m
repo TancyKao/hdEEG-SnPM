@@ -64,18 +64,12 @@ function [results_struct, results_text] = core_snpm_lmm(params)
              'an F, and clusters are formed on the two-sided model p; a one-sided TFCE null of ' ...
              'signed maxima would not match it.'], char(tail));
     end
+    eff_spec = struct('dv', params.lmm_dv, 'fixed', params.lmm_fixed, 'effect', params.lmm_effect, ...
+        'effect_type', params.lmm_effect_type, 'perm', perm_scheme, 'group', grp_col);
     if strcmpi(perm_scheme, 'group_label')
-        % A token names the group if it IS the group column or a coefficient of
-        % it ('group_B': column name + '_' + level), as snpm_lmm_fit resolves names.
-        effect_vars = strtrim(regexp(char(params.lmm_effect), '[:*]', 'split'));
-        if ~any(strcmp(effect_vars, grp_col) | startsWith(effect_vars, [grp_col '_']))
-            error('core_snpm_lmm:effectNotPermuted', ...
-                ['The group_label scheme relabels subjects between levels of ''%s'', but ' ...
-                 'the effect ''%s'' does not contain ''%s'', so every permuted map ' ...
-                 'would equal the observed one. Use within_subject for an effect that varies ' ...
-                 'within subjects, or test an effect of the group column.'], ...
-                grp_col, char(params.lmm_effect), grp_col);
-        end
+        % coarse form here (the group levels are not known yet); the exact
+        % '<group>_<level>' rule runs after the file is read, below
+        snpm_lmm_check_effect([], eff_spec);
     else
         dv = char(params.lmm_dv);
         if strcmp(dv, 'POWER') || ~ismember(dv, params.lmm_meta_cols)
@@ -121,16 +115,55 @@ function [results_struct, results_text] = core_snpm_lmm(params)
 
     % within_subject shuffles the DV inside each subject: a DV that is constant
     % within every subject leaves nothing to permute (every permuted map would
-    % equal the observed one). Labelling-independent, so decided once, here.
-    if strcmpi(perm_scheme, 'within_subject')
+    % equal the observed one). Under group_label a metadata DV constant within
+    % every subject makes every fit a perfect fit (the backstop would blank the
+    % whole map): it is a subject-level analysis. Labelling-independent, so
+    % decided once, here.
+    if ~strcmp(char(params.lmm_dv), 'POWER') && ismember(char(params.lmm_dv), meta.Properties.VariableNames)
         w_dv = snpm_lmm_within_ratio(meta.(params.lmm_dv), meta.(subj_col));
-        if w_dv <= 1e-6
+        if w_dv <= 1e-6 && strcmpi(perm_scheme, 'within_subject')
             error('core_snpm_lmm:dvConstantWithinSubject', ...
                 ['The within_subject scheme shuffles ''%s'' within each subject, but it is ' ...
                  'constant within each subject (within-subject share of its variation %.3g, ' ...
                  'threshold 1e-06), so the within-subject shuffle has nothing to permute. ' ...
                  'Use group_label for a between-group effect, or analyse subject means.'], ...
                 char(params.lmm_dv), w_dv);
+        elseif w_dv <= 1e-6
+            error('core_snpm_lmm:dvConstantWithinSubject', ...
+                ['The response ''%s'' is constant within each subject (within-subject share of ' ...
+                 'its variation %.3g, threshold 1e-06), so every mixed-model fit is a perfect fit ' ...
+                 'and no statistic is defined. Analyse subject means with anova1/unpairedT.'], ...
+                char(params.lmm_dv), w_dv);
+        end
+    end
+
+    % The effect must be testable (group_label: an actual level of the group
+    % column) and must name a coefficient/term of the fixed part; otherwise
+    % every channel would come back NaN. Decided from the metadata alone, before
+    % the channel setup and any fit. A factor term written in another variable
+    % order ('POWER:group') is returned as fitlme names it ('group:POWER').
+    eff_spec.categorical = lmm_categorical_vars(meta, subj_col, grp_col, params.lmm_random);
+    effect_as_given = char(params.lmm_effect);
+    params.lmm_effect = snpm_lmm_check_effect(meta, eff_spec);
+
+    % within_subject shuffles the DV inside each subject, which leaves every
+    % subject's mean of it in place: an effect whose variables are all constant
+    % within each subject (group, group_B, a subject-level covariate) barely
+    % moves under the shuffle, and the permuted statistics are the observed one
+    % plus a systematic jitter -- there is no null for it (measured false-positive
+    % rate 0.35 at a nominal 0.05 when POWER predicts the response). An effect
+    % with POWER, or with any variable that varies within subject (group:time),
+    % runs. See snpm_lmm_effect_within_share.
+    if strcmpi(perm_scheme, 'within_subject')
+        w_eff = snpm_lmm_effect_within_share(meta, effect_as_given, subj_col);
+        if w_eff <= 1e-6
+            error('core_snpm_lmm:effectConstantWithinSubject', ...
+                ['The within_subject scheme shuffles ''%s'' within each subject, but the effect ' ...
+                 '''%s'' is constant within each subject (largest within-subject share of ' ...
+                 'variation among its variables %.3g, threshold 1e-06), so the shuffle leaves the ' ...
+                 'effect in place and gives no null for it. Use group_label for a between-group ' ...
+                 'effect, or test an effect that varies within subjects.'], ...
+                char(params.lmm_dv), effect_as_given, w_eff);
         end
     end
 
@@ -265,6 +298,27 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     elseif strcmpi(spec.perm, 'within_subject')
         excluded_channels = snpm_excluded_add(excluded_channels, const_ch, lmm_reason_const_predictor(), chanlocs);
         evaluable = evaluable & ~const_ch;
+    else
+        % group_label with a metadata response and POWER as predictor. Relabelling
+        % whole subjects moves each subject's response and POWER together, so a
+        % POWER constant within subject is a subject-level covariate and the
+        % channel is KEPT (measured null false-positive rate nominal). Two
+        % exceptions, both labelling-independent and decided once:
+        %   - a channel with one value on every trial: POWER is collinear with
+        %     the intercept and fitlme refuses the fit ("must be of full column
+        %     rank") at every labelling, which used to leave it NaN unlisted;
+        %   - a random slope on POWER by subject: its variance cannot be
+        %     estimated where POWER is constant within subject (the fit sits on
+        %     the variance boundary at every labelling).
+        flat_ch = false(1, numel(evaluable));
+        flat_ch(evaluable) = lmm_flat_columns(power(:, evaluable));
+        excluded_channels = snpm_excluded_add(excluded_channels, flat_ch, lmm_reason_flat(), chanlocs);
+        evaluable = evaluable & ~flat_ch;
+        if lmm_power_slope_by_subject(spec.random, subj_col)
+            slope_ch = evaluable & w_ch <= 1e-6;
+            excluded_channels = snpm_excluded_add(excluded_channels, slope_ch, lmm_reason_const_slope(), chanlocs);
+            evaluable = evaluable & ~slope_ch;
+        end
     end
     if ~any(evaluable)
         error('core_snpm_lmm:noEvaluableChannels', ...
@@ -512,6 +566,34 @@ end
 function s = lmm_reason_const_predictor()
     s = ['predictor constant within each subject: its effect is between-subject only, which the ' ...
          'within-subject shuffle cannot test (use group_label or regression on subject means)'];
+end
+
+function s = lmm_reason_const_slope()
+    s = 'predictor constant within each subject: its random slope by subject cannot be estimated';
+end
+
+function s = lmm_reason_flat()
+    s = 'same value in every subject';
+end
+
+function tf = lmm_flat_columns(V)
+% one value on every row: total sum of squares <= 1e-20 x uncentred (the flat
+% test of snpm_lmm_within_ratio)
+    tf = sum((V - mean(V, 1)).^2, 1) <= 1e-20 * sum(V.^2, 1);
+end
+
+function tf = lmm_power_slope_by_subject(random_formula, subj_col)
+% true when the random part has a term (... POWER ... | <subject>), e.g.
+% (POWER|Subject) or (1 + POWER|Subject)
+    tf = false;
+    tok = regexp(char(random_formula), '\(([^|()]*)\|\s*(\w+)\s*\)', 'tokens');
+    for i = 1:numel(tok)
+        if strcmp(tok{i}{2}, subj_col) && ...
+                any(strcmp(regexp(tok{i}{1}, '[A-Za-z]\w*', 'match'), 'POWER'))
+            tf = true;
+            return
+        end
+    end
 end
 
 function txt = lmm_excluded_text(excl)

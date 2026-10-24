@@ -865,7 +865,7 @@ function E = legacy_engine(aux, rs, name)
         if size(E.cluster_null_sorted, 2) > 1
             col = find(rs.Clusters(k).threshold == E.cluster_thresholds);
         end
-        pk = (sum(E.cluster_null_sorted(:, col) >= numel(rs.Clusters(k).channels)) + 1) / (N + 1);
+        pk = sum(E.cluster_null_sorted(:, col) >= numel(rs.Clusters(k).channels)) / N;   % legacy: identity is one of the N (ruling D)
         assert(isequal(pk, rs.Clusters(k).p), 'export_parity:clusterNullMismatch', ...
             '%s: recorded cluster null does not reproduce Clusters(%d).p.', name, k);
     end
@@ -1297,7 +1297,11 @@ function [M, C] = circ_capture(P, rs, plog, aux, name)
     reason = repmat({''}, 1, nCh);
     for k = find(~ev)
         r = {};
-        if below(k),      r{end+1} = 'fewer than 8 subjects per group'; end %#ok<AGROW>
+        if below(k) && is_grp
+            r{end+1} = 'fewer than 8 subjects per group'; %#ok<AGROW>
+        elseif below(k)
+            r{end+1} = 'fewer than 8 subjects with both an angle and a measure value'; %#ok<AGROW>
+        end
         if collinear(k),  r{end+1} = 'log(count) collinear with group'; end %#ok<AGROW>
         if incomplete(k), r{end+1} = 'incomplete column under the per-channel covariate'; end %#ok<AGROW>
         reason{k} = strjoin(r, '; ');
@@ -2095,7 +2099,9 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
     w('  **analysed** channel order `montage.labels`, not the columns of the input file.');
     w('- `montage.data_columns` maps analysed channel k to column `data_columns(k)` of `inputs.*.values`.');
     w('- A channel that was not tested is `NaN` in the statistic and p maps, never 0 or 1.');
-    w('- Corrected p-values are `(b + 1) / (N + 1)`, b = number of null maxima >= the observed value, N = the number of');
+    w('- Corrected p-values: legacy tier `b / N`, where the observed labelling is one of the N (row 1 of a Monte-Carlo draw or');
+    w('  a member of an exact enumeration) and b counts it; GLM, circular and mixed-model tiers `(b + 1) / (N + 1)`, their N');
+    w('  draws excluding the observed labelling. b = number of null maxima >= the observed value, N = the number of');
     w('  permutations actually run (`n_draws`), which is smaller than requested on an exact-enumeration branch.');
     w('- TFCE: E = 0.5, H = 2, step dh = 0.1 (`ClusterEnhancement`); alpha = 0.05.');
     w('- Text read from CSV by Python must be parsed round-trip exact (`pandas.read_csv(..., float_precision="round_trip")`)');
@@ -2411,7 +2417,7 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
     w('| `Clusters` | struct array | cluster-EXTENT test. Tail both: clusters of stat < -threshold are listed first, then stat > +threshold; a threshold with no cluster contributes one entry with empty `channels` and `p` = 1. |');
     w('| `Clusters(c).channels` | 1 x k, 1-based | members, analysed order |');
     w('| `Clusters(c).threshold` | scalar | signed cluster-forming threshold (t: `tinv(1-alpha/2, df)`; r: 0.50/0.40/0.35/... by n) |');
-    w('| `Clusters(c).p` | scalar | `(#{null max cluster SIZE >= size} + 1)/(N + 1)`; the cluster statistic is the number of channels |');
+    w('| `Clusters(c).p` | scalar | `#{null max cluster SIZE >= size}/N` (identity labelling included in N and counted); the cluster statistic is the number of channels |');
     w('| `Clusters(c).permutations` | scalar | N |');
     w('| `uncorrsigch`, `correctTFCEsigch`, `SnPMsigch` | 1-based index vectors | channels with p.real <= alpha, p.correctedTFCE <= alpha, and members of clusters with p <= alpha |');
     w('| `alpha` | scalar | 0.05 |');

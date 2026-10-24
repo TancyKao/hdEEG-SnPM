@@ -70,20 +70,9 @@ function [stat, wald, p_model, degenerate] = snpm_lmm_fit(power, meta, spec, eva
     effect      = spec.effect;
     effect_type = lower(spec.effect_type);
 
-    if isfield(spec, 'categorical') && ~isempty(spec.categorical)
-        cat_vars = spec.categorical;
-    else
-        cat_vars = intersect({'Subject', 'group'}, meta.Properties.VariableNames);
-    end
-
-    % Force the requested columns to categorical once, up front.
-    base_meta = meta;
-    for v = 1:numel(cat_vars)
-        cv = cat_vars{v};
-        if ismember(cv, base_meta.Properties.VariableNames) && ~iscategorical(base_meta.(cv))
-            base_meta.(cv) = categorical(base_meta.(cv));
-        end
-    end
+    % Force the requested columns to categorical once, up front (shared with
+    % snpm_lmm_check_effect, so the coefficient names it checks are these).
+    base_meta = snpm_lmm_categorize(meta, spec);
 
     formula = sprintf('%s ~ %s + %s', dv, fixed, random);
 

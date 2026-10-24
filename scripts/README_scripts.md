@@ -190,11 +190,14 @@ test on the rows of its two levels. The rules are in
 - One analysis per job; fan out parameters/bands as an array job (each a separate
   `matlab -batch` call with a different `CONFIG`), or copy a script per cell.
 - `permutations=1000` is the default; raise for final inference. Permutation p is
-  `(b+1)/(N+1)` across all tiers, so the smallest reportable p is `~1/(N+1)` — a real effect
-  can't clear α unless `permutations` is large enough (≥5000–10000). The legacy
-  `unpairedT`/correlation paths switch to an **exact** test when `permutations ≥` the number of
-  distinct labelings (`nchoosek(nSubj,nGrp)` / `nSubj!`); very small samples then hit a coarse
-  p-grid (e.g. unpaired nGrp=3, nSubj=6 → 20 perms → min p ≈ 0.048).
+  `(b+1)/(N+1)` in the GLM, LMM and circular tiers, and `b/N` in the legacy t-test/correlation
+  tier, where the observed labelling is already one of the `N` labellings and is counted in
+  `b` (the same estimator, counting the observed labelling once). The smallest reportable p is
+  about `1/N` — a real effect can't clear α unless `permutations` is large enough
+  (≥5000–10000). The legacy `unpairedT`/correlation paths switch to an **exact** test when
+  `permutations ≥` the number of distinct labelings (`nchoosek(nSubj,nGrp)` / `nSubj!`); very
+  small samples then hit a coarse p-grid (e.g. unpaired nGrp=3, nSubj=6 → 20 perms → min p
+  1/20 = 0.05 one-sided, 2/20 = 0.10 two-sided).
 - `channels` now selects a **recording system** (label-based, count-agnostic): `'egi'` =
   EGI 256 / HydroCel (egi257 178-scalp; legacy `'164 channels'`/`'178 channels'` still resolve
   here) and `'compu'` = Compumedics 257 / Neuvo (compu257 249-scalp). The data file's column

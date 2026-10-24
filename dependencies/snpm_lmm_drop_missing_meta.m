@@ -14,7 +14,11 @@ function [meta, power, dropped] = snpm_lmm_drop_missing_meta(meta, power, spec)
 %   in spec.fixed and spec.random, spec.subject, and spec.group when
 %   spec.perm = 'group_label'. Other metadata columns (e.g. a time column the
 %   model does not use) never drop a row.
-% "Missing" = ismissing: NaN, '' / <missing> text, <undefined> categorical.
+% "Missing" = ismissing: NaN, '' / <missing> text, <undefined> categorical;
+% plus +-Inf in a numeric column. fitlme does not delete an Inf row: it
+% refuses the fit ("NaN or Inf values are not allowed in y" for the response),
+% which snpm_lmm_fit catches, so a single Inf left every channel NaN. An Inf
+% is therefore treated as missing and dropped the same way as a NaN.
 %
 % WHY. fitlme silently deletes rows with a missing model variable, so before
 % this rule every channel was fitted on fewer rows than n_trials reported, and
@@ -67,6 +71,10 @@ function [meta, power, dropped] = snpm_lmm_drop_missing_meta(meta, power, spec)
     M = intersect(vn, M, 'stable');          % meta columns only, table order
 
     miss = ismissing(meta(:, M));            % n x k
+    for k = 1:numel(M)                       % +-Inf in a numeric model column
+        x = meta.(M{k});
+        if isnumeric(x), miss(:, k) = miss(:, k) | any(isinf(x), 2); end
+    end
     drop = any(miss, 2);
     n_in = height(meta);
     subj_before = unique_ids(meta.(subj_col)(~ismissing(meta.(subj_col))));

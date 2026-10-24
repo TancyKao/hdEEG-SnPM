@@ -485,7 +485,7 @@ switch compstring
         % replace this with a per-channel corr() loop: a one-ulp difference
         % between the observed statistic and its own image under the identity
         % relabelling flips a >= against the max-statistic null, changing b by
-        % one and moving p by 1/(N+1) -- 0.005 at 200 permutations.
+        % one and moving p by 1/N -- 0.005 at 200 permutations.
         if isempty(fl)
             REALSTATS.tstat = snpm_corr_columns(data_x, data_y);
         else
@@ -578,9 +578,9 @@ switch compstring
         % Same rank_x/rank_y, same snpm_corr_columns call -- not a separate
         % "mathematically equivalent" routine. Do not "simplify" this into a
         % corr(...,'Type','Spearman') loop. With a max-statistic null and the
-        % (b+1)/(N+1) estimator a one-ulp difference between the observed
+        % b/N estimator a one-ulp difference between the observed
         % statistic and its own image under the identity relabelling can flip a
-        % >= comparison, change b by one, and move p by 1/(N+1) -- 0.005 at 200
+        % >= comparison, change b by one, and move p by 1/N -- 0.005 at 200
         % permutations, enough to cross 0.05.
         REALSTATS.tstat = snpm_corr_columns(rank_x, rank_y);
         REALSTATS.tstat(~evaluable_col) = NaN;
@@ -638,15 +638,21 @@ for ti = 1:length(thresholds)
 end
 
 % determine p-value based on
-% Minimum-bias FWE p (Nichols & Holmes 2001; Phipson & Smyth 2010):
-%   p = (#{max-null cluster size >= observed cluster size} + 1)/(N + 1)
-% applied uniformly to every permutation tier so p is never zero. An empty
-% (no-channel) cluster has size 0, so every null is >= it and p = 1.
+% FWE p with the observed labelling counted ONCE (method spec 2026-10-20,
+% ruling D; Nichols & Holmes 2001; Phipson & Smyth 2010):
+%   p = #{max-null cluster size >= observed cluster size}/N
+% The observed (identity) labelling is one of the N rows of the null (row 1 of
+% a Monte-Carlo draw, or inside an exact enumeration) and its maximum cluster
+% is found by the same snpm_find_clusters_graphalgs call on the same map, so it
+% is >= every observed cluster: b >= 1 and p is never zero. Do NOT add 1 to
+% numerator and denominator -- that counts the identity twice. Cluster sizes
+% are integers, so the plain >= is exact (no tie tolerance needed). An empty
+% (no-channel) cluster has size 0, so every null is >= it and p = N/N = 1.
 if strcmp(tail,'both') && length(threshold) == 1
     max_cluster_sizes =  sort(max(max_cluster_sizes,[],2),1,'descend');
     for cli = 1 : length(Clusters)
         potential_clusters=Clusters(cli).channels;
-        Clusters(cli).p = (sum(max_cluster_sizes >= length(potential_clusters)) + 1)/(possible_permutations + 1);
+        Clusters(cli).p = sum(max_cluster_sizes >= length(potential_clusters))/possible_permutations;
         Clusters(cli).permutations=possible_permutations;
     end
 
@@ -655,7 +661,7 @@ else
     for cli = 1 : length(Clusters)
         potential_clusters=Clusters(cli).channels;
         ti = Clusters(cli).threshold==thresholds;
-        Clusters(cli).p = (sum(max_cluster_sizes(:,ti) >= length(potential_clusters)) + 1)/(possible_permutations + 1);
+        Clusters(cli).p = sum(max_cluster_sizes(:,ti) >= length(potential_clusters))/possible_permutations;
         Clusters(cli).permutations=possible_permutations;
     end
 

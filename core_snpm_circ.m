@@ -681,10 +681,19 @@ function excl = excluded_info(evaluable, chanlocs, context_label)
         if isempty(lab), lab = sprintf('#%d', idx(k)); end
         labels{k} = lab;
     end
+    % context_label is the comparison key. circ_corrAngLinear is paired by
+    % subject (no groups, no count covariate): its only exclusion route is the
+    % >=8 gate on subjects with both an angle and a measure value at the channel.
+    % Reason strings are shared with the Python port; do not reword.
+    if strcmp(context_label, 'circ_corrAngLinear')
+        reason = ['not estimable: fewer than 8 subjects with both an angle and a ' ...
+                  'measure value'];
+    else
+        reason = ['not estimable: fewer than 8 subjects per group, incomplete ' ...
+                  'column under a per-channel covariate, or log(count) collinear with group'];
+    end
     excl = struct('n', numel(idx), 'n_channels', numel(evaluable), ...
-        'index', idx, 'labels', {labels}, 'context', context_label, ...
-        'reason', ['not estimable: fewer than 8 subjects per group, incomplete ' ...
-                   'column under a per-channel covariate, or log(count) collinear with group']);
+        'index', idx, 'labels', {labels}, 'context', context_label, 'reason', reason);
 end
 
 function txt = circ_text(params, comparison, imp, cov, desc, excl, unc, tfce, ...

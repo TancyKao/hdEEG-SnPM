@@ -64,6 +64,22 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
 
 ### Fixed
 
+- **Event bridge: density is divided by the analysed time of the reject set the detection
+  stored** (`db_to_group_table.py`). On a TurtleWave 4.3 database the bridge read only the
+  analysed time stored with both artefacts and arousals removed, but TurtleWave 4.3 detection
+  stored its time with artefacts removed and arousals kept, so the bridge found no denominator
+  and stopped. On a newer database storing several reject sets it warned and fell back to
+  TurtleWave's default set, which could differ from the set the events were detected under. The
+  bridge now reads the stored set from the database (the `reject_types` column, or the two
+  yes/no columns of 4.3 mapped to TurtleWave's key, `Artefact` for artefacts removed and
+  arousals kept) and uses it when it is the only one. Several stored sets are refused unless the
+  new `--reject-types` option names one; a named set the database does not store is refused, as
+  is an analysed-time table with no usable time, and so is a run whose recordings would use
+  different sets, with a list of which recording used which. `recordings.csv` gains a
+  `reject_types` column. This matches the hdEEG-SnPM Python reader. **Who is affected:**
+  anyone whose TurtleWave 4.3 databases were refused by the bridge, and anyone who ran it on a
+  database storing more than one reject set. **What to re-run:** the bridge and any density
+  analysis built from such databases. Amplitude and duration do not change.
 - **Mixed model: an infinite value in a model column is dropped like a missing one**
   (`mixedmodel`; `dependencies/snpm_lmm_drop_missing_meta.m`). `fitlme` refuses a fit whose
   response contains `Inf`, and the per-channel catch then left every channel NaN; a trial with

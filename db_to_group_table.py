@@ -14,10 +14,19 @@ wonambi/*_clean_rebuilt.xml staging file), this, per event x frequency band:
   - takes per-channel COUNT, mean peak2peak amplitude and mean duration of the
     selected run's events;
   - computes density = count / analysed minutes, where analysed minutes is the
-    artefact-free time TurtleWave stored in its analysed_time table (TurtleWave
-    >= 4.3) for the stages the selected run actually SEARCHED, intersected with
-    --stages. The searched stages are recovered as TurtleWave's own density code
-    does: processing_status.stage for the run's method and band, else
+    time TurtleWave stored in its analysed_time table (TurtleWave >= 4.3) for the
+    stages the selected run actually SEARCHED, intersected with --stages, under the
+    reject set the detection stored. That set is read from the database, never
+    assumed: the reject_types column (TurtleWave >= 4.4), else the reject_artifacts
+    and reject_arousals flags of TurtleWave 4.3 ((1, 0) is 'Artefact', artefacts
+    removed and arousals kept, which is what 4.3 detection stored; (1, 1) is
+    'Arousal,Artefact'). A database storing one set is divided by that set's time. A
+    database storing several is refused unless --reject-types names one, and a named
+    set the database does not store is refused. Recordings whose densities would use
+    different reject sets are refused, listing which recording used which set. A
+    stored reject_types text that is not in TurtleWave's sorted key spelling was not
+    written by TurtleWave and is refused. The searched stages are recovered as
+    TurtleWave's own density code does: processing_status.stage for the run's method and band, else
     detection_runs.stages, joint tokens expanded to their stages. A run that
     searched only part of --stages (slow waves detected in NREM3 only, read with
     the default NREM2,NREM3) is divided by the time of the stages it searched, and
@@ -57,8 +66,12 @@ Output, in OUT:
   recordings.csv                       one row per subject x band: Subject, band,
                                        density_denominator (analysed_time|hypnogram),
                                        denominator_minutes, stages ('+'-joined),
+                                       reject_types (the reject set of the analysed
+                                       time, TurtleWave's sorted comma-joined key,
+                                       'none' for the set that rejects nothing; blank
+                                       for a hypnogram denominator),
                                        interpolated_channels (space-separated, per
-                                       subject, repeated on each band row). The three
+                                       subject, repeated on each band row). The four
                                        denominator columns are blank for a band never
                                        detected in that subject.
 
@@ -71,6 +84,7 @@ planned TurtleWave outlier-removal / CSV-removal. Uses only the Python stdlib.
 Usage:  python3 db_to_group_table.py <DATA_dir> <OUT_dir> [--group LABEL]
                                      [--stages NREM2,NREM3] [--bands LABEL,...]
                                      [--allow-hypnogram-denominator]
+                                     [--reject-types SET]
 
 --group is the cohort label written into subjects.csv. It defaults to 'group1',
 which is only ever correct for a single-cohort run -- pass it explicitly when you
@@ -83,6 +97,10 @@ by the time of the stages it searched (see above).
 --allow-hypnogram-denominator lets databases without analysed_time (TurtleWave
 < 4.3) through, with density over raw hypnogram minutes. Off by default. Every
 recording in the run must then lack analysed_time; a mix is refused.
+--reject-types names the stored reject set whose analysed time divides density
+("Artefact", "Artefact,Arousal"; order and spaces do not matter; "" or "none"
+rejects nothing).
+Needed only when a database stores more than one set; every database must store it.
 """
 import os, sys, re, csv, sqlite3, glob, argparse
 from pathlib import Path
@@ -97,7 +115,6 @@ PARAMS = ['density', 'amplitude', 'duration']
 DEFAULT_STAGES = ('NREM2', 'NREM3')
 NREM_STAGES = set(DEFAULT_STAGES)              # kept for callers of stage_minutes()
 STAGE_VOCAB = ('NREM1', 'NREM2', 'NREM3', 'Wake', 'REM')   # TurtleWave's stage vocabulary
-DEFAULT_REJECT_KEY = 'Arousal,Artefact,Move'   # TurtleWave's default reject set, as stored
 HYPNO_FLAG = '--allow-hypnogram-denominator'
 
 
@@ -184,33 +201,75 @@ def interpolated_channels(con):
     return list(dict.fromkeys(found))
 
 
-def analysed_seconds(con, db_path):
-    """{stage: artefact-free analysed seconds} from TurtleWave's analysed_time,
-    or None when the database predates it (no table). Same subject and reject-set
-    resolution as TurtleWave's event_density with nothing specified."""
+def reject_key(reject_types):
+    """A reject set as TurtleWave keys it (utils.reject_key): names stripped, sorted and
+    joined by commas, 'Arousal,Artefact'; '' is the set that rejects nothing. Takes text
+    ('Artefact, Arousal') or a list of names."""
+    names = reject_types.split(',') if isinstance(reject_types, str) else list(reject_types)
+    return ','.join(sorted({str(n).strip() for n in names if str(n).strip()}))
+
+
+def reject_label(key):
+    return key.replace(',', ', ') if key else 'nothing rejected'
+
+
+def analysed_seconds(con, db_path, reject_types=None):
+    """({stage: analysed seconds}, reject key) from TurtleWave's analysed_time, or None
+    when the database predates it (no table).
+
+    The reject set is the one the detection stored, never a library default: from the
+    reject_types column (TurtleWave >= 4.4), else from the reject_artifacts /
+    reject_arousals flags of TurtleWave 4.3 ((1, 0) is 'Artefact', (1, 1)
+    'Arousal,Artefact', (0, 1) 'Arousal', (0, 0) '' = nothing rejected). One stored set
+    is used as is; several are refused unless `reject_types` names one (--reject-types);
+    a named set the database does not store is refused. A table with no usable set is
+    refused too, and so is a stored reject_types text that is not TurtleWave's own key
+    spelling (sorted, comma-joined, no spaces): TurtleWave did not write it, and
+    TurtleWave's density would not find it either."""
     if 'analysed_time' not in _tables(con):
         return None
     subjects = [r[0] for r in con.execute('SELECT DISTINCT subject FROM analysed_time')]
     if len(subjects) > 1:
         raise BridgeError(f'{db_path}: analysed_time holds {len(subjects)} subjects; one '
                           'database per recording is expected.')
-    if not subjects:
-        return {}
     cols = _columns(con, 'analysed_time')
-    if 'reject_types' in cols:
-        keys = sorted({r[0] for r in con.execute(
-            'SELECT DISTINCT reject_types FROM analysed_time WHERE subject = ?', subjects)
-            if r[0] is not None})
-        key = keys[0] if len(keys) == 1 else DEFAULT_REJECT_KEY
-        if len(keys) > 1:
-            warn(f'{db_path}: analysed_time holds {len(keys)} reject sets '
-                 f"({'; '.join(keys)}); the default set '{DEFAULT_REJECT_KEY}' is used.")
-        rows = con.execute('SELECT stage, analysed_seconds FROM analysed_time '
-                           'WHERE subject = ? AND reject_types = ?', (subjects[0], key))
-    else:   # pre-4.4 table: membership flags only; the default set rejects both
-        rows = con.execute('SELECT stage, analysed_seconds FROM analysed_time WHERE subject = ? '
-                           'AND reject_artifacts = 1 AND reject_arousals = 1', subjects)
-    return {str(s): float(sec) for s, sec in rows}
+    rows = []
+    if subjects and 'reject_types' in cols:
+        rows = [(k, st, sec) for k, st, sec in con.execute(
+            'SELECT reject_types, stage, analysed_seconds FROM analysed_time WHERE subject = ?',
+            subjects) if k is not None]
+        odd = sorted({k for k, _, _ in rows if k != reject_key(k)})
+        if odd:
+            raise BridgeError(
+                f'{db_path}: analysed_time stores reject set(s) '
+                f"{'; '.join(repr(k) for k in odd)} that are not in TurtleWave's key "
+                "spelling (names sorted, comma-joined, no spaces, e.g. 'Arousal,Artefact'), "
+                'so they were written outside TurtleWave and TurtleWave\'s density would '
+                'not find them. Fix the database; the bridge does not guess which set they '
+                'mean.')
+    elif subjects and {'reject_artifacts', 'reject_arousals'} <= cols:
+        rows = [(reject_key([n for n, on in (('Artefact', a), ('Arousal', b)) if on]), st, sec)
+                for a, b, st, sec in con.execute(
+                    'SELECT reject_artifacts, reject_arousals, stage, analysed_seconds '
+                    'FROM analysed_time WHERE subject = ?', subjects)]
+    stored = sorted({k for k, _, _ in rows})
+    listed = '; '.join(reject_label(k) for k in stored)
+    if not stored:
+        raise BridgeError(f'{db_path}: analysed_time stores no time under any reject set, so '
+                          'there is nothing to divide the event count by and no density.')
+    if reject_types is None:
+        if len(stored) > 1:
+            raise BridgeError(
+                f'{db_path} stores analysed time for {len(stored)} reject sets ({listed}). '
+                'Their densities cover different seconds; name the one to use with '
+                '--reject-types (for example --reject-types "Artefact").')
+        key = stored[0]
+    else:
+        key = '' if reject_types.strip().lower() == 'none' else reject_key(reject_types)
+        if key not in stored:
+            raise BridgeError(f'{db_path} stores analysed time only for the reject set(s) '
+                              f'{listed}, not for {reject_label(key)} (--reject-types).')
+    return {str(st): float(sec) for k, st, sec in rows if k == key}, key
 
 
 def select_run(con, db_path, etype, flo, fhi, stages, label):
@@ -326,14 +385,18 @@ def searched_stages(con, etype, flo, fhi, method):
     return list(dict.fromkeys(found))
 
 
-def subject_event_stats(db_path, xml_path, stages, bands, allow_hypnogram=False):
+def subject_event_stats(db_path, xml_path, stages, bands, allow_hypnogram=False,
+                        reject_types=None):
     """Return ({label: {channel: {density, amplitude, duration}}}, provenance dict).
 
     provenance['bands'][label] is (denominator type, minutes, [stages], note) for a
-    band with a value in this recording, or None for a band never detected here."""
+    band with a value in this recording, or None for a band never detected here;
+    provenance['reject'] is the reject key of the analysed time divided by (None for a
+    database without analysed_time)."""
     con = connect_ro(db_path)
     try:
-        denom = analysed_seconds(con, db_path)
+        found = analysed_seconds(con, db_path, reject_types)
+        denom, reject = found if found is not None else (None, None)
         if denom is None and not allow_hypnogram:
             raise BridgeError(
                 f'{db_path} has no analysed_time table (it predates TurtleWave 4.3), so the '
@@ -392,8 +455,9 @@ def subject_event_stats(db_path, xml_path, stages, bands, allow_hypnogram=False)
                 missing = [s for s in dstages if s not in denom]
                 if missing:
                     raise BridgeError(
-                        f"{db_path}: no artefact-free analysed time stored for stage(s) "
-                        f"{', '.join(missing)} (stored: {', '.join(sorted(denom)) or 'none'}), "
+                        f"{db_path}: no analysed time stored under the reject set "
+                        f"{reject_label(reject)} for stage(s) {', '.join(missing)} "
+                        f"(stored: {', '.join(sorted(denom)) or 'none'}), "
                         f"so density for {label} over {'+'.join(dstages)} is undefined. Pass "
                         '--stages with the stages this recording was detected in. Raw '
                         'hypnogram time is not substituted on a database that stores '
@@ -411,7 +475,7 @@ def subject_event_stats(db_path, xml_path, stages, bands, allow_hypnogram=False)
             out[label] = d
     finally:
         con.close()
-    return out, {'bands': prov, 'interpolated': interp}
+    return out, {'bands': prov, 'interpolated': interp, 'reject': reject}
 
 
 def find_subjects(data_dir):
@@ -453,7 +517,8 @@ def run(a):
     channels = set()
     meta, recs = [], []
     for name, db, xml in subs:
-        ev, prov = subject_event_stats(db, xml, stages, bands, a.allow_hypnogram_denominator)
+        ev, prov = subject_event_stats(db, xml, stages, bands, a.allow_hypnogram_denominator,
+                                       a.reject_types)
         if any(v and v[0] == 'hypnogram' for v in prov['bands'].values()):
             warn(f'{name}: database predates TurtleWave 4.3 (no analysed_time), so density '
                  'is divided by raw hypnogram minutes, which include artefact time; density '
@@ -467,7 +532,8 @@ def run(a):
                      f'eventStat_*_{lab}.csv table.')
                 parts.append(f'{lab}: not detected')
                 continue
-            kind = 'TurtleWave analysed time' if v[0] == 'analysed_time' else 'hypnogram'
+            kind = (f"TurtleWave analysed time ({reject_label(prov['reject'])})"
+                    if v[0] == 'analysed_time' else 'hypnogram')
             parts.append(f"{lab}: {len(ev[lab])} channels, density over {kind} "
                          f"{'+'.join(v[2])} = {v[1]:.1f} min")
             if v[3]:
@@ -485,8 +551,9 @@ def run(a):
         interp = ' '.join(prov['interpolated'])
         for *_, lab in bands:
             v = prov['bands'][lab]
+            used = v is not None and v[0] == 'analysed_time'
             recs.append((name, lab) + ((v[0], v[1], '+'.join(v[2])) if v else ('', '', ''))
-                        + (interp,))
+                        + ((prov['reject'] or 'none') if used else '', interp))
 
     kinds = {}
     for name, _, kind, *_ in recs:
@@ -499,9 +566,20 @@ def run(a):
                                                  sorted(kinds.items()))
             + '. Run the two kinds separately and do not compare them, or re-run detection '
             'on the old databases with a current TurtleWave. Nothing was written.')
+    rsets = {}
+    for name, _, kind, _, _, key, _ in recs:
+        if kind == 'analysed_time' and name not in rsets.get(key, []):
+            rsets.setdefault(key, []).append(name)
+    if len(rsets) > 1:
+        raise BridgeError(
+            'The databases were detected with different reject sets, so their densities are '
+            'divided by time cleaned in different ways ('
+            + '; '.join(f'{reject_label(k)}: {", ".join(v)}' for k, v in rsets.items())
+            + ') and are not comparable. Name one set every database stores with '
+            '--reject-types, or redetect so the runs match. Nothing was written.')
     for *_, lab in bands:
         sets = {}
-        for name, b, kind, _, st, _ in recs:
+        for name, b, kind, _, st, _, _ in recs:
             if b == lab and kind:
                 sets.setdefault(st, []).append(name)
         if len(sets) > 1:
@@ -533,7 +611,7 @@ def run(a):
     with open(os.path.join(a.out_dir, 'recordings.csv'), 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['Subject', 'band', 'density_denominator', 'denominator_minutes',
-                    'stages', 'interpolated_channels'])
+                    'stages', 'reject_types', 'interpolated_channels'])
         w.writerows(recs)
 
     print(f'Wrote {len(bands)*len(PARAMS)} matrices + subjects.csv + channels.csv + '
@@ -552,6 +630,11 @@ def main():
     ap.add_argument(HYPNO_FLAG, action='store_true',
                     help='accept databases without analysed_time (TurtleWave < 4.3) and divide '
                          'their density by raw hypnogram minutes (biased; off by default)')
+    ap.add_argument('--reject-types', default=None, metavar='SET',
+                    help='the stored reject set whose analysed time divides density, e.g. '
+                         '"Artefact" or "Artefact,Arousal" ("" or "none" rejects nothing, '
+                         'as recordings.csv writes it). Needed only '
+                         'when a database stores several sets (default: the one set stored)')
     a = ap.parse_args()
     try:
         run(a)

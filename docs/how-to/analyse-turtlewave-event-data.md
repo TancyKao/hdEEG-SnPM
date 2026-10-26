@@ -56,6 +56,7 @@ explicitly — it carries a study-specific default.
 | `--stages LIST` | `NREM2,NREM3` | the sleep stages analysed, comma-separated (`NREM3`, `NREM2,NREM3`; the joint token `NREM2NREM3` is accepted too) |
 | `--bands LIST` | all three | write only some event bands, by label (`spindle_9-12`, `spindle_12-15`, `sw_0.5-1.25`) |
 | `--allow-hypnogram-denominator` | off | accept databases older than TurtleWave 4.3 and divide their density by raw hypnogram minutes (see below) |
+| `--reject-types SET` | the one set stored | which stored reject set's analysed time divides density, for example `"Artefact"` or `"Artefact,Arousal"` (order and spaces do not matter; `""` or `none`, as `recordings.csv` writes it, is the set that rejects nothing). Needed only when a database stores more than one set (see below) |
 
 It writes into `<OUT_dir>`:
 
@@ -64,7 +65,7 @@ It writes into `<OUT_dir>`:
 | `eventStat_<param>_<event_band>.csv` | rows = subjects, columns = channels. `<param>` is `density`, `amplitude` or `duration` |
 | `subjects.csv` | `Subject`, `group`, `session` — the metadata table every GLM preset joins on |
 | `channels.csv` | the union of channel labels across subjects |
-| `recordings.csv` | one row per subject and event band: `Subject`, `band`, `density_denominator` (`analysed_time` or `hypnogram`), `denominator_minutes`, `stages` (the stages density was divided over, joined with `+`), and `interpolated_channels` (the channels set to missing because TurtleWave interpolated them, repeated on each of the subject's rows). The three denominator columns are blank for a band never detected in that subject |
+| `recordings.csv` | one row per subject and event band: `Subject`, `band`, `density_denominator` (`analysed_time` or `hypnogram`), `denominator_minutes`, `stages` (the stages density was divided over, joined with `+`), `reject_types` (the reject set of the analysed time, written as TurtleWave stores it, for example `Artefact` or `Arousal,Artefact`; `none` for the set that rejects nothing; blank for a hypnogram denominator), and `interpolated_channels` (the channels set to missing because TurtleWave interpolated them, repeated on each of the subject's rows). The four denominator columns are blank for a band never detected in that subject |
 
 The event bands are fixed in the script: spindles 9–12 Hz, spindles 12–15 Hz, and slow waves
 0.5–1.25 Hz. Amplitude and duration are per-channel means. The run-selection and density
@@ -113,6 +114,26 @@ record of the detection run. A slow-wave run detected in NREM3 only and read wit
 those stages must have a stored time; if one is missing, the bridge stops and asks for the
 right `--stages`.
 
+**Which analysed time: the reject set the detection stored.** TurtleWave stores the analysed
+time once per reject set, the set of annotation types (artefacts, arousals, movements) whose
+epochs were removed before detection. The density denominator must be the time the events
+were actually detected in, so the bridge reads the set from the database and never assumes
+TurtleWave's current default. TurtleWave 4.4 and later name the set in a `reject_types`
+column. TurtleWave 4.3 stored two yes/no columns instead, which the bridge reads as
+TurtleWave's own key: artefacts removed and arousals kept is `Artefact`, both removed is
+`Arousal,Artefact`. Detection in TurtleWave 4.3 stored `Artefact`, so its density is divided
+by time with artefacts removed and arousals kept. When a database stores one set, that set is
+used. When it stores several, their densities cover different seconds, so the bridge stops
+and lists them; name the one to use with `--reject-types`, which every database in the run
+must then store (the bridge stops and lists the stored sets otherwise). A database whose
+analysed-time table holds no usable time also stops the run, and so does one whose
+`reject_types` text is not in TurtleWave's own spelling (names sorted and joined by commas
+without spaces, such as `Arousal,Artefact`): TurtleWave did not write it, so the bridge does
+not guess which set it means. Within one run every recording
+must use the same reject set; if two databases were detected with different sets, the bridge
+stops before writing anything and lists which recording used which set. `recordings.csv`
+records the set each recording used.
+
 Only when a database records neither (an old one) does the bridge fall back, with a warning,
 to the stages its events are stored under, as TurtleWave and the Python reader do: a slow-wave
 run whose events are all stored under `NREM3` is divided by NREM3 time even when read with the
@@ -140,7 +161,8 @@ whose recordings would use different denominators stops and lists which recordin
 `recordings.csv` records the denominator of every subject and band (`density_denominator` is
 `analysed_time` or `hypnogram`, `stages` the stages it covers). Tables from separate runs, for
 example one per `--group`, must not be merged into one comparison unless every subject in both
-has the same `density_denominator` and the same `stages` for that band; check
+has the same `density_denominator`, the same `reject_types` and the same `stages` for that
+band; check
 `recordings.csv` before joining them.
 
 **Zeros and missing values.** A channel TurtleWave processed but on which it found no event

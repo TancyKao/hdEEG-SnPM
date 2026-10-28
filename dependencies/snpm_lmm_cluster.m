@@ -1,8 +1,9 @@
-function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, permutations, evaluable)
+function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, permutations, evaluable, cluster_statistic)
 % Cluster-based permutation correction for the per-channel LMM, following
 % Stephan et al. 2021: neighbouring channels with model p < alpha form a
-% cluster; the cluster statistic is the mean Wald inside the cluster
-% (sum(Wald)/n_channels); the null is the distribution of the maximum
+% cluster; the cluster statistic is the summed Wald inside the cluster
+% (default 'sum'), or Stephan et al.'s mean Wald (sum(Wald)/n_channels) under
+% 'mean' (snpm_cluster_statistic); the null is the distribution of the maximum
 % cluster statistic over permutations; clusters above the 95th percentile
 % (i.e. permutation p <= alpha) are significant.
 %
@@ -26,12 +27,16 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
 %                  and its null are built on one channel set. See
 %                  snpm_lmm_TFCE for why per-channel row deletion otherwise
 %                  breaks exchangeability.
+%   cluster_statistic : (optional) 'sum' (default) | 'mean'; the same rule
+%                  scores the observed clusters and every permuted maximum.
 %
 % OUTPUT
 %   Clusters : struct array with fields .channels, .mass, .p, .threshold,
 %              .permutations
 
     if nargin < 5 || isempty(alpha), alpha = 0.05; end
+    if nargin < 8 || isempty(cluster_statistic), cluster_statistic = 'sum'; end
+    cluster_statistic = snpm_cluster_statistic(cluster_statistic);
 
     nCh = size(power, 2);
     sparse_adj = make_neighbors_sparse(neighbors, size(neighbors, 1));
@@ -56,7 +61,7 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
     % ---- real clusters ----
     [~, real_wald, real_p] = snpm_lmm_fit(power, meta, spec, evaluable);
     [real_p, real_wald] = mask_map(real_p, real_wald, evaluable);
-    real_clusters = local_find_pclusters(real_p, real_wald, alpha, sparse_adj);
+    real_clusters = local_find_pclusters(real_p, real_wald, alpha, sparse_adj, cluster_statistic);
 
     % ---- null distribution of the max cluster mass ----
     max_cluster_mass = zeros(possible_permutations, 1);
@@ -71,7 +76,7 @@ function [Clusters] = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, perm
         if snpm_perm_tap('ison')   % parity recorder: the permuted map the null is built from
             snpm_perm_tap('record', 'lmm:perm_cluster_map', struct('wald', pwald, 'p', pp));
         end
-        pc = local_find_pclusters(pp, pwald, alpha, sparse_adj);
+        pc = local_find_pclusters(pp, pwald, alpha, sparse_adj, cluster_statistic);
         if isempty(pc)
             max_cluster_mass(permIndex) = 0;
         else
@@ -107,9 +112,10 @@ function [p_model, wald] = mask_map(p_model, wald, evaluable)
     wald(~evaluable)    = 0;
 end
 
-function clusters = local_find_pclusters(p_model, wald, alpha, sparse_adj)
+function clusters = local_find_pclusters(p_model, wald, alpha, sparse_adj, cs)
 % Connected components of channels with model p < alpha, with each cluster's
-% mass = sum(Wald)/n_channels. Reuses snpm_find_clusters_graphalgs by feeding
+% mass scored by snpm_cluster_statistic (sum of Wald; / n_channels under
+% 'mean'). Reuses snpm_find_clusters_graphalgs by feeding
 % it a 0/1 significance mask thresholded at 0.5.
     mask = double(p_model < alpha);
     mask(isnan(p_model)) = 0;
@@ -123,6 +129,6 @@ function clusters = local_find_pclusters(p_model, wald, alpha, sparse_adj)
         end
         k = k + 1;
         clusters(k, 1).channels = ch;
-        clusters(k, 1).mass     = sum(wald(ch), 'omitnan') / numel(ch);
+        clusters(k, 1).mass     = snpm_cluster_statistic(wald, ch, cs);
     end
 end

@@ -19,7 +19,8 @@ function export_glm_report(DATA, OUT, opts)
 %            gmPSD_<stage>_<power>.csv   (Subject + f_<hz>)   [periodogram]
 %   OUT  : output folder (filled HTML + all PNGs)
 %   opts : preset ('anova1'|'ancova'|'regression'), group_col, predictor_col,
-%          covariate_cols, powers/stages/bands, permutations (200), alpha, title, html.
+%          covariate_cols, powers/stages/bands, permutations (200), alpha, title, html,
+%          cluster_statistic ('sum' default | 'mean'; snpm_cluster_statistic).
 %
 %   See also EXPORT_REPORT, SNPM_GLM_DESIGN, SNPM_GLM_STAT, SNPM_PERM_CORRECTION.
 
@@ -33,6 +34,7 @@ function export_glm_report(DATA, OUT, opts)
     bands     = getdef(opts, 'bands',  {'delta','sigma','beta'});
     nperm     = getdef(opts, 'permutations', 200);
     alpha     = getdef(opts, 'alpha', 0.05);
+    cs        = snpm_cluster_statistic(getdef(opts, 'cluster_statistic', 'sum'));
     E = 0.5; H = 2;
     if ~exist(OUT, 'dir'), mkdir(OUT); end
     snpm_glm_require_covariate(preset, cov_cols);   % ancova with no covariate (core_snpm_glm:ancovaNoCovariate)
@@ -91,7 +93,7 @@ function export_glm_report(DATA, OUT, opts)
             warn_novar(flctx.no_variation, labels, sprintf('%s/%s/%s', stg, pw, bd), ...
                 'no variation left after the nuisance model');
             [T, p, Cl] = snpm_perm_correction(stat, pm, @() permstat(flctx, D.X, D.C), ...
-                neighbors, E, H, alpha, nperm, D.contrast_type, ev);
+                neighbors, E, H, alpha, nperm, D.contrast_type, ev, [], cs);
             [T, p] = undefined_to_nan(T, p, zobs & ev, labels, sprintf('%s/%s/%s', stg, pw, bd));
             iU = find(p.real <= alpha); iT = find(p.correctedTFCE <= alpha);
             iC = [Cl([Cl.p] <= alpha).channels]; minp = min([Cl.p]);
@@ -153,7 +155,7 @@ function export_glm_report(DATA, OUT, opts)
                     warn_novar(flk.no_variation & flctx.evaluable, labels, ctx, ...
                         'no variation left after the nuisance model');
                     [Tk, pk, Ck] = snpm_perm_correction(ts, tp, @() permstat(flk, pr.D.X, pr.C), ...
-                        neighbors, E, H, alpha, nperm, 't', evk);
+                        neighbors, E, H, alpha, nperm, 't', evk, [], cs);
                     [Tk, pk] = undefined_to_nan(Tk, pk, zk & evk, labels, ctx);
                     iUp = find(pk.real <= alpha); iTp = find(pk.correctedTFCE <= alpha);
                     iCp = [Ck([Ck.p] <= alpha).channels];
@@ -263,6 +265,9 @@ function info = analysis_info(preset, glist, gcol, pcol, ccols, subjects, isF, n
             info.stat=ternary(isF,'F','t'); info.effect_label=preset; info.legend=''; info.model_info='';
             info.methods=meth('GLM of EEG power', nperm, alpha);
     end
+    % name the cluster rule (same line as the core results text)
+    [~, cs_line] = snpm_cluster_statistic(getdef(opts, 'cluster_statistic', 'sum'));
+    info.methods = [info.methods ' ' cs_line '.'];
     info.title = getdef(opts, 'title', ['Spectral power: ' info.effect_label]);
 end
 function s = meth(lead, nperm, alpha)

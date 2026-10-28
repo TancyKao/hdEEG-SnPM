@@ -37,7 +37,7 @@ function generateAnalysisReport_lmm(results_struct, params, base_filename, outpu
     write_head(fid);
     fprintf(fid, '<body>\n<div class="wrap">\n');
     write_masthead(fid, lmm, nperm, is_t);
-    write_model_card(fid, lmm, nperm);
+    write_model_card(fid, lmm, nperm, results_struct);
     write_legend(fid, is_t);
     write_excluded(fid, results_struct);
     write_effect_map(fid, lmm, is_t);
@@ -179,7 +179,7 @@ end
 % =========================================================================
 % MODEL CARD
 % =========================================================================
-function write_model_card(fid, lmm, nperm)
+function write_model_card(fid, lmm, nperm, rs)
     formula = lmm_field(lmm, 'formula', '');
     dv      = lmm_field(lmm, 'dv', '');
     eff     = lmm_field(lmm, 'effect', '');
@@ -213,6 +213,14 @@ function write_model_card(fid, lmm, nperm)
     if ~isempty(grp_levels), spec_row(fid, 'Groups', esc(grp_levels), true); end
     if ~isempty(rand_eff),   spec_row(fid, 'Random effects', esc(rand_eff), false); end
     spec_row(fid, 'Permutations', fmt_int(nperm), false);
+    % How clusters were scored (snpm_cluster_statistic; same wording as the
+    % results text). Absent in a results file saved before the setting existed.
+    if isfield(rs, 'cluster_statistic') && ~isempty(rs.cluster_statistic)
+        [~, line] = snpm_cluster_statistic(rs.cluster_statistic);
+        h = regexprep(line, '^Cluster statistic: ', '');
+        h = strrep(esc([upper(h(1)) h(2:end)]), char(178), '&#178;');
+        spec_row(fid, 'Cluster statistic', h, false);
+    end
     fprintf(fid, '    </div>\n  </div>\n</section>\n');
 end
 

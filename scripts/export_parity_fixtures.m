@@ -57,6 +57,9 @@ KEEP_RUN_OUTPUTS = false;     % false = delete each run's outputs once its fixtu
 LMM_PERMUTATIONS = 200;       % mixed-model cases only: each permutation refits every channel
 LMM_REFIT_DRAWS  = 10;        % the LMM replay refits the first K draws of each loop from the
                               % recorded indices (Inf = every draw; about as long as the run)
+CLUSTER_STATISTIC = 'sum';    % GLM / circular / mixed-model cases: params.cluster_statistic
+                              % ('sum' = summed Wald, the default; 'mean' = sum / n channels,
+                              % the rule before 2026-10-28). The legacy tier uses cluster extent.
 % ================================================================
 % Optional overrides, so several exports can run side by side from the command line, e.g.
 %   matlab -batch "EXPORT_OVERRIDES = struct('ONLY_CASES', {{'lmm_factor'}}); run('scripts/export_parity_fixtures.m')"
@@ -68,6 +71,7 @@ if exist('EXPORT_OVERRIDES', 'var')
             case 'LMM_REFIT_DRAWS',  LMM_REFIT_DRAWS  = EXPORT_OVERRIDES.LMM_REFIT_DRAWS;
             case 'LMM_PERMUTATIONS', LMM_PERMUTATIONS = EXPORT_OVERRIDES.LMM_PERMUTATIONS;
             case 'OUT_DIR',          OUT_DIR          = EXPORT_OVERRIDES.OUT_DIR;   % e.g. a smoke run
+            case 'CLUSTER_STATISTIC', CLUSTER_STATISTIC = EXPORT_OVERRIDES.CLUSTER_STATISTIC;
             otherwise, error('export_parity:badOverride', 'Unknown override %s.', ov{1});
         end
     end
@@ -110,6 +114,7 @@ for ci = 1:numel(cases)
     end
     P = c.params;
     P.permutations = nperm;
+    if ~strcmp(c.tier, 'legacy'), P.cluster_statistic = CLUSTER_STATISTIC; end
     P.output_path  = fullfile(RUN_DIR, c.name);
     if exist(P.output_path, 'dir'), rmdir(P.output_path, 's'); end
     mkdir(P.output_path);
@@ -199,7 +204,7 @@ if ~KEEP_RUN_OUTPUTS && exist(RUN_DIR, 'dir') && numel(dir(RUN_DIR)) <= 2
 end
 
 if isempty(ONLY_CASES)
-    write_readme(fullfile(OUT_DIR, 'README.md'), cases, summary, SEED, PERMUTATIONS, INPUT_SEED, built, LMM_PERMUTATIONS, LMM_REFIT_DRAWS);
+    write_readme(fullfile(OUT_DIR, 'README.md'), cases, summary, SEED, PERMUTATIONS, INPUT_SEED, built, LMM_PERMUTATIONS, LMM_REFIT_DRAWS, CLUSTER_STATISTIC);
     fprintf('README written: %s\n', fullfile(OUT_DIR, 'README.md'));
     if any(strcmp({cases.tier}, 'lmm'))
         write_bench_readme(fullfile(OUT_DIR, 'lmm_bench', 'README.md'), LMM_PERMUTATIONS);
@@ -948,6 +953,7 @@ function [M, G] = glm_capture(P, rs, plog, aux)
 % one snpm_perm_correction recorded; the replay's own is only a cross-check.
     assert(strcmp(P.datatype, 'absolute'), 'glm_capture replays datatype ''absolute'' only.');
     alpha = 0.05; E = 0.5; H = 2;
+    cs = snpm_cluster_statistic(rs.cluster_statistic);
     T = readtable(P.data_file);
     channel_cols = setdiff(T.Properties.VariableNames, P.meta_cols, 'stable');
     meta  = T(:, P.meta_cols);
@@ -1043,7 +1049,7 @@ function [M, G] = glm_capture(P, rs, plog, aux)
             s(~ev) = NaN; pp(~ev) = NaN;
             e = ClusterEnhancement(s, sparse_adj, E, H);
             if isF, maxT(i) = max(e, [], 'omitnan'); else, maxT(i) = max(abs(e), [], 'omitnan'); end
-            maxM(i) = max_cluster_mass(pp, s, isF, alpha, sparse_adj);
+            maxM(i) = max_cluster_mass(pp, s, isF, alpha, sparse_adj, cs);
         end
         maxT = sort(maxT, 'descend'); maxM = sort(maxM, 'descend');
 
@@ -1116,9 +1122,10 @@ function plan = add_effect(plan, role, Y, rows, preset, meta, opts, mask, eff, w
     end
 end
 
-function m = max_cluster_mass(p_model, s, isF, alpha, sparse_adj)
+function m = max_cluster_mass(p_model, s, isF, alpha, sparse_adj, cs)
 % snpm_perm_correction/find_pclusters: connected components of p < alpha,
-% mass = sum(Wald)/n_channels, Wald = F or t^2. Returns the largest (0 if none).
+% mass scored by snpm_cluster_statistic (sum of Wald; / n_channels under
+% 'mean'), Wald = F or t^2. Returns the largest (0 if none).
     if isF, w = s; else, w = s.^2; end
     mask = double(p_model < alpha); mask(isnan(p_model)) = 0;
     cc = snpm_find_clusters_graphalgs(mask, 0.5, sparse_adj);
@@ -1126,7 +1133,7 @@ function m = max_cluster_mass(p_model, s, isF, alpha, sparse_adj)
     for c = 1:numel(cc)
         ch = cc{c};
         if isempty(ch), continue; end
-        m = max(m, sum(w(ch), 'omitnan') / numel(ch));
+        m = max(m, snpm_cluster_statistic(w, ch, cs));
     end
 end
 
@@ -1166,6 +1173,7 @@ function [M, C] = circ_capture(P, rs, plog, aux, name)
 % from the RECORDED indices and checks it against the pipeline's own nulls,
 % corrected p-values and clusters.
     alpha = 0.05; E = 0.5; H = 2;
+    cs = snpm_cluster_statistic(rs.cluster_statistic);
     ei = aux(strcmp({aux.tag}, 'circ:engine_inputs'));
     mn = aux(strcmp({aux.tag}, 'glm:cluster_mass_null'));
     assert(isscalar(ei) && isscalar(mn) && isscalar(plog), 'export_parity:auxCount', ...
@@ -1365,7 +1373,7 @@ function [M, C] = circ_capture(P, rs, plog, aux, name)
         [s, pp] = permfn(idx(i, :)');
         s(~ev) = NaN; pp(~ev) = NaN;
         maxT(i) = max(enh(s), [], 'omitnan');
-        maxM(i) = max_cluster_mass(pp, s, true, alpha, adj);
+        maxM(i) = max_cluster_mass(pp, s, true, alpha, adj, cs);
     end
     maxT = sort(maxT, 'descend'); maxM = sort(maxM, 'descend');
     ck.tfce_null = isequaln(maxT, rs.T.tMaxTFCE);
@@ -1404,7 +1412,8 @@ function [M, C] = circ_capture(P, rs, plog, aux, name)
     end
     C.alpha = alpha; C.tfce_E = E; C.tfce_H = H;
     if isempty(dh), C.tfce_dh = 0.1; else, C.tfce_dh = dh; end
-    C.cluster_statistic = 'mass = sum(stat)/n_channels over channels with p_uncorrected < alpha';
+    C.cluster_statistic = cluster_rule_text(cs, 'stat');
+    C.cluster_statistic_rule = cs;
     C.import = imp;
     C.subject_ids = subj(:);
     C.source_file = src_file;
@@ -1493,6 +1502,7 @@ function [M, L, bench] = lmm_capture(P, rs, plog, aux, name, refitK)
 % replay over EVERY draw, and the first refitK draws of each loop are refitted
 % from the recorded indices and must reproduce the recorded maps exactly.
     alpha = 0.05; E = 0.5; H = 2;
+    cs = snpm_cluster_statistic(rs.cluster_statistic);
     ck = struct();                         % named replay checks, in this order
     tg = {aux.tag};
     ei = aux(strcmp(tg, 'lmm:engine_inputs'));
@@ -1610,14 +1620,14 @@ function [M, L, bench] = lmm_capture(P, rs, plog, aux, name, refitK)
     ck.p_tfce = isequaln(pT, rs.p.correctedTFCE);
     maxM = zeros(nPc, 1);
     for i = 1:nPc
-        cl = lmm_clusters(PP(i, :), PW(i, :), alpha, adj);
+        cl = lmm_clusters(PP(i, :), PW(i, :), alpha, adj, cs);
         if ~isempty(cl), maxM(i) = max([cl.mass]); end
     end
     maxM = sort(maxM, 'descend');
     ck.mass_null = isequaln(maxM, mn.value);
     % observed clusters, from the observed fit
     wald = O.wald; wald(~ev) = 0;
-    ocl = lmm_clusters(pm, wald, alpha, adj);
+    ocl = lmm_clusters(pm, wald, alpha, adj, cs);
     if isempty(ocl)
         ok = isscalar(rs.Clusters) && isempty(rs.Clusters.channels) && rs.Clusters.p == 1;
     else
@@ -1677,7 +1687,8 @@ function [M, L, bench] = lmm_capture(P, rs, plog, aux, name, refitK)
             'tStat, DF = n - rank(X), pValue two-sided; wald = t^2. Non-finite t -> stat NaN, wald 0, p NaN.'];
     end
     L.cluster_statistic = ['clusters = connected components (montage.neighbors) of channels with p_uncorrected < alpha, ' ...
-        'whatever the tail; mass = sum(wald)/n_channels; null = max mass per permutation, 0 when none'];
+        'whatever the tail; ' cluster_rule_text(cs, 'wald') '; null = max mass per permutation, 0 when none'];
+    L.cluster_statistic_rule = cs;
     L.alpha = alpha; L.tfce_E = E; L.tfce_H = H; L.tfce_dh = 0.1;
     L.power = power;
     L.meta = flat(meta);
@@ -1876,7 +1887,7 @@ function m = lmm_enhance(stat, adj, E, H, nCh)
     m(isnan(stat)) = NaN;
 end
 
-function cl = lmm_clusters(p_model, wald, alpha, adj)
+function cl = lmm_clusters(p_model, wald, alpha, adj, cs)
 % snpm_lmm_cluster/local_find_pclusters.
     mask = double(p_model < alpha); mask(isnan(p_model)) = 0;
     cc = snpm_find_clusters_graphalgs(mask, 0.5, adj);
@@ -1884,7 +1895,16 @@ function cl = lmm_clusters(p_model, wald, alpha, adj)
     for c = 1:numel(cc)
         ch = cc{c};
         if isempty(ch), continue; end
-        cl(end+1) = struct('channels', ch, 'mass', sum(wald(ch), 'omitnan') / numel(ch)); %#ok<AGROW>
+        cl(end+1) = struct('channels', ch, 'mass', snpm_cluster_statistic(wald, ch, cs)); %#ok<AGROW>
+    end
+end
+
+function s = cluster_rule_text(cs, q)
+% The fixture's description of the cluster mass for setting cs.
+    if strcmp(cs, 'mean')
+        s = sprintf('mass = sum(%s)/n_channels (cluster_statistic ''mean'')', q);
+    else
+        s = sprintf('mass = sum(%s) (cluster_statistic ''sum'')', q);
     end
 end
 
@@ -2066,7 +2086,9 @@ function s = loop_list(L)
     s = strjoin(parts, '<br>');
 end
 
-function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, LMM_REFIT)
+function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, LMM_REFIT, CS)
+    CS = snpm_cluster_statistic(CS);
+    if strcmp(CS, 'mean'), per_n = '/n_channels'; else, per_n = ''; end
     fid = fopen(path, 'w');
     assert(fid > 0, 'Cannot write %s', path);
     c = onCleanup(@() fclose(fid));
@@ -2283,7 +2305,7 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
     w('`usecov`, is complete. Non-evaluable channels are NaN in the observed map and in every permuted map, before TFCE.');
     w('TFCE: `ClusterEnhancement(stat, adj, 0.5, 2, dh)` with dh = 0.1 (Hotelling, circular-linear) or 0.005 (U^2) for');
     w('the observed AND every permuted map. Cluster forming: channels with parametric p < 0.05, connected through');
-    w('`montage.neighbors`; cluster mass = sum(stat)/n_channels (stat = F or U^2 itself, NOT squared). TFCE null = max over');
+    w('`montage.neighbors`; cluster mass = sum(stat)%s (stat = F or U^2 itself, NOT squared; `cluster_statistic` ''%s''). TFCE null = max over', per_n, CS);
     w('channels of the TFCE map (non-negative statistics). p = (b + 1)/(N + 1) with ties at relative 1e-12 counted.');
     w('');
     w('**Mixed-model tier** (`mixedmodel`, `core_snpm_lmm`): TWO loops, always in this order, each drawing its own');
@@ -2307,8 +2329,8 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
     w('are NaN and wald is 0 in the observed map and in every permuted map. TFCE: `ClusterEnhancement(stat, adj, 0.5, 2)`,');
     w('dh = 0.1, signed for t; TFCE null = max over evaluable channels of |TFCE| (tail both) or TFCE (one-sided; F is');
     w('non-negative), +Inf if a permutation has no finite value. Cluster forming: channels with model p < 0.05 (the');
-    w('two-sided model p, whatever the tail), connected through `montage.neighbors`; mass = sum(wald)/n_channels, wald =');
-    w('t^2 or F (the sum-of-Wald mass of Stephan et al. 2021, ported as it is); 0 when a permutation has no cluster.');
+    w('two-sided model p, whatever the tail), connected through `montage.neighbors`; mass = sum(wald)%s, wald =', per_n);
+    w('t^2 or F (`cluster_statistic` ''%s''; ''mean'' is the mean-Wald mass of Stephan et al. 2021); 0 when a permutation has no cluster.', CS);
     w('p = (b + 1)/(N + 1) with ties at relative 1e-12 counted, for both.');
     w('');
     w('**What `fitlme` does, for a statsmodels port** (every channel of every fixture checked: the call with no options and');
@@ -2434,7 +2456,7 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
     w('');
     w('`results`, GLM tier: `T.real_T` (t or F), `T.real_TFCE`, `T.tMaxTFCE` (**sorted descending**, max of |TFCE| for t,');
     w('of TFCE for F), `T.critical_T_TFCE`, `T.excluded_channels` (1-based), `p.real`, `p.correctedTFCE`, `Clusters(c)`');
-    w('with `.channels`, `.mass` (= sum(Wald)/n_channels, Wald = F or t^2; cluster-MASS, unlike the legacy tier),');
+    w('with `.channels`, `.mass` (= sum(Wald)%s, Wald = F or t^2, `cluster_statistic` ''%s''; cluster-MASS, unlike the legacy tier),', per_n, CS);
     w('`.p`, `.threshold` (= alpha: clusters are formed from p.real < alpha), `.permutations`; `posthoc(j)` with `.label`,');
     w('`.T`, `.p`, `.Clusters`, `.uncorrsigch`, `.correctTFCEsigch`, `.SnPMsigch`; `glm.preset`, `.effect_label`,');
     w('`.contrast_type` (`t`/`F`), `.perm_type`, `.n_obs`, `.n_subjects`, `.group_sizes`, `.group_size_labels`.');
@@ -2481,7 +2503,7 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
     w('|---|---|---|');
     w('| `comparison`, `statistic` | char | `hotelling_F`, `watson_U2` or `circlinear_F` |');
     w('| `alpha`, `tfce_E`, `tfce_H`, `tfce_dh` | scalars | 0.05, 0.5, 2, and 0.1 or 0.005 (U^2) |');
-    w('| `cluster_statistic` | char | how cluster mass is computed |');
+    w('| `cluster_statistic`, `cluster_statistic_rule` | char | how cluster mass is computed; the setting, ''sum'' or ''mean'' |');
     w('| `import` | struct | `snpm_circ_import` record of angle file 1: `.units`, `.convention`, `.rotation_deg` (added before wrapping), `.resolution_deg`, `.quantised`, `.whole_degree`, `.n_finite`, `.label`. Import = `mod((deg + rotation_deg) * pi/180, 2*pi)`, `deg` = raw (deg) or raw*180/pi (rad); NaN stays NaN. File 2 gets the same transform. |');
     w('| `subject_ids`, `source_file`, `source_row` | n x 1 | analysed row r is row `source_row(r)` of angle file `source_file(r)` (1 = `inputs.angles1`, 2 = `inputs.angles2`). Two-group: group A rows then group B rows, file order. |');
     w('| `measure_col`, `measure_row` | char, n x 1 | circ_corrAngLinear: the y column and the row of `inputs.measure` matched to each analysed row (subjects intersected in angle-file order) |');
@@ -2525,7 +2547,7 @@ function write_readme(path, cases, rows, SEED, NPERM, INPUT_SEED, B, LMM_NPERM, 
     w('| `perm_scheme`, `subject_col`, `group_col`, `tail` | char | the scheme the pipeline derived (`within_subject` for continuous, `group_label` for factor) |');
     w('| `categorical`, `categorical_levels` | cellstr, struct of cellstr | columns converted by `categorical()` before the fit, and their level order (first = reference) |');
     w('| `fitlme_options` | struct | the defaults in effect (see "What `fitlme` does" above) |');
-    w('| `effect_rule`, `cluster_statistic` | char | how the statistic and the cluster mass are computed |');
+    w('| `effect_rule`, `cluster_statistic`, `cluster_statistic_rule` | char | how the statistic and the cluster mass are computed; the cluster setting, ''sum'' or ''mean'' |');
     w('| `alpha`, `tfce_E`, `tfce_H`, `tfce_dh` | scalars | 0.05, 0.5, 2, 0.1 |');
     w('| `power` | n_trials x nCh | the analysed channel matrix (after channel selection, analysed order); row r = row r of `inputs.data` |');
     w('| `meta` | struct of n_trials x 1 columns | the metadata as read (text as cellstr); `meta_categorical` = the categorical columns as the fit sees them |');

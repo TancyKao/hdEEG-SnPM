@@ -17,6 +17,7 @@ channels    = '178 channels';   % '164 channels' | '178 channels'
 datatype    = 'absolute';       % absolute|logscale|normalize
 permutations= 100;
 tail        = 'both';           % mixedmodel accepts 'both' only (core_snpm_lmm:oneSidedTail)
+cluster_statistic = 'sum';      % 'sum' (summed Wald, default) | 'mean' (sum / n channels, Stephan 2021)
 
 % model spec (the per-channel value enters the formula as POWER)
 lmm_dv          = 'sleepDepth';     % dependent variable column (behaviour), OR 'POWER' if modelling power
@@ -35,7 +36,7 @@ params = struct('comparison','mixedmodel','data_file',data_file,'data_sheet','CS
     'permutations',permutations,'tail',tail, ...
     'lmm_dv',lmm_dv,'lmm_fixed',lmm_fixed,'lmm_random',lmm_random, ...
     'lmm_effect',lmm_effect,'lmm_effect_type',lmm_effect_type, ...
-    'lmm_meta_cols',{lmm_meta_cols});
+    'lmm_meta_cols',{lmm_meta_cols}, 'cluster_statistic',cluster_statistic);
 
 [results_struct, results_text] = core_snpm_analysis(params); %#ok<ASGLU>
 fprintf('\n%s\n', strjoin(results_text, newline));

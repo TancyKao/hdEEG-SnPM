@@ -1,10 +1,11 @@
 function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn, ...
-        neighbors, E, H, alpha, permutations, contrast_type, evaluable, dh)
+        neighbors, E, H, alpha, permutations, contrast_type, evaluable, dh, cluster_statistic)
 % Shared permutation correction driver for the GLM tier. Given the real
 % per-channel statistic map and a function that returns one permuted
 % statistic map, it builds BOTH corrections in a single permutation loop:
 %   - TFCE (ClusterEnhancement) with a max-statistic null -> p.correctedTFCE
-%   - cluster mass (channels with model p<alpha, mass = sum(wald)/n) with a
+%   - cluster mass (channels with model p<alpha; mass = sum(wald) under
+%     'sum', sum(wald)/n under 'mean', see snpm_cluster_statistic) with a
 %     max-cluster-mass null -> Clusters(i).p
 % Emits the same T/p/Clusters field shapes the output chain expects
 % (func_genSnpmTable, generateAnalysisReport, TopoplotSignificant_single),
@@ -39,6 +40,14 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
 %                  It is positioned LAST so that every existing positional call
 %                  (which ends at evaluable, or earlier) is unaffected; to set dh
 %                  while leaving all channels evaluable, pass [] for evaluable.
+%   cluster_statistic : (optional) 'sum' (default) | 'mean'. How a cluster is
+%                  scored (snpm_cluster_statistic): the summed Wald (t^2 or
+%                  F) over its channels, or that sum divided by the channel
+%                  count. The same rule scores the observed clusters and every
+%                  permuted maximum, so the test is exact under either. It
+%                  changes only Clusters(i).mass/.p: the cluster-forming
+%                  threshold, the draws and every TFCE output are untouched.
+%                  Pass [] for dh to set it while keeping the default step.
 %
 % OUTPUTS: T (real_T, real_TFCE, tMaxTFCE, critical_T_TFCE, excluded_channels),
 %          p (real, correctedTFCE), Clusters (channels, mass, p, ...)
@@ -93,7 +102,11 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
     T.real_T    = real_stat;
     T.real_TFCE = enhance(real_stat);
     p.real      = real_p;
-    real_clusters = find_pclusters(real_p, waldfun(real_stat), alpha, sparse_adj);
+    if nargin < 12 || isempty(cluster_statistic)
+        cluster_statistic = 'sum';
+    end
+    cluster_statistic = snpm_cluster_statistic(cluster_statistic);
+    real_clusters = find_pclusters(real_p, waldfun(real_stat), alpha, sparse_adj, cluster_statistic);
 
     % ---- permutation null (TFCE max + cluster-mass max in one loop) ----
     maxTFCE = zeros(permutations, 1);
@@ -111,7 +124,7 @@ function [T, p, Clusters] = snpm_perm_correction(real_stat, real_p, perm_stat_fn
         else
             maxTFCE(i) = max(abs(tfce), [], 'omitnan');
         end
-        pc = find_pclusters(pp, waldfun(s), alpha, sparse_adj);
+        pc = find_pclusters(pp, waldfun(s), alpha, sparse_adj, cluster_statistic);
         if ~isempty(pc), maxMass(i) = max([pc.mass]); end
     end
     T.tMaxTFCE = sort(maxTFCE, 'descend');
@@ -157,8 +170,9 @@ function w = wald_of(s, is_F)
     if is_F, w = s; else, w = s.^2; end   % F is already a ratio; t -> Wald = t^2
 end
 
-function clusters = find_pclusters(p_model, wald, alpha, sparse_adj)
-% Connected components of channels with model p < alpha; mass = sum(Wald)/n.
+function clusters = find_pclusters(p_model, wald, alpha, sparse_adj, cs)
+% Connected components of channels with model p < alpha; mass scored by
+% snpm_cluster_statistic (sum of Wald, or that sum / n under 'mean').
     mask = double(p_model < alpha);
     mask(isnan(p_model)) = 0;
     cc = snpm_find_clusters_graphalgs(mask, 0.5, sparse_adj);
@@ -169,6 +183,6 @@ function clusters = find_pclusters(p_model, wald, alpha, sparse_adj)
         if isempty(ch), continue; end
         k = k + 1;
         clusters(k, 1).channels = ch;
-        clusters(k, 1).mass     = sum(wald(ch), 'omitnan') / numel(ch);
+        clusters(k, 1).mass     = snpm_cluster_statistic(wald, ch, cs);
     end
 end

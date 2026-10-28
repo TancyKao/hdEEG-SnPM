@@ -29,6 +29,8 @@ channels    = 'egi';           % recording system: 'egi' (EGI 256/HydroCel) | 'c
                                %   legacy aliases '164 channels'/'178 channels' still resolve to egi
 datatype    = 'absolute';      % absolute|logscale|normalize
 permutations= 500;             % production: 10000+ ; quick check: 500-1000
+cluster_statistic = 'sum';     % GLM presets: 'sum' (summed t^2/F, default) | 'mean' (sum / n channels,
+                               %   the rule before 2026-10-28); the legacy t-tests use cluster extent
 
 % ---- 'single' mode: one CSV with meta columns + channel columns ----
 % Long format for mixed2way/rmanova: one row per Subject x condition.
@@ -77,7 +79,7 @@ end
 
 params = struct('comparison',comparison,'data_file',glm_csv,'data_sheet','CSV File', ...
     'output_path',output_dir,'channels',channels,'datatype',datatype,'permutations',permutations, ...
-    'meta_cols',{metacols});
+    'meta_cols',{metacols}, 'cluster_statistic',cluster_statistic);
 if ~isempty(group_col),      params.group_col=group_col; end
 if ~isempty(predictor_col),  params.predictor_col=predictor_col; end
 if ~isempty(condition_col),  params.condition_col=condition_col; end

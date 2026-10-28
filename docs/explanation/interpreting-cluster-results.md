@@ -9,33 +9,46 @@ Two things routinely get over-read in a topoplot: which cluster statistic a tier
 what a highlighted electrode actually licenses you to claim. Both matter for how you write up
 a result.
 
-## The cluster statistic is height-weighted in the GLM/LMM tier, extent-weighted in the legacy tier
+## How each tier scores a cluster
 
-The tool has two families of analyses that summarise a cluster differently, and the two
-answer subtly different questions.
+Every tier forms clusters the same way: neighbouring channels whose per-channel p-value is
+below 0.05. They differ in the single number used to score a cluster, and that number is what
+the permutation null is built from.
 
-- **GLM and LMM presets** (`anova1`, `ancova`, `regression`, `rmanova`, `mixed2way`,
-  `mixedmodel`) use cluster **mass normalised by cluster size** — `sum(Wald) / n_channels`,
-  the recipe from Stephan et al. (2021). Dividing by the channel count makes this effectively
-  a **mean Wald** over the cluster. It removes the reward-for-extent that a plain cluster-mass
-  sum carries: a broad 20-channel cluster and a focal 3-channel cluster with the *same average
-  Wald* score identically. The consequence is a loss of power for spatially broad effects —
-  spreading the same total signal over more channels does not raise the statistic.
 - **The legacy t-test path** (`pairedT`, `onesampleT`, `unpairedT`, and the correlation
-  comparisons) uses cluster **extent** — cluster *size* only, the count of contiguous
-  supra-threshold channels. Here spatial spread is exactly what is rewarded.
-- **The circular tier** (`circ_phase_group`, `circ_phase_group_u2`, `circ_corrAngLinear`) uses
-  cluster **mass**, like the GLM/LMM tier. Note that this differs from Helfrich et al. (2018),
-  who used FieldTrip's `maxsize`; the difference is disclosed in the results text of every
-  circular run.
+  comparisons) uses cluster **extent**: the count of contiguous supra-threshold channels.
+  How strong the effect is inside the cluster plays no part.
+- **The GLM, circular and mixed-model tiers** (`anova1`, `ancova`, `regression`, `rmanova`,
+  `mixed2way`, `circ_phase_group`, `circ_phase_group_u2`, `circ_corrAngLinear`,
+  `mixedmodel`) use cluster **mass**, and the option `cluster_statistic` decides which mass:
+  - `'sum'` (the default since 2026-10-28) adds up the Wald statistic over the cluster's
+    channels: t² for a one-row contrast, F for an omnibus effect (on the circular tier, the
+    statistic itself: Hotelling F, Watson U² or the circular-linear F). This is
+    a summed-statistic cluster mass in the sense of Maris & Oostenveld (2007), taken here on the Wald scale (t² or F). It rewards both
+    height and extent: a broad cluster of moderate channels can outscore a single strong
+    channel.
+  - `'mean'` divides that sum by the number of channels, which makes it the mean Wald over
+    the cluster (the recipe of Stephan et al. 2021, and what every run before 2026-10-28
+    used). A broad 20-channel cluster and a focal 3-channel cluster with the same average
+    Wald score identically, so spreading an effect over more channels does not raise the
+    statistic. It costs power for spatially broad effects: the permutation maximum of a mean
+    is set by single strong null channels, and a broad moderate cluster rarely beats them.
+    Keep it only to reproduce an older result.
 
-So the two tiers reward different things: the legacy path rewards **spatial extent**, the
-GLM/LMM path rewards **per-channel effect height**. A practical consequence: **cluster
-statistics are not directly comparable across tiers.** A cluster that looks strong under a
-paired t-test (large because it is wide) may look modest under the mean-Wald GLM statistic,
-and vice versa, without either result being wrong. When you compare or combine results from
-the two families, compare the corrected p-values and the per-channel maps, not the raw cluster
-statistics.
+Either choice gives an exact test. The same rule scores the observed clusters and the largest
+cluster of every permutation, and the cluster-forming threshold, the Wald scale and the
+permutation draws do not depend on it. TFCE is a separate correction and is unaffected: its
+maps and p-values are identical under both settings. The setting used is recorded in the
+results struct (`cluster_statistic`), in the results text, in a `settings` sheet of the Excel
+workbook and in the report's model card and cluster view.
+
+The circular tier's mass differs from Helfrich et al. (2018), who used FieldTrip's `maxsize`
+(cluster extent); the results text of every circular run says so.
+
+A practical consequence: **cluster statistics are not directly comparable across tiers, or
+across the two `cluster_statistic` settings.** An extent, a summed mass and a mean mass are
+different numbers on different scales. When you compare or combine results, compare the
+corrected p-values and the per-channel maps, not the raw cluster statistics.
 
 ## A significant cluster is a regional claim, not an electrode-by-electrode one
 
@@ -86,4 +99,5 @@ phase. See
   Hum Brain Mapp 15(1), 1–25 — max-statistic permutation, family-wise-error control.
 - Stephan AM et al. (2021). *Conscious experiences and high-density EEG patterns predicting
   subjective sleep depth.* Curr Biol 31(24), 5487–5500 — the `sum(Wald) / n_channels`
-  (mean-Wald) cluster statistic used by the GLM/LMM tier.
+  (mean-Wald) cluster statistic, available as `cluster_statistic = 'mean'` and used by every
+  GLM, circular and mixed-model run before 2026-10-28.

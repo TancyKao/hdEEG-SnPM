@@ -160,7 +160,8 @@ the legacy stat-function switches. Hard constraints, all enforced with named err
 
 Permutation scheme is **Freedman–Lane on the stacked (cos,sin) response**, `free` (whole-subject
 relabelling) — between-subject only; there is no within-subject circular scheme yet. Cluster
-statistic is **mass**. There is **no global/omnibus test** (arithmetic channel averaging is
+statistic is **mass**: by default the sum of the statistic over the cluster, or that sum divided
+by the number of channels with `cluster_statistic = 'mean'` (see below). There is **no global/omnibus test** (arithmetic channel averaging is
 meaningless for angles); a **descriptive**, explicitly no-inference circular panel is emitted
 instead. This tier was checked the same way as the rest: the three statistics against independent
 references, and end-to-end planted-phase-shift recovery with null-design and
@@ -241,7 +242,7 @@ presets (`anova1`/`ancova`/`regression`/`rmanova`/`mixed2way`, via `core_snpm_gl
 yet source-wired** — run those on scalp montages. TFCE is the primary correction; the cluster
 statistic on the source **t-test** path is cluster **extent** (size), the same as the scalp
 t-tests (`snpm_cluster_analysis`). Cluster **mass** applies only to the source **LMM** path
-(`core_snpm_lmm`, mean-Wald).
+(`core_snpm_lmm`; summed Wald by default, mean Wald with `cluster_statistic = 'mean'`).
 
 **Data 1 / Data 2 headers for every two-file legacy comparison** (`pairedT`, `unpairedT`,
 two-file `onesampleT`, `correlationP`, `correlationS`). Channel selection is matched on
@@ -535,7 +536,9 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   "Correlation scatter skipped" note in the descriptive card — when an axis has no usable spread, e.g.
   `datatype = 'normalize'` with a broadcast behaviour score (the per-subject z-scored row has a
   channel mean of ~0 for every subject).
-- `<base>_<timestamp>.xlsx` — significant-channel table (`func_genSnpmTable`).
+- `<base>_<timestamp>.xlsx` — significant-channel table (`func_genSnpmTable`). The GLM, circular
+  and mixed-model runs add a one-row **`settings`** sheet (`cluster_statistic`, `alpha`); the
+  legacy t-test and correlation workbook has none (its cluster statistic is extent).
 - **Excluded channels.** A channel that cannot be evaluated in *every* permutation is not tested
   at all: the GLM presets and the circular tier require a channel to be complete (no missing cell)
   because the Freedman–Lane nuisance fit works on whole columns, so one missing cell would make
@@ -608,10 +611,30 @@ export is dropped in — the statistics, significance flags and cluster membersh
 the `X/Y/Z` columns are placeholder, and the source path was checked on stats, flags and cluster
 membership only, never on the coordinates.
 
-**Reading the cluster output:** the GLM/LMM presets score a cluster by **mean Wald**
-(`sum(Wald)/n_channels`, height-weighted) while the legacy t-tests score by **extent** (size),
-so cluster statistics are **not comparable across the two tiers**; and a significant cluster is
-a **regional** claim, not a per-electrode one. See
+**Cluster statistic (`params.cluster_statistic`, GLM, circular and mixed-model tiers).**
+
+| Value | Cluster score | Notes |
+|---|---|---|
+| `'sum'` (default) | sum of the Wald statistic over the cluster's channels (t² or F; the circular statistic itself) | a summed-statistic cluster mass in the sense of Maris & Oostenveld (2007), taken here on the Wald scale (t² or F); rewards height and extent |
+| `'mean'` | the same sum divided by the number of channels (mean Wald, Stephan et al. 2021) | the rule before 2026-10-28; reproduces older runs |
+| anything else | refused before any file is read: `snpm:badClusterStatistic`, "cluster_statistic must be 'sum' or 'mean'; got '<value>'." | case-insensitive; empty or absent means `'sum'` |
+
+It applies to every cluster-mass test of a run: the main effect, every post-hoc pair, the three
+`mixed2way` effects and their simple effects, the circular tests, the mixed model, and
+`export_glm_report` (`opts.cluster_statistic`). The cluster-forming threshold (model p < α), the
+Wald scale, the permutation draws and TFCE do not depend on it; TFCE maps and p-values are
+identical under both settings. The setting is recorded in `results_struct.cluster_statistic`
+(and in `effects(k)` and `posthoc(k)` for the GLM tier; the circular tier also writes its wording
+to `results_struct.circ.cluster_statistic`), in the results text as one line, in the `settings`
+sheet of the workbook, and in the report's model card and cluster view. The results-text line is
+"Cluster statistic: sum of t² (or F) over the cluster" under `'sum'` and "Cluster statistic: sum
+of t² (or F) over the cluster, divided by the number of channels (mean; reproduces runs before
+this change)" under `'mean'`; the circular tier says "the statistic" in place of "t² (or F)".
+
+**Reading the cluster output:** the legacy t-tests and correlations score a cluster by
+**extent** (size); the GLM, circular and mixed-model tiers score it by **mass** (summed Wald by
+default, mean Wald under `'mean'`), so cluster statistics are **not comparable across tiers or
+settings**; and a significant cluster is a **regional** claim, not a per-electrode one. See
 [Interpreting cluster results](../explanation/interpreting-cluster-results.md).
 
 Specialized reports: GLM faceted report `export_glm_report.m` (anova/t templates in

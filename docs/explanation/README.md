@@ -23,8 +23,9 @@ works the way it does. They don't give step-by-step instructions (see
   reasons this tool exists alongside it (preset-driven UX; the mixed-ANOVA 3-effect report;
   per-channel LMM; circular designs).
 - **[Interpreting cluster results](interpreting-cluster-results.md)** — cross-tier interpretation
-  points: why the GLM/LMM cluster statistic is height-weighted (mean Wald) while the legacy path
-  is extent-weighted (so results aren't comparable across tiers), why a significant cluster is a
+  points: how each tier scores a cluster (extent on the legacy path; summed or mean Wald on the
+  GLM, circular and mixed-model tiers, chosen by `cluster_statistic`, so results aren't
+  comparable across tiers or settings), why a significant cluster is a
   regional claim rather than an electrode-by-electrode one, and why a circular map carries no
   direction of effect.
 - **[Missing data and the complete-column rule](missing-data-and-excluded-channels.md)** — why a

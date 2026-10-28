@@ -34,6 +34,10 @@ function [results_struct, results_text] = core_snpm_glm(params)
     % "covariate-adjusted". Refused before the file is read (text shared with
     % the Python port; do not reword).
     snpm_glm_require_covariate(preset, getfield_default(params, 'covariate_cols', {}));
+    % Cluster statistic ('sum' default | 'mean'), validated before the file is
+    % read and normalised in params so every effect below reads one value.
+    [cs, cs_line] = snpm_cluster_statistic(params);
+    params.cluster_statistic = cs;
 
     %% Load
     if strcmp(data_sheet, 'CSV File')
@@ -159,7 +163,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
     perm_stat_fn = @() permstat(flctx, D.X, D.C);
     snpm_perm_tap('record', ['loop:glm:main:' D.effect_label], []);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_stat_fn, neighbors, E, H, alpha, ...
-        params.permutations, D.contrast_type, loop_ev);
+        params.permutations, D.contrast_type, loop_ev, [], cs);
     % Zero-variance rule 3: an observed fit with a zero error term is reported
     % undefined (NaN) and listed; it stayed in every permuted map.
     [T, p, excluded_channels] = mark_undefined(T, p, zero_obs & loop_ev, ...
@@ -177,7 +181,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
     posthoc_skipped = empty_skipped();
     if do_posthoc && strcmpi(D.contrast_type, 'F') && ~isempty(D.posthoc)
         [posthoc_results, posthoc_skipped] = compute_posthoc(power, meta, preset, opts, D, ...
-            flctx.evaluable, neighbors, alpha, E, H, params.permutations, chanlocs);
+            flctx.evaluable, neighbors, alpha, E, H, params.permutations, chanlocs, cs);
     end
 
     %% Output naming + plot
@@ -308,6 +312,8 @@ function [results_struct, results_text] = core_snpm_glm(params)
     % at. Published so the report numbers its clusters with the SAME threshold
     % the run used, rather than a second hard-coded .05 that could drift.
     results_struct.alpha = alpha;
+    % How each cluster was scored ('sum' | 'mean'; snpm_cluster_statistic).
+    results_struct.cluster_statistic = cs;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = posthoc_results;
     % Pairs that were NOT run, with the reason. A skipped pair has no map and no
@@ -343,6 +349,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
 
     try
         func_genSnpmTable(results_struct, uncorrsigch, correctTFCEsigch, SnPMsigch, chanlocs, outputSname, select_mode);
+        snpm_write_settings_sheet(outputSname, cs, alpha);
         disp('Excel file generated successfully!');
     catch ME
         warning(ME.identifier, 'Could not generate Excel file: %s', ME.message);
@@ -356,6 +363,7 @@ function [results_struct, results_text] = core_snpm_glm(params)
         ['Effect: ' D.effect_label ' (' D.contrast_type ')'], ...
         ['Permutation: ' D.perm_type], ...
         ['Permutations: ' num2str(params.permutations)], ...
+        cs_line, ...
         ['Observations: ' num2str(size(power,1))], ...
         excluded_text(excluded_channels), ...
         '', '--- Statistical Results ---', ...
@@ -572,6 +580,8 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     nperm = params.permutations;
     do_posthoc = getfield_default(params, 'posthoc', true);
     outpath = params.output_path;
+    % validated and normalised by core_snpm_glm before the file was read
+    [cs, cs_line] = snpm_cluster_statistic(params);
 
     for req = {'group_col','condition_col','subject_col'}
         if ~isfield(opts, req{1}) || isempty(opts.(req{1}))
@@ -618,7 +628,7 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     % ---- (1) GROUP main effect: subject means, between-subjects ('free') ----
     snpm_perm_tap('record', 'scope:mixed2way:group', []);
     [eG, subj_power, subj_meta] = compute_group_effect(power, meta, opts, ...
-        neighbors, alpha, E, H, nperm, do_posthoc, mask, chanlocs);
+        neighbors, alpha, E, H, nperm, do_posthoc, mask, chanlocs, cs);
     eG.key = 'group';
     eG = gen_effect_topos(eG, subj_power, subj_meta, opts.group_col, chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_group'], ...
@@ -629,7 +639,7 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     optsC = opts; optsC.effect = 'condition';
     Dc = snpm_glm_design('mixed2way', meta, optsC);
     eC = compute_effect(power, Dc, neighbors, alpha, E, H, nperm, do_posthoc, ...
-        mask, meta, 'mixed2way', optsC, chanlocs, 'mixed2way condition');
+        mask, meta, 'mixed2way', optsC, chanlocs, 'mixed2way condition', cs);
     eC.key = 'condition';
     eC = gen_effect_topos(eC, power, meta, opts.condition_col, chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_condition'], ...
@@ -641,13 +651,13 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     optsX = opts; optsX.effect = 'interaction';
     Dx = snpm_glm_design('mixed2way', meta, optsX);
     eX = compute_effect(power, Dx, neighbors, alpha, E, H, nperm, false, ...
-        mask, meta, 'mixed2way', optsX, chanlocs, 'mixed2way interaction');
+        mask, meta, 'mixed2way', optsX, chanlocs, 'mixed2way interaction', cs);
     eX.key = 'interaction';
     eX = gen_effect_topos(eX, power, meta, '', chanlocs, ...
         insidegoodch, select_mode, outpath, [base_filename '_interaction'], ...
         [outputSname '_interaction'], alpha);
     [eX.simple_effects, eX.simple_skipped] = compute_simple_effects(power, meta, opts, neighbors, ...
-        alpha, E, H, nperm, chanlocs, insidegoodch, select_mode, outpath, base_filename, outputSname, mask);
+        alpha, E, H, nperm, chanlocs, insidegoodch, select_mode, outpath, base_filename, outputSname, mask, cs);
 
     % ---- Global whole-head mixed ANOVA (parametric, channel-averaged) ----
     %
@@ -722,6 +732,9 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     % at. Published so the report numbers its clusters with the SAME threshold
     % the run used, rather than a second hard-coded .05 that could drift.
     results_struct.alpha = alpha;
+    % How each cluster was scored ('sum' | 'mean'), also on every effects(k)
+    % and posthoc(k).
+    results_struct.cluster_statistic = cs;
     results_struct.chanlocs = chanlocs;
     results_struct.posthoc = eX.posthoc;
     results_struct.posthoc_skipped = eX.posthoc_skipped;
@@ -760,12 +773,13 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     try
         func_genSnpmTable(results_struct, eX.uncorrsigch, eX.correctTFCEsigch, ...
             eX.SnPMsigch, chanlocs, outputSname, select_mode);
+        snpm_write_settings_sheet(outputSname, cs, alpha);
         disp('Excel file generated successfully!');
     catch ME
         warning(ME.identifier, 'Could not generate Excel file: %s', ME.message);
     end
 
-    results_text = mixed2way_text(effects, data_file, preset, nperm, size(power,1), outputSname);
+    results_text = mixed2way_text(effects, data_file, preset, nperm, size(power,1), outputSname, cs_line);
 
     % No params.tail for mixed2way either -- see the note in the single-effect
     % path above. The three effects are reported with their own contrast types
@@ -787,13 +801,15 @@ end
 
 % ---- one effect: real stat + FL permutation correction ------------------
 function eff = compute_effect(Y, D, neighbors, alpha, E, H, nperm, do_posthoc, mask, meta, preset, opts, ...
-        chanlocs, context_label)
+        chanlocs, context_label, cs)
 % mask  : 1 x nCh logical, the channel set this effect may test (fixed by the
 %         caller before any permutation); ANDed with the design's own
 %         Freedman-Lane evaluable set.
 % meta, preset, opts : what D was built from, needed to rebuild each pairwise
 %         post-hoc as its own two-level design (compute_posthoc).
 % chanlocs, context_label : for this loop's own exclusion report.
+% cs    : cluster statistic, 'sum' | 'mean' (snpm_cluster_statistic); also
+%         handed to every post-hoc of this effect.
 %
 % Masks (zero-variance spec, GLM rules 1 and 4):
 %   eff.finite_evaluable  finiteness mask (caller's mask AND the design's own
@@ -809,7 +825,7 @@ function eff = compute_effect(Y, D, neighbors, alpha, E, H, nperm, do_posthoc, m
     perm_fn = @() permstat(flctx, D.X, D.C);
     snpm_perm_tap('record', ['loop:glm:effect:' D.effect_label], []);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_fn, neighbors, E, H, alpha, ...
-        nperm, D.contrast_type, evaluable);
+        nperm, D.contrast_type, evaluable, [], cs);
     excl = loop_exclusions(finite_ev, flctx.no_variation, false(size(finite_ev)), ...
         chanlocs, context_label);
     [T, p, excl] = mark_undefined(T, p, zero_obs & evaluable, excl, chanlocs);
@@ -826,10 +842,11 @@ function eff = compute_effect(Y, D, neighbors, alpha, E, H, nperm, do_posthoc, m
     eff.effect_label = D.effect_label;
     eff.perm_type = D.perm_type;
     eff.df1 = df1; eff.df2 = df2;
+    eff.cluster_statistic = cs;
     eff.D = D; eff.flctx = flctx;
     if do_posthoc && strcmpi(D.contrast_type, 'F') && ~isempty(D.posthoc)
         [eff.posthoc, eff.posthoc_skipped] = compute_posthoc(Y, meta, preset, opts, D, ...
-            finite_ev, neighbors, alpha, E, H, nperm, chanlocs);
+            finite_ev, neighbors, alpha, E, H, nperm, chanlocs, cs);
     else
         eff.posthoc = empty_posthoc();
         eff.posthoc_skipped = empty_skipped();
@@ -850,10 +867,11 @@ function ph = empty_posthoc()
 %                             a perfect observed fit (zero-variance spec rule
 %                             4: a pair can exclude a channel its omnibus
 %                             tested)
+%   .cluster_statistic        'sum' | 'mean', how this pair's clusters were scored
     ph = struct('label', {}, 'uncorrsigch', {}, 'correctTFCEsigch', {}, 'SnPMsigch', {}, ...
         'T', {}, 'p', {}, 'Clusters', {}, 'map_base', {}, 'n_rows', {}, 'n_subjects', {}, ...
         'n_subjects_total', {}, 'group_sizes', {}, 'dropped_subjects', {}, 'run_on', {}, ...
-        'excluded_channels', {});
+        'excluded_channels', {}, 'cluster_statistic', {});
 end
 
 function sk = empty_skipped()
@@ -888,7 +906,7 @@ function lines = posthoc_text(posthoc, skipped, indent)
     end
 end
 
-function [posthoc_results, skipped] = compute_posthoc(Y, meta, preset, opts, D, evaluable, neighbors, alpha, E, H, nperm, chanlocs)
+function [posthoc_results, skipped] = compute_posthoc(Y, meta, preset, opts, D, evaluable, neighbors, alpha, E, H, nperm, chanlocs, cs)
 % Pairwise post-hoc t-maps for an omnibus-F effect (Method Spec A, approved
 % 2026-10-14; rationale and rules in dependencies/snpm_glm_pair.m).
 %
@@ -930,7 +948,7 @@ function [posthoc_results, skipped] = compute_posthoc(Y, meta, preset, opts, D, 
         phfn = @() permstat(flph, pr.D.X, pr.C);
         snpm_perm_tap('record', ['loop:glm:posthoc:' lab], []);
         [Tph, pph, Cl_ph] = snpm_perm_correction(phstat, phpm, phfn, neighbors, E, H, alpha, ...
-            nperm, 't', ev);
+            nperm, 't', ev, [], cs);
         phex = loop_exclusions(fin, flph.no_variation, false(size(fin)), chanlocs, ...
             ['post-hoc ' lab]);
         [Tph, pph, phex] = mark_undefined(Tph, pph, zero_obs & ev, phex, chanlocs);
@@ -952,6 +970,7 @@ function [posthoc_results, skipped] = compute_posthoc(Y, meta, preset, opts, D, 
         posthoc_results(k).dropped_subjects = pr.dropped;
         posthoc_results(k).run_on = pr.run_on;
         posthoc_results(k).excluded_channels = phex;
+        posthoc_results(k).cluster_statistic = cs;
         fprintf('  post-hoc %s: %d TFCE-sig channels (%s)\n', ...
             lab, numel(posthoc_results(k).correctTFCEsigch), pr.run_on);
     end
@@ -1049,7 +1068,7 @@ end
 
 % ---- group main effect: subject means, between-subjects test -------------
 function [eff, subj_power, subj_meta] = compute_group_effect(power, meta, opts, ...
-        neighbors, alpha, E, H, nperm, do_posthoc, mask, chanlocs)
+        neighbors, alpha, E, H, nperm, do_posthoc, mask, chanlocs, cs)
 % Subject means are PLAIN means over the subject's rows. run_mixed2way has
 % already required one row per condition for every subject, so each mean is
 % over the same conditions; a channel with any missing cell is outside `mask`
@@ -1071,7 +1090,7 @@ function [eff, subj_power, subj_meta] = compute_group_effect(power, meta, opts, 
     Dg = snpm_glm_design('anova1', subj_meta, struct('group_col', opts.group_col));
     snpm_glm_estimability(Dg, 'enforce');
     eff = compute_effect(subj_power, Dg, neighbors, alpha, E, H, nperm, do_posthoc, ...
-        mask, subj_meta, 'anova1', struct('group_col', opts.group_col), chanlocs, 'mixed2way group');
+        mask, subj_meta, 'anova1', struct('group_col', opts.group_col), chanlocs, 'mixed2way group', cs);
 end
 
 % ---- mixed2way balance requirement --------------------------------------
@@ -1129,7 +1148,7 @@ end
 
 % ---- interaction simple effects: condition within each group ------------
 function [simples, skipped] = compute_simple_effects(power, meta, opts, neighbors, alpha, E, H, nperm, ...
-        chanlocs, insidegoodch, select_mode, out_path, base_filename, outputSname, mask)
+        chanlocs, insidegoodch, select_mode, out_path, base_filename, outputSname, mask, cs)
 % skipped : one entry (.label, .reason) per group whose simple effect was NOT
 %           run, shaped like posthoc_skipped so every output file can say so.
 %
@@ -1186,7 +1205,7 @@ function [simples, skipped] = compute_simple_effects(power, meta, opts, neighbor
         snpm_perm_tap('record', ['scope:mixed2way:simple:' level_to_str(glev, g)], []);
         se = compute_effect(power(rows, :), Dg, neighbors, alpha, E, H, nperm, true, ...
             mask, meta(rows, :), 'rmanova', sopts, chanlocs, ...
-            sprintf('mixed2way simple effect (%s)', level_to_str(glev, g)));
+            sprintf('mixed2way simple effect (%s)', level_to_str(glev, g)), cs);
         se.key = sprintf('condition@%s', level_to_str(glev, g));
         se.effect_label = glab;
         safe = matlab.lang.makeValidName(level_to_str(glev, g));
@@ -1275,6 +1294,7 @@ function e = normalize_effect(eff)
     e.SnPMsigch        = getfield_default(eff, 'SnPMsigch', []);
     e.df1              = getfield_default(eff, 'df1', NaN);
     e.df2              = getfield_default(eff, 'df2', NaN);
+    e.cluster_statistic = getfield_default(eff, 'cluster_statistic', 'sum');
     e.map_base         = getfield_default(eff, 'map_base', '');
     e.group_labels     = getfield_default(eff, 'group_labels', {});
     e.group_mean_png   = getfield_default(eff, 'group_mean_png', {});
@@ -1307,12 +1327,13 @@ function e = normalize_effect(eff)
     e.global_n_channels = getfield_default(eff, 'global_n_channels', NaN);
 end
 
-function txt = mixed2way_text(effects, data_file, preset, nperm, nobs, outputSname)
+function txt = mixed2way_text(effects, data_file, preset, nperm, nobs, outputSname, cs_line)
     txt = {
         '=== SnPM Two-way Mixed ANOVA (group / condition / interaction) ===', '', ...
         ['Data file: ' data_file], ...
         ['Preset: ' preset], ...
         ['Permutations: ' num2str(nperm)], ...
+        cs_line, ...
         ['Observations: ' num2str(nobs)], '', '--- Effects ---'}';
     for k = 1:numel(effects)
         e = effects(k);

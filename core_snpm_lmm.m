@@ -64,6 +64,9 @@ function [results_struct, results_text] = core_snpm_lmm(params)
              'an F, and clusters are formed on the two-sided model p; a one-sided TFCE null of ' ...
              'signed maxima would not match it.'], char(tail));
     end
+    % Cluster statistic ('sum' default | 'mean'), refused before any file is read.
+    [cs, cs_line] = snpm_cluster_statistic(params);
+    params.cluster_statistic = cs;
     eff_spec = struct('dv', params.lmm_dv, 'fixed', params.lmm_fixed, 'effect', params.lmm_effect, ...
         'effect_type', params.lmm_effect_type, 'perm', perm_scheme, 'group', grp_col);
     if strcmpi(perm_scheme, 'group_label')
@@ -340,7 +343,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
 
     %% Statistical analysis
     [T, p] = snpm_lmm_TFCE(power, meta, spec, neighbors, E, H, alpha, tail, params.permutations, evaluable);
-    Clusters = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, params.permutations, evaluable);
+    Clusters = snpm_lmm_cluster(power, meta, spec, neighbors, alpha, params.permutations, evaluable, cs);
     % An observed channel whose fit had no usable residual variation
     % (snpm_lmm_degenerate, the per-labelling backstop) is NaN in the map; list it.
     und = false(1, numel(evaluable)); und(T.undefined_channels) = true;
@@ -396,6 +399,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     % at. Published so the report numbers its clusters with the SAME threshold
     % the run used, rather than a second hard-coded .05 that could drift.
     results_struct.alpha = alpha;
+    results_struct.cluster_statistic = cs;   % 'sum' | 'mean' (snpm_cluster_statistic)
     results_struct.chanlocs         = chanlocs;
     results_struct.is_source        = is_source;   % source-space run (topoplot bypassed)
     % Channel-exclusion surface shared with the GLM tier: .mat field ->
@@ -495,6 +499,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     %% Excel + HTML (reused output functions)
     try
         func_genSnpmTable(results_struct, uncorrsigch, correctTFCEsigch, SnPMsigch, chanlocs, outputSname, select_mode);
+        snpm_write_settings_sheet(outputSname, cs, alpha);
         disp('Excel file generated successfully!');
     catch ME
         warning(ME.identifier, 'Could not generate Excel file: %s', ME.message);
@@ -519,6 +524,7 @@ function [results_struct, results_text] = core_snpm_lmm(params)
         ['Permutation scheme: ' spec.perm], ...
         ['Tail: ' tail], ...
         ['Permutations: ' num2str(params.permutations)], ...
+        cs_line, ...
         ['Trials: ' num2str(results_struct.lmm.n_trials) ', Subjects: ' num2str(nsubj)], ...
         snpm_lmm_dropped_text(dropped_rows), ...
         '', '--- Statistical Results ---', ...

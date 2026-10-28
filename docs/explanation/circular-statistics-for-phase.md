@@ -316,9 +316,11 @@ plugged in — so extending it to Hotelling T² or Watson's U² is legitimate. I
 extension, not a citation.
 
 **Our cluster statistic is mass, where Helfrich used FieldTrip's `maxsize`.** Cluster mass sums
-the statistic over the cluster; `maxsize` counts supra-threshold channels. Mass rewards height,
-size rewards extent. Neither is wrong, but the numbers are not comparable, and the disclosure is
-written into the results text of every circular run.
+the statistic over the cluster; `maxsize` counts supra-threshold channels. The summed mass (the
+default since 2026-10-28) rewards both height and extent; size rewards extent only; with
+`cluster_statistic = 'mean'` the sum is divided by the channel count, which rewards height only
+and was the rule before that date. None is wrong, but the numbers are not comparable, and the
+disclosure is written into the results text of every circular run.
 
 ## Why the parametric p is descriptive only
 

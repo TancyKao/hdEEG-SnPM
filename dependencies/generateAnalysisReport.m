@@ -82,6 +82,10 @@ function R = build_model(rs, params, base, outputSname, unc, tfce, clu)
     if isfield(params,'comparison') && ischar(params.comparison)
         R.comparison = params.comparison;
     end
+    % How clusters were scored (GLM / circular / mixed-model tiers only); ''
+    % for the legacy t-tests, which use cluster extent, and for results saved
+    % before the setting existed.
+    R.cluster_stat_html = cluster_stat_html(rs, R.comparison);
     [statName, statSym] = stat_info(rs, params);
     R.statName = statName;
     R.kind = report_kind(rs);
@@ -909,6 +913,8 @@ function M = model_card_rows(rs, params, base)
     rows{end+1} = {'Permutations &middot; &alpha;', ...
         sprintf('%s &middot; %s', fmt_int(nperm), fmt_alpha(gf(rs,'alpha',0.05))), false};
     rows{end+1} = {'Correction', 'TFCE + cluster', true};
+    csh = cluster_stat_html(rs, comp);
+    if ~isempty(csh), rows{end+1} = {'Cluster statistic', [upper(csh(1)) csh(2:end)], false}; end
     rows{end+1} = {'Dataset', strrep(base, '_', ' '), false};
 
     M = struct('formula', f, 'rows', {rows});
@@ -1105,9 +1111,8 @@ function N = build_notices(rs)
         N{end+1} = notice('Angle convention', sprintf([ ...
             'Angles were rotated by <b>%+.1f deg</b> (declared convention <b>%s</b>) so that ' ...
             '0 is the slow-oscillation up-state peak. A wrong declaration rotates every angle ' ...
-            'invisibly. Cluster statistic: <b>mass</b> (sum of the statistic over the cluster, ' ...
-            'divided by the number of channels), not cluster extent.'], ...
-            rs.circ.rotation_deg, esc(char(rs.circ.convention))));
+            'invisibly. %s, not cluster extent.'], ...
+            rs.circ.rotation_deg, esc(char(rs.circ.convention)), circ_cluster_note(rs)));
     end
 
     % -- circular-linear: subjects dropped for a missing measure value -------
@@ -1523,9 +1528,11 @@ function write_cluster_view(fid, R, e)
         if isfield(e, 'eff_png') && ~isempty(e.eff_png)
             mapnote = ' The effect map above shows the uncorrected pattern.';
         end
+        csnote = '';
+        if ~isempty(R.cluster_stat_html), csnote = [' Cluster statistic: ' R.cluster_stat_html '.']; end
         fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
-            sprintf('<b>No significant clusters</b> at &alpha; = %s%s.%s', fmt_alpha(R.alpha), ...
-            smallest_clause(min_cluster_p(e.Clusters), R.nperm, 'cluster p'), mapnote));
+            sprintf('<b>No significant clusters</b> at &alpha; = %s%s.%s%s', fmt_alpha(R.alpha), ...
+            smallest_clause(min_cluster_p(e.Clusters), R.nperm, 'cluster p'), mapnote, csnote));
         fprintf(fid, '      </div>\n');
         return;
     end
@@ -1579,7 +1586,12 @@ function write_cluster_table(fid, R, e, ord, sgn)
                 esc(chan_label(R.rs, ch(k))), fmt_stat(stat_at(e, ch(k))), fmt_p(cp, R.nperm));
         end
     end
-    fprintf(fid, '            </tbody></table>\n          </div>\n');
+    fprintf(fid, '            </tbody></table>\n');
+    if ~isempty(R.cluster_stat_html)
+        fprintf(fid, '            <div class="thead-note"><span>Cluster statistic: %s</span></div>\n', ...
+            R.cluster_stat_html);
+    end
+    fprintf(fid, '          </div>\n');
 end
 
 function write_tfce_view(fid, R, e)
@@ -1893,6 +1905,38 @@ end
 % =========================================================================
 % DATA HELPERS
 % =========================================================================
+% The cluster-statistic wording for the report, from the same source as the
+% results text (snpm_cluster_statistic), e.g. 'sum of t&#178; (or F) over the
+% cluster'. '' when the run did not record a setting: the legacy t-tests use
+% cluster extent, and a results file saved before the setting existed has none.
+function h = cluster_stat_html(rs, comp)
+    h = '';
+    if ~isstruct(rs) || ~isfield(rs, 'cluster_statistic') || isempty(rs.cluster_statistic)
+        return;
+    end
+    what = '';
+    if strncmpi(char(comp), 'circ', 4), what = 'the statistic'; end
+    [~, line] = snpm_cluster_statistic(rs.cluster_statistic, what);
+    h = regexprep(line, '^Cluster statistic: ', '');
+    h = strrep(esc(h), char(178), '&#178;');
+end
+
+% The cluster sentence of the circular convention notice. A results file saved
+% before the setting existed was scored with the mean, so it says so.
+function s = circ_cluster_note(rs)
+    if isfield(rs, 'cluster_statistic') && ~isempty(rs.cluster_statistic)
+        cs = snpm_cluster_statistic(rs.cluster_statistic);
+    else
+        cs = 'mean';
+    end
+    if strcmp(cs, 'sum')
+        s = 'Cluster statistic: <b>sum</b> of the statistic over the cluster';
+    else
+        s = ['Cluster statistic: <b>mean</b> (sum of the statistic over the cluster, ' ...
+             'divided by the number of channels)'];
+    end
+end
+
 function v = gf(s, f, dflt)
     if isstruct(s) && isfield(s, f) && ~isempty(s.(f)), v = s.(f); else, v = dflt; end
 end

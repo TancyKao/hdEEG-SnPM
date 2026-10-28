@@ -77,7 +77,8 @@ run writes **zero** scalp PNGs) and emit a significant-voxel list instead:
 **TFCE is the primary correction.** The cluster statistic on the source **t-test** path is
 cluster **extent** (size) — the same extent-based FWE correction the scalp t-tests use, since the
 source t-test reuses `snpm_cluster_analysis` unchanged. Cluster **mass** applies only to the
-source **LMM** path (`core_snpm_lmm`, Stephan's mean-Wald recipe). Filter the voxel table on
+source **LMM** path (`core_snpm_lmm`): the summed Wald by default, or Stephan's mean-Wald recipe
+with `params.cluster_statistic = 'mean'`. Filter the voxel table on
 `sig_TFCE == 1` or `in_sig_cluster == 1`.
 
 ## Interpret with care

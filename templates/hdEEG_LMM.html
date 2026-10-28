@@ -475,7 +475,8 @@
     
     4. CALCULATE cluster statistic for each cluster:
        Cluster_Stat = Sum(Wald values in cluster) / N_electrodes
-       (This is the AVERAGE Wald in the cluster)
+       (This is the AVERAGE Wald in the cluster. This toolbox scores the plain
+        Sum(Wald) by default and offers the average as cluster_statistic 'mean')
     
     5. KEEP only the MAXIMUM absolute cluster statistic
        Max_Cluster_Stat[i] = max(|Cluster_Stat_1|, |Cluster_Stat_2|, ...)
@@ -516,8 +517,8 @@ Result: Distribution of 1,000 maximum cluster statistics</pre>
                 </tr>
                 <tr>
                     <td>Cluster statistic</td>
-                    <td>Average Wald</td>
-                    <td>Normalizes for cluster size</td>
+                    <td>Average Wald (this toolbox: summed Wald by default, average with cluster_statistic 'mean')</td>
+                    <td>Normalizes for cluster size, at a cost in power for spatially broad effects</td>
                 </tr>
                 <tr>
                     <td>Permutation scheme</td>
@@ -552,7 +553,7 @@ Result: Distribution of 1,000 maximum cluster statistics</pre>
                     <ul>
                         <li><strong>Model:</strong> Linear Mixed Model</li>
                         <li><strong>Statistic:</strong> Wald statistic</li>
-                        <li><strong>Cluster stat:</strong> Average Wald</li>
+                        <li><strong>Cluster stat:</strong> Average Wald (this toolbox defaults to the summed Wald)</li>
                         <li><strong>Threshold:</strong> p &lt; 0.05</li>
                         <li><strong>Permutations:</strong> 1,000</li>
                         <li><strong>Scheme:</strong> Within-subject shuffling</li>
@@ -591,7 +592,7 @@ Result: Distribution of 1,000 maximum cluster statistics</pre>
                     <td><strong>Cluster Statistic</strong></td>
                     <td>Sum(Wald) / N_electrodes</td>
                     <td>Sum(t-values) or cluster size</td>
-                    <td>Averaging reduces bias toward large clusters</td>
+                    <td>Averaging reduces bias toward large clusters but costs power for broad effects; this toolbox defaults to the plain sum (cluster_statistic 'mean' reproduces the paper)</td>
                 </tr>
                 <tr>
                     <td><strong>Threshold</strong></td>
@@ -834,8 +835,8 @@ Result: Distribution of 1,000 maximum cluster statistics</pre>
                 </tr>
                 <tr>
                     <td><strong>Cluster Statistic</strong></td>
-                    <td>Average Wald in cluster</td>
-                    <td>Reduces bias toward large clusters</td>
+                    <td>Average Wald in cluster (this toolbox: summed Wald by default)</td>
+                    <td>Reduces bias toward large clusters; the summed default keeps power for broad effects</td>
                 </tr>
                 <tr>
                     <td><strong>Permutation Scheme</strong></td>

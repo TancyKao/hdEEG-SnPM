@@ -563,6 +563,25 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
 
 ### Changed
 
+- **Cluster statistic of the GLM, circular and mixed-model tiers: summed mass by default**
+  (`params.cluster_statistic`, new helper `dependencies/snpm_cluster_statistic.m`). These tiers
+  scored a cluster as the sum of the Wald statistic (t² or F; the circular statistic itself)
+  over its channels **divided by the channel count**, which is a mean. A mean ignores extent, so
+  a broad, moderate effect lost to single-channel permutation maxima. The default is now the
+  plain sum (`'sum'`), a summed-statistic cluster mass in the sense of Maris & Oostenveld (2007), taken here on the Wald scale (t² or F); `'mean'` keeps the old rule and reproduces earlier runs. Anything else is
+  refused before any file is read (`snpm:badClusterStatistic`, "cluster_statistic must be 'sum'
+  or 'mean'; got '<value>'."). It applies to the main effect, every post-hoc pair, the three
+  `mixed2way` effects and their simple effects, the circular tests, the mixed model and
+  `export_glm_report` (`opts.cluster_statistic`). **Cluster masses and cluster p-values of
+  GLM, circular and mixed-model runs change**; the cluster-forming threshold, the Wald scale,
+  the permutation draws and every TFCE output are unchanged (TFCE maps and p-values are
+  bit-identical under both settings). The legacy t-tests and correlations keep cluster extent.
+  The setting is recorded in `results_struct.cluster_statistic` (also `effects(k)` and
+  `posthoc(k)`), as one results-text line ("Cluster statistic: sum of t² (or F) over the
+  cluster", or "…, divided by the number of channels (mean; reproduces runs before this
+  change)"), in a new one-row `settings` sheet of the workbook (`cluster_statistic`, `alpha`)
+  and in the report's model card and cluster view; "divided by the number of channels"
+  appears only under `'mean'`. The parity fixtures are re-exported under `'sum'`.
 - **HTML report v2** (`dependencies/generateAnalysisReport.m`, the design in
   `templates/snpm_report_v2_master.html`): every analysis now emits one layout — a sticky
   summary strip with one chip per effect (traffic light, `Clu · TFCE · Unc` counts, global

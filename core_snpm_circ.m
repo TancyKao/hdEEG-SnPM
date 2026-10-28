@@ -50,8 +50,10 @@ function [results_struct, results_text] = core_snpm_circ(params)
 %    A DESCRIPTIVE panel (per-group mean direction, circular SD, Rayleigh) is
 %    emitted instead and is labelled no-inference.
 %
-% Cluster statistic is cluster MASS (snpm_perm_correction's), which differs from
-% Helfrich's FieldTrip 'maxsize'; disclosed in the results text.
+% Cluster statistic is cluster MASS (snpm_perm_correction's): the sum of the
+% statistic over the cluster by default, or that sum / n channels under
+% params.cluster_statistic = 'mean'. Either differs from Helfrich's FieldTrip
+% 'maxsize' (cluster extent); disclosed in the results text.
 %
 % INPUT params (beyond the usual data/output/channels/permutations):
 %   .circ_units             REQUIRED 'rad'|'deg'          (no default)
@@ -62,6 +64,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
 %   .circ_collinearity_max  |point-biserial| above which log(count) is treated
 %                           as collinear with group. DEFAULT 0.8.
 %   .measure_col            circ_corrAngLinear: name of the linear measure column
+%   .cluster_statistic      'sum' (default) | 'mean' (snpm_cluster_statistic)
 %
 % See also SNPM_CIRC_HOTELLING, SNPM_CIRC_HOTELLING_PERM, SNPM_CIRC_WATSONS_U2,
 %          SNPM_CIRC_CORR_ANGLINEAR, SNPM_CIRC_IMPORT, SNPM_PERM_CORRECTION.
@@ -96,6 +99,8 @@ function [results_struct, results_text] = core_snpm_circ(params)
              'meaningless). Use ''absolute''.'], params.datatype);
     end
     params.datatype = 'absolute';
+    [cs, cs_line] = snpm_cluster_statistic(params, 'the statistic');
+    params.cluster_statistic = cs;
 
     if ~exist(params.output_path, 'dir'), mkdir(params.output_path); end
 
@@ -267,7 +272,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
     end
     snpm_perm_tap('record', ['loop:circ:' comparison], []);
     [T, p, Clusters] = snpm_perm_correction(stat, pm, perm_fn, neighbors, E, H, ...
-        alpha, nperm, 'F', evaluable, tfce_dh);
+        alpha, nperm, 'F', evaluable, tfce_dh, cs);
 
     uncorrsigch      = find(p.real <= alpha);
     correctTFCEsigch = find(p.correctedTFCE <= alpha);
@@ -321,6 +326,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
     % at. Published so the report numbers its clusters with the SAME threshold
     % the run used, rather than a second hard-coded .05 that could drift.
     results_struct.alpha = alpha;
+    results_struct.cluster_statistic = cs;   % 'sum' | 'mean'
     results_struct.chanlocs = chanlocs;
     results_struct.excluded_channels = excluded_channels;
     results_struct.hide_condition_b  = is_corr;   % no "group B" topography
@@ -328,7 +334,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
     results_struct.circ = struct('comparison', comparison, 'import', imp1, ...
         'rotation_deg', imp1.rotation_deg, 'convention', imp1.convention, ...
         'units', imp1.units, 'covariate', cov_report, 'gate_min_per_group', 8, ...
-        'evaluable', evaluable, 'cluster_statistic', 'mass (sum stat / n channels)', ...
+        'evaluable', evaluable, 'cluster_statistic', regexprep(cs_line, '^Cluster statistic: ', ''), ...
         'n_group1', n1g, 'n_group2', n2g);
     if is_corr
         results_struct.circ.rho = rho;
@@ -359,6 +365,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
     try
         func_genSnpmTable(results_struct, uncorrsigch, correctTFCEsigch, SnPMsigch, ...
             chanlocs, outputSname, select_mode);
+        snpm_write_settings_sheet(outputSname, cs, alpha);
         disp('Excel file generated successfully!');
     catch ME
         warning(ME.identifier, 'Could not generate Excel file: %s', ME.message);
@@ -366,7 +373,7 @@ function [results_struct, results_text] = core_snpm_circ(params)
 
     results_text = circ_text(params, comparison, imp1, cov_report, desc, ...
         excluded_channels, uncorrsigch, correctTFCEsigch, sigclusters, SnPMsigch, ...
-        outputSname, nSubj, n1g, n2g, measure_dropped);
+        outputSname, nSubj, n1g, n2g, measure_dropped, cs_line);
 
     try
         generateAnalysisReport(results_struct, params, base_filename, outputSname, ...
@@ -697,7 +704,7 @@ function excl = excluded_info(evaluable, chanlocs, context_label)
 end
 
 function txt = circ_text(params, comparison, imp, cov, desc, excl, unc, tfce, ...
-        sigclusters, snpmch, outputSname, nSubj, n1g, n2g, measure_dropped)
+        sigclusters, snpmch, outputSname, nSubj, n1g, n2g, measure_dropped, cs_line)
     txt = {
         '=== SnPM Circular (Tier 2) Analysis Results ===', '', ...
         ['Comparison: ' comparison ' (' stat_label(comparison) ')'], ...
@@ -735,8 +742,8 @@ function txt = circ_text(params, comparison, imp, cov, desc, excl, unc, tfce, ..
     txt{end+1} = ['TFCE corrected significant channels: ' num2str(numel(tfce))];
     txt{end+1} = ['Significant clusters N = : ' num2str(numel(sigclusters))];
     txt{end+1} = ['SnPM significant channels N = : ' num2str(numel(snpmch))];
-    txt{end+1} = ['Cluster statistic: MASS (sum of the statistic / n channels). ' ...
-        'This differs from the FieldTrip maxsize used by Helfrich et al.'];
+    txt{end+1} = [cs_line '. This differs from the FieldTrip maxsize (cluster ' ...
+        'extent) used by Helfrich et al.'];
     txt{end+1} = ['Note: the parametric per-channel p is a cluster-forming and ' ...
         'descriptive quantity only. For Watson U^2 at n=8 per group the exact ' ...
         'enumerated null gives 0.1553 / 0.1787 / 0.2412 at alpha .10 / .05 / .01 ' ...

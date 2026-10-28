@@ -30,6 +30,10 @@ function [results_struct, results_text] = core_snpm_glm(params)
     if ~isfield(params, 'meta_cols') || isempty(params.meta_cols)
         error('core_snpm_glm:noMetaCols', 'params.meta_cols must list the non-channel columns.');
     end
+    % ANCOVA with no covariate is a one-way ANOVA that would be labelled
+    % "covariate-adjusted". Refused before the file is read (text shared with
+    % the Python port; do not reword).
+    snpm_glm_require_covariate(preset, getfield_default(params, 'covariate_cols', {}));
 
     %% Load
     if strcmp(data_sheet, 'CSV File')
@@ -90,6 +94,8 @@ function [results_struct, results_text] = core_snpm_glm(params)
     for f = {'group_col','condition_col','subject_col','predictor_col','covariate_cols','effect'}
         if isfield(params, f{1}), opts.(f{1}) = params.(f{1}); end
     end
+    % blank / whitespace-only covariate names are dropped ({'age',''} -> {'age'})
+    if isfield(opts, 'covariate_cols'), opts.covariate_cols = snpm_glm_covariate_list(opts.covariate_cols); end
 
     % Two-way mixed ANOVA needs a complete report: the group main effect
     % (between-subjects), the condition main effect (within-subject) and their
@@ -104,7 +110,12 @@ function [results_struct, results_text] = core_snpm_glm(params)
         return;
     end
 
+    if strcmpi(preset, 'regression')
+        snpm_glm_require_numeric_predictor(preset, meta, opts.predictor_col);
+    end
     D = snpm_glm_design(preset, meta, opts);
+    % every listed covariate constant on these rows -> dropped -> no covariate left
+    snpm_glm_require_covariate(preset, getfield_default(opts, 'covariate_cols', {}), D);
 
     % Between-subject presets (anova1/ancova/regression -> 'free' permutation)
     % assume ONE row per subject: whole-subject relabelling is only a valid null
@@ -115,6 +126,13 @@ function [results_struct, results_text] = core_snpm_glm(params)
     if strcmp(D.perm_type, 'free')
         guard_between_subject_rows(meta, opts, preset);
     end
+
+    % Effect aliased with the nuisance (a covariate repeating the predictor or
+    % the group): the contrast is not estimable and pinv would return a finite
+    % but arbitrary statistic, so it is refused; a nuisance-only dependency
+    % (two covariates spanning the same space) warns and runs. X is fixed
+    % across Freedman-Lane permutations, so the check on it is exact.
+    snpm_glm_estimability(D, 'enforce');
 
     % Saturated design (round-4 spec 3b, approved 2026-10-14): with no error
     % degrees of freedom every channel would hit zero-variance rule 2 and rule
@@ -583,6 +601,8 @@ function [results_struct, results_text] = run_mixed2way(preset, meta, power, opt
     for eff_name = {'condition', 'interaction'}
         o = opts; o.effect = eff_name{1};
         Dchk = snpm_glm_design('mixed2way', meta, o);
+        % the same design compute_effect is handed for this effect below
+        snpm_glm_estimability(Dchk, 'enforce');
         require_error_df(Dchk.X);
     end
 
@@ -1049,6 +1069,7 @@ function [eff, subj_power, subj_meta] = compute_group_effect(power, meta, opts, 
     subj_group = gcolv(firstRow);                    % subject's (constant) group, original type
     subj_meta  = table(subj_group, 'VariableNames', {opts.group_col});
     Dg = snpm_glm_design('anova1', subj_meta, struct('group_col', opts.group_col));
+    snpm_glm_estimability(Dg, 'enforce');
     eff = compute_effect(subj_power, Dg, neighbors, alpha, E, H, nperm, do_posthoc, ...
         mask, subj_meta, 'anova1', struct('group_col', opts.group_col), chanlocs, 'mixed2way group');
 end
@@ -1152,6 +1173,7 @@ function [simples, skipped] = compute_simple_effects(power, meta, opts, neighbor
                 level_to_str(glev, g), ME.message);
             continue;
         end
+        snpm_glm_estimability(Dg, 'enforce');
         % Round-4 spec 3b: a sub-loop with no error df is skipped with the
         % reason. Unreachable on a balanced design once the group has 2+
         % subjects ((n_g - 1)(nC - 1) >= 1), kept so the rule is local.

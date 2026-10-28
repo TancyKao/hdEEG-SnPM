@@ -1517,17 +1517,26 @@ function write_cluster_view(fid, R, e)
     fprintf(fid, '      <div id="panel_%s_clu" class="vpanel" data-view-name="Cluster-corrected">\n', e.key);
     [ord, sgn] = snpm_order_clusters(e.Clusters, e.T, R.alpha);
     if isempty(ord)
+        % Only point at "the effect map above" when there is one (a post-hoc
+        % pair has no effect map of its own).
+        mapnote = '';
+        if isfield(e, 'eff_png') && ~isempty(e.eff_png)
+            mapnote = ' The effect map above shows the uncorrected pattern.';
+        end
         fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
-            sprintf(['<b>No significant clusters</b> at &alpha; = %s%s. The effect map above ' ...
-            'shows the uncorrected pattern.'], fmt_alpha(R.alpha), ...
-            smallest_clause(min_cluster_p(e.Clusters), R.nperm, 'cluster p')));
+            sprintf('<b>No significant clusters</b> at &alpha; = %s%s.%s', fmt_alpha(R.alpha), ...
+            smallest_clause(min_cluster_p(e.Clusters), R.nperm, 'cluster p'), mapnote));
         fprintf(fid, '      </div>\n');
         return;
     end
     fprintf(fid, '        <div class="vbody">\n');
     if ~isempty(e.map_base)
-        write_fig(fid, fig_spec([e.map_base ' Cluster.png'], 'Cluster significance map', ...
-            ['<span class="dl"><span class="cnum" style="width:14px;height:14px;font-size:9px">1</span>' ...
+        % A post-hoc pair passes its own caption and a signed legend prefix
+        % (clu_title / map_legend); an effect uses the generic ones.
+        write_fig(fid, fig_spec([e.map_base ' Cluster.png'], ...
+            gf(e, 'clu_title', 'Cluster significance map'), ...
+            [gf(e, 'map_legend', '') ...
+             '<span class="dl"><span class="cnum" style="width:14px;height:14px;font-size:9px">1</span>' ...
              'cluster number at centroid</span><span class="dl"><span class="dd" style="background:#fff">' ...
              '</span>cluster-corrected</span>'], ''), 10);
     end
@@ -1585,12 +1594,20 @@ function write_tfce_view(fid, R, e)
     end
     fprintf(fid, '        <div class="vbody">\n');
     if ~isempty(e.map_base)
-        write_fig(fid, fig_spec([e.map_base ' TFCE.png'], 'TFCE significance map', ...
-            ['<span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span>' ...
+        % Same optional per-pair fields as write_cluster_view, plus tfce_note
+        % for the table's right-hand note.
+        if isfield(e, 'map_legend')
+            legend_html = e.map_legend;     % signed t legend replaces "uncorrected"
+        else
+            legend_html = '<span class="dl"><span class="dd" style="background:#1b2733"></span>uncorrected</span>';
+        end
+        write_fig(fid, fig_spec([e.map_base ' TFCE.png'], ...
+            gf(e, 'tfce_title', 'TFCE significance map'), ...
+            [legend_html ...
              '<span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span>'], ''), 10);
     end
-    write_flat_table(fid, R, e, e.stfce, e.ptfce, 'TFCE-corrected', 'sorted by ascending p', ...
-        'cor', Inf, 10);
+    write_flat_table(fid, R, e, e.stfce, e.ptfce, 'TFCE-corrected', ...
+        gf(e, 'tfce_note', 'sorted by ascending p'), 'cor', Inf, 10);
     fprintf(fid, '        </div>\n      </div>\n');
 end
 
@@ -1661,7 +1678,7 @@ function write_posthoc(fid, R, e)
     fprintf(fid, '      <div class="tabs">\n');
     for i = 1:numel(P)
         oncls = ''; if i == 1, oncls = ' class="on"'; end
-        n = numel(P{i}.stfce);
+        n = numel(P{i}.sclu);   % the Cluster view opens first
         fprintf(fid, ['        <button id="tbtn_%s_%s"%s onclick="showTab(''%s'',''%s'',%s)">' ...
             '%s <span class="ct%s">%d</span></button>\n'], ...
             grp, P{i}.name, oncls, grp, P{i}.name, nlist, esc(P{i}.label), none_cls(n), n);
@@ -1688,24 +1705,18 @@ function write_posthoc(fid, R, e)
                 'Excluded for this comparison:</b> %s. They carry no statistic and no p-value ' ...
                 'for this pair.</p>\n'], q.excl_html);
         end
-        if isempty(q.stfce)
-            fprintf(fid, '        <div class="tablewrap"><div class="empty-note">%s</div></div>\n', ...
-                sprintf(['<b>No significant channels</b> for %s after TFCE correction%s. ' ...
-                'Uncorrected results are in the CSV.'], esc(q.label), ...
-                smallest_clause(min_finite(q.ptfce), R.nperm, 'p')));
-        else
-            fprintf(fid, '        <div class="vbody">\n');
-            if ~isempty(q.map_base)
-                write_fig(fid, fig_spec([q.map_base ' TFCE.png'], ...
-                    sprintf('%s &mdash; TFCE map', esc(q.label)), ...
-                    [map_note_signed('t &lt; 0', 't &gt; 0') ...
-                     '<span class="dl"><span class="dd" style="background:#fff"></span>TFCE-corrected</span>'], ''), 10);
-            end
-            qe = q; qe.sym = 't'; qe.signed = true;
-            write_flat_table(fid, R, qe, q.stfce, q.ptfce, 'TFCE-corrected', ...
-                'pairwise contrast &mdash; read alongside the omnibus effect', 'cor', Inf, 10);
-            fprintf(fid, '        </div>\n');
-        end
+        % Same Cluster | TFCE | Uncorrected switch as the effect, keyed per
+        % pair so showView() toggles this pair's panels only. The PNGs are the
+        % '<map_base> Cluster.png' / ' TFCE.png' pair the core already wrote.
+        qe = q; qe.key = [e.key '_' q.name]; qe.sym = 't'; qe.signed = true;
+        qe.clu_title  = sprintf('%s &mdash; Cluster map', esc(q.label));
+        qe.tfce_title = sprintf('%s &mdash; TFCE map', esc(q.label));
+        qe.map_legend = map_note_signed('t &lt; 0', 't &gt; 0');
+        qe.tfce_note  = 'pairwise contrast &mdash; read alongside the omnibus effect';
+        write_seg(fid, qe.key, numel(q.sclu), numel(q.stfce), numel(q.sunc));
+        write_cluster_view(fid, R, qe);
+        write_tfce_view(fid, R, qe);
+        write_unc_view(fid, R, qe);
         fprintf(fid, '      </div>\n');
     end
     fprintf(fid, '    </div>\n');
@@ -2042,7 +2053,8 @@ end
 function n = tab_name(label, i)
     n = regexprep(char(string(label)), '[^A-Za-z0-9]', '');
     if numel(n) > 16, n = n(1:16); end
-    n = sprintf('%s%d', n, i);
+    % '_' before the index: without it 'abc1'+1 and 'abc'+11 give the same id.
+    n = sprintf('%s_%d', n, i);
 end
 
 % HTML-escape. The double quote is escaped too: engine strings (a behavioural

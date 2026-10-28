@@ -33,18 +33,26 @@ function D = snpm_glm_design(preset, meta, opts)
 %                  model; that scheme left the other levels' effects in the
 %                  permuted residuals and is retired.)
 %   factor_col   : name of the column whose levels .posthoc compares ('' if none)
+%   col_names    : 1 x p cellstr, one name per column of X, for messages:
+%                  '(Intercept)'; 'predictor <col>'; 'covariate <col>' (numeric
+%                  or logical) or 'covariate <col>_<level>' (dummy, reference
+%                  level dropped); '<group_col>_<level>', '<condition_col>_<level>',
+%                  '<subject_col>_<level>'; '<group_col>_<l>:<condition_col>_<l>'.
+%                  The predictor/covariate prefixes tell the two apart when the
+%                  same column is on both sides (snpm_glm_estimability).
 
     D = struct('X',[], 'C',[], 'contrast_type','t', 'nuisance_idx',[], ...
         'eb',[], 'perm_type','free', 'effect_label','', ...
-        'posthoc',struct('label',{},'a',{},'b',{}), 'factor_col','');
+        'posthoc',struct('label',{},'a',{},'b',{}), 'factor_col','', 'col_names',{{}});
 
     n = height(meta);
-    cov = get_covariates(meta, opts);   % nObs x nCov, mean-centered (may be empty)
+    [cov, cov_names] = get_covariates(meta, opts);   % nObs x nCov, mean-centered (may be empty)
 
     switch lower(preset)
         case 'anova1'
             [Dg, gl] = ref_dummy(meta.(opts.group_col));
             X = [ones(n,1), Dg];
+            D.col_names = ['(Intercept)', level_names(opts.group_col, gl)];
             ofint = false(1, size(X,2)); ofint(2:end) = true;
             D.X = X;
             D.C = contrast_from_idx(ofint);
@@ -56,6 +64,7 @@ function D = snpm_glm_design(preset, meta, opts)
         case 'ancova'
             [Dg, gl] = ref_dummy(meta.(opts.group_col));
             X = [ones(n,1), Dg, cov];
+            D.col_names = ['(Intercept)', level_names(opts.group_col, gl), cov_names];
             ng = size(Dg,2);
             ofint = false(1, size(X,2)); ofint(1+(1:ng)) = true;
             D.X = X;
@@ -69,6 +78,7 @@ function D = snpm_glm_design(preset, meta, opts)
             pred = meta.(opts.predictor_col);
             pred = pred - mean(pred, 'omitnan');
             X = [ones(n,1), pred, cov];
+            D.col_names = ['(Intercept)', {['predictor ' opts.predictor_col]}, cov_names];
             ofint = false(1, size(X,2)); ofint(2) = true;
             D.X = X;
             D.C = contrast_from_idx(ofint);
@@ -78,9 +88,11 @@ function D = snpm_glm_design(preset, meta, opts)
             D.effect_label = sprintf('slope of %s', opts.predictor_col);
 
         case 'rmanova'
-            [Ds, ~]  = ref_dummy(meta.(opts.subject_col));
+            [Ds, sl] = ref_dummy(meta.(opts.subject_col));
             [Dc, cl] = ref_dummy(meta.(opts.condition_col), condition_order(opts));
             X = [ones(n,1), Ds, Dc];
+            D.col_names = ['(Intercept)', level_names(opts.subject_col, sl), ...
+                level_names(opts.condition_col, cl)];
             nc = size(Dc,2);
             ofint = false(1, size(X,2)); ofint(end-nc+1:end) = true;
             D.X = X;
@@ -99,15 +111,18 @@ function D = snpm_glm_design(preset, meta, opts)
             % Subject intercepts absorb the subject and (nested) group main
             % effect, so the group main effect is not estimable here — it is a
             % between-subjects test on subject means (core_snpm_glm handles it).
-            [Ds, ~]  = ref_dummy(meta.(opts.subject_col));
+            [Ds, sl] = ref_dummy(meta.(opts.subject_col));
             [Dc, cl] = ref_dummy(meta.(opts.condition_col), condition_order(opts));
             ns = size(Ds,2); nc = size(Dc,2);
+            base_names = ['(Intercept)', level_names(opts.subject_col, sl), ...
+                level_names(opts.condition_col, cl)];
             switch effect
                 case 'interaction'
                     % Full model; test the group x condition product columns.
-                    [Dg, ~] = ref_dummy(meta.(opts.group_col));
+                    [Dg, gl] = ref_dummy(meta.(opts.group_col));
                     Dx = interaction_cols(Dg, Dc); nx = size(Dx,2);
                     X = [ones(n,1), Ds, Dc, Dx];
+                    D.col_names = [base_names, interaction_names(opts, gl, cl)];
                     ofint = false(1, size(X,2)); ofint(end-nx+1:end) = true;
                     D.effect_label = 'two-way mixed ANOVA (group x condition)';
                 case 'condition'
@@ -129,10 +144,11 @@ function D = snpm_glm_design(preset, meta, opts)
                     % The condition F from this model is the standard mixed-
                     % ANOVA F (ranova, and Type III anovan): 8 + 14 subjects x
                     % 3 conditions gives F(2,40) = 30.9004 in all three.
-                    [Dg, ~] = ref_dummy(meta.(opts.group_col));
+                    [Dg, gl] = ref_dummy(meta.(opts.group_col));
                     Eg  = main_effect_group_code(Dg);
                     Dxc = interaction_cols(Eg, Dc);      % group outer, condition inner
                     X = [ones(n,1), Ds, Dc, Dxc];
+                    D.col_names = [base_names, interaction_names(opts, gl, cl)];
                     ofint = false(1, size(X,2)); ofint(1+ns+(1:nc)) = true;
                     D.effect_label = sprintf('condition main effect (%d levels)', numel(cl));
                     % Pairwise condition post-hoc: each pair is this same
@@ -221,26 +237,36 @@ function C = contrast_from_idx(ofint)
     end
 end
 
-function cov = get_covariates(meta, opts)
+function [cov, names] = get_covariates(meta, opts)
 % Numeric covariates pass through; categorical/string/cellstr nuisance columns
 % are dummy-coded (k-1 columns, first level = reference) so e.g. sex can be a
-% covariate alongside age. All columns are mean-centred.
+% covariate alongside age. All columns are mean-centred. names: one per
+% column of cov ('covariate <col>' or 'covariate <col>_<level>').
     cov = [];
-    if ~isfield(opts, 'covariate_cols') || isempty(opts.covariate_cols), return; end
-    cols = opts.covariate_cols;
-    if ischar(cols) || isstring(cols), cols = cellstr(cols); end
+    names = {};
+    if ~isfield(opts, 'covariate_cols'), return; end
+    cols = snpm_glm_covariate_list(opts.covariate_cols);   % blank names dropped
+    if isempty(cols), return; end
     parts = {};
     for i = 1:numel(cols)
-        v = meta.(char(cols{i}));
+        c = char(cols{i});
+        v = meta.(c);
         if isnumeric(v) || islogical(v)
             parts{end+1} = double(v); %#ok<AGROW>
+            names{end+1} = ['covariate ' c]; %#ok<AGROW>
         else
             % removecats: code from the levels PRESENT in these rows. Without
             % it a categorical column subset to two groups keeps a category
             % nobody has, and dummyvar returns an all-zero column for it.
             vc = removecats(categorical(v));
             D = double(dummyvar(vc));            % n x k
-            if size(D, 2) >= 2, D = D(:, 2:end); else, D = []; end   % drop reference level
+            cats = categories(vc);
+            if size(D, 2) >= 2
+                D = D(:, 2:end);                 % drop reference level
+                names = [names, strcat({['covariate ' c '_']}, cats(2:end)')]; %#ok<AGROW>
+            else
+                D = [];
+            end
             parts{end+1} = D; %#ok<AGROW>
         end
     end
@@ -251,7 +277,30 @@ function cov = get_covariates(meta, opts)
         % Tested on the raw column, before centring, so it is exact.
         varies = max(cov, [], 1, 'omitnan') > min(cov, [], 1, 'omitnan');
         cov = cov(:, varies);
+        names = names(varies);
         cov = cov - mean(cov, 1, 'omitnan');
+    end
+end
+
+function names = level_names(col, levels)
+% '<col>_<level>' for every non-reference level (levels 2..k), as ref_dummy codes them
+    names = cell(1, max(numel(levels) - 1, 0));
+    for j = 2:numel(levels)
+        names{j-1} = sprintf('%s_%s', col, tostr(levels(j)));
+    end
+end
+
+function names = interaction_names(opts, gl, cl)
+% names of interaction_cols: group outer, condition inner
+    g = level_names(opts.group_col, gl);
+    c = level_names(opts.condition_col, cl);
+    names = cell(1, numel(g) * numel(c));
+    k = 0;
+    for a = 1:numel(g)
+        for b = 1:numel(c)
+            k = k + 1;
+            names{k} = [g{a} ':' c{b}];
+        end
     end
 end
 

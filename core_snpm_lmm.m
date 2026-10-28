@@ -138,10 +138,13 @@ function [results_struct, results_text] = core_snpm_lmm(params)
     end
 
     % The effect must be testable (group_label: an actual level of the group
-    % column) and must name a coefficient/term of the fixed part; otherwise
-    % every channel would come back NaN. Decided from the metadata alone, before
-    % the channel setup and any fit. A factor term written in another variable
-    % order ('POWER:group') is returned as fitlme names it ('group:POWER').
+    % column) and must name exactly one coefficient (continuous) or a term
+    % (factor) of the fixed part, and the fixed part must be full rank on the
+    % metadata; otherwise every channel would come back NaN, or a different
+    % hypothesis would be mapped. Decided from the metadata alone, before the
+    % channel setup and any fit. The effect is returned as fitlme names it
+    % ('POWER:group' -> 'group:POWER' for a factor; a two-level 'group' ->
+    % 'group_B' for a continuous effect), and snpm_lmm_fit matches it exactly.
     eff_spec.categorical = lmm_categorical_vars(meta, subj_col, grp_col, params.lmm_random);
     effect_as_given = char(params.lmm_effect);
     params.lmm_effect = snpm_lmm_check_effect(meta, eff_spec);
@@ -622,13 +625,21 @@ function gv = lmm_effect_grouping(meta, spec)
 % the factor part that is a meta column, ignoring the POWER token and the DV).
 % Returns [] when the effect has no meta grouping (a plain continuous slope).
     gv = [];
+    vn = meta.Properties.VariableNames;
     toks = regexp(spec.effect, '[:*]', 'split');
     for i = 1:numel(toks)
         t = strtrim(toks{i});
         if isempty(t) || strcmpi(t, 'POWER') || strcmpi(t, spec.dv), continue; end
-        if ismember(t, meta.Properties.VariableNames)
-            gv = meta.(t); return;
+        if ~ismember(t, vn)
+            % a coefficient name (group_B) -> its column (the longest c with
+            % the token starting with c_), as snpm_lmm_effect_within_share maps it
+            c = vn(cellfun(@(v) startsWith(t, [v '_']), vn));
+            if isempty(c), continue; end
+            [~, m] = max(cellfun(@numel, c));
+            t = c{m};
+            if strcmpi(t, spec.dv), continue; end
         end
+        gv = meta.(t); return;
     end
 end
 

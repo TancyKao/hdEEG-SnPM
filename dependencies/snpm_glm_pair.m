@@ -57,8 +57,10 @@ function pr = snpm_glm_pair(preset, meta, opts, factor_col, a, b, label)
 %   group. Covariates are re-centred on the subset, categorical covariates are
 %   coded from the levels present in the subset, and a covariate constant on
 %   the subset is dropped (all three inside snpm_glm_design).
-%   The design must have full column rank and at least 1 error degree of
-%   freedom; otherwise the pair is skipped with a warning.
+%   The two-level effect must be estimable apart from the nuisance columns
+%   (snpm_glm_estimability; a redundant covariate alone does not stop it) and
+%   the design must leave at least 1 error degree of freedom (n - rank(X));
+%   otherwise the pair is skipped with a warning.
 %   Permutation: Freedman-Lane with every column except the two-level dummy
 %   as nuisance; 'free' over the subset rows (between) or 'within' subject
 %   blocks, as returned in pr.D.
@@ -124,12 +126,17 @@ function pr = snpm_glm_pair(preset, meta, opts, factor_col, a, b, label)
     o = opts;
     if strcmp(preset, 'mixed2way'), o.effect = 'condition'; end
     D = snpm_glm_design(preset, sub, o);
-    if size(D.C, 1) ~= 1 || rank(D.X) < size(D.X, 2)
+    % Estimability of the pair's effect apart from its nuisance (the rule the
+    % main design is refused by, snpm_glm_estimability): a pair whose only
+    % dependency is a redundant covariate runs, as the main design does.
+    est = snpm_glm_estimability(D);
+    if size(D.C, 1) ~= 1 || ~est.estimable
         pr = skip(pr, label, ['the design for these two levels cannot be estimated (a covariate ' ...
             'may coincide with the two groups)']);
         return
     end
-    if numel(rows) - size(D.X, 2) < 1
+    sv = svd(D.X);
+    if numel(rows) - rank(D.X, max(size(D.X)) * 2.220446049250313e-16 * sv(1)) < 1
         pr = skip(pr, label, 'too few rows for these two levels to leave any error degrees of freedom');
         return
     end

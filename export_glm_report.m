@@ -27,7 +27,7 @@ function export_glm_report(DATA, OUT, opts)
     preset    = getdef(opts, 'preset', 'anova1');
     group_col = getdef(opts, 'group_col', 'group');
     pred_col  = getdef(opts, 'predictor_col', 'cognition');
-    cov_cols  = getdef(opts, 'covariate_cols', {});
+    cov_cols  = snpm_glm_covariate_list(getdef(opts, 'covariate_cols', {}));   % blank names dropped
     powers    = getdef(opts, 'powers', {'absolute','normalised'});
     stages    = getdef(opts, 'stages', {'n2','n3'});
     bands     = getdef(opts, 'bands',  {'delta','sigma','beta'});
@@ -35,6 +35,7 @@ function export_glm_report(DATA, OUT, opts)
     alpha     = getdef(opts, 'alpha', 0.05);
     E = 0.5; H = 2;
     if ~exist(OUT, 'dir'), mkdir(OUT); end
+    snpm_glm_require_covariate(preset, cov_cols);   % ancova with no covariate (core_snpm_glm:ancovaNoCovariate)
 
     isGroup = ismember(preset, {'anova1','ancova'});
     isReg   = strcmp(preset, 'regression');
@@ -61,8 +62,14 @@ function export_glm_report(DATA, OUT, opts)
             labels = {chanlocs.labels};
 
             % design from the preset (decides t vs F)
+            if isReg, snpm_glm_require_numeric_predictor(preset, subjects, pred_col); end
             [meta, dopts, grp] = build_meta(subjects, sid, preset, group_col, pred_col, cov_cols);
             D = snpm_glm_design(preset, meta, dopts);
+            % the same refusals core_snpm_glm applies to its main design:
+            % no covariate left after the constant filter, and an effect
+            % aliased with the nuisance (warning when only the nuisance is)
+            snpm_glm_require_covariate(preset, cov_cols, D);
+            snpm_glm_estimability(D, 'enforce');
             isF = strcmpi(D.contrast_type, 'F'); isF_any = isF_any || isF;
             statCmap = ternary(isF, 'hot', 'jet');
             statClim = ternary(isF, [], [-3 3]);

@@ -80,7 +80,7 @@ pair is a **separate two-level test on the rows of those two levels only**:
 | Channels | A channel is tested in a post-hoc only if the omnibus tested it **and** it has a value in every row of the pair, so a post-hoc never reports a channel its omnibus did not test. |
 | Within-subject pairs | A subject who has only one of the two levels is left out of that comparison, with a warning naming the subject (`snpm_glm_pair:singleLevelSubjects`). Fewer than 6 complete subjects raises `snpm_glm_pair:fewSubjects`, because the smallest two-sided permutation p is then 2/2ⁿ. |
 | Between-subject pairs | Fewer than 4 subjects in the smaller group raises `snpm_glm_pair:smallGroup`. |
-| A pair that cannot be estimated | Skipped with the warning `snpm_glm_pair:skipped` (fewer than 2 subjects with both levels, a covariate that coincides with the two groups, or no error degrees of freedom). **The report can therefore show fewer post-hoc maps than there are pairs.** |
+| A pair that cannot be estimated | Skipped with the warning `snpm_glm_pair:skipped` (fewer than 2 subjects with both levels, a covariate that coincides with the two groups so the two-level effect is not estimable apart from the nuisance columns, or no error degrees of freedom). A covariate that only repeats another covariate does not stop a pair. **The report can therefore show fewer post-hoc maps than there are pairs.** |
 | Correction | Each post-hoc map is corrected across channels (TFCE and cluster mass). There is **no correction across pairs**. |
 
 The scheme this replaced tested each pair as a contrast inside the omnibus model, which left the
@@ -219,7 +219,9 @@ p NaN.
 | `group_label`: group column not in `lmm_meta_cols` ⇒ reject | `core_snpm_lmm:noGroupColumn` |
 | `tail` must be `both` (the map is a two-sided t or an F; clusters use the two-sided model p) | `core_snpm_lmm:oneSidedTail` |
 | `group_label`: the effect's variables (split on `:` / `*`) must include `lmm_group` itself, or `<group>_<level>` for a level present in the data (the name `fitlme` gives a reference-coded coefficient, e.g. `group_B`, or inside an interaction `group_B:POWER`), else every permuted map equals the observed one. A different column that merely starts with the group name (`group_size`) does not count; `<group>_<x>` for a level `x` that is not in the data is refused as an unknown effect instead, with the real coefficient names | `core_snpm_lmm:effectNotPermuted` |
-| `lmm_effect` must name a coefficient of the fixed part (`continuous`: exact name, else the first name containing it, as the fit resolves it) or a term of it (`factor`; the order of the variables in an interaction does not matter, `POWER:group` finds `group:POWER`), else every channel would be NaN. Checked from the metadata after the missing-row drop, before the channel setup and any fit; the message lists the available coefficient or term names. Names are those `fitlme` gives the fitted table: columns converted to categorical (subject, group, random-effect grouping variables) have their levels in sorted order (numbers numerically, logical `false`/`true`, so `group_true`), and the first level is the reference; a text column that is not converted keeps its levels in order of first appearance, so the reference is the first value in the file (`cond_post` when `pre` comes first); a logical column that is not converted is named `<var>_1` | `core_snpm_lmm:unknownEffect` |
+| `lmm_effect` must name a coefficient of the fixed part (`continuous`) or a term of it (`factor`; the order of the variables in an interaction does not matter, `POWER:group` finds `group:POWER`), else every channel would be NaN. A `continuous` effect resolves to one coefficient by the first rule that applies: the exact coefficient name; the same `:`-parts in another order (`POWER:group_B` → `group_B:POWER`); the variables of a term with exactly one coefficient (`group` → `group_B` for a two-level group, `POWER:group` → `group_B:POWER`). There is no substring matching (`time` does not find `sleeptime`; `POWER` does not find `group_B:POWER`), and a reference level (`group_A`) is not a coefficient. The resolved name is what the fit maps and what the output file names carry. Checked from the metadata after the missing-row drop, before the channel setup and any fit; the message lists the available coefficient or term names. Names are those `fitlme` gives the fitted table: columns converted to categorical (subject, group, random-effect grouping variables) have their levels in sorted order (numbers numerically, logical `false`/`true`, so `group_true`), and the first level is the reference; a text column that is not converted keeps its levels in order of first appearance, so the reference is the first value in the file (`cond_post` when `pre` comes first); a logical column that is not converted is named `<var>_1` | `core_snpm_lmm:unknownEffect` |
+| `continuous`: an effect naming a term with more than one coefficient (a three-level `group`) is refused rather than mapped to one of them; the message lists the coefficients. Name one, or use `factor` for the omnibus F | `core_snpm_lmm:ambiguousEffect` |
+| The fixed part must be full rank on the metadata: the fixed design `X` (POWER at a fixed generic placeholder, rows after the missing-row drop) is refused when `rank(X, tol) < size(X,2)` with `tol = max(size(X)) · 2.220446049250313e-16 · s_max(X)`, else `fitlme` refuses every channel and the map is all NaN. The message names each aliased coefficient (found left to right) and the earlier coefficients it is a linear combination of, or says it is zero on every trial (an empty interaction cell). Checked on the observed labels under either scheme. A channel that is collinear with the metadata only at its own values (equal to a covariate) is not refused and is NaN on its own | `core_snpm_lmm:fixedRankDeficient` |
 | `within_subject`: the DV must be a metadata column (not `POWER`), since the DV is what is shuffled | `core_snpm_lmm:dvNotMetadata` |
 | A metadata DV must vary within subjects (within-subject share of its variation > 1e-6): under `within_subject` the shuffle has nothing to permute; under `group_label` every fit would be a perfect fit (analyse subject means with `anova1`/`unpairedT`) | `core_snpm_lmm:dvConstantWithinSubject` |
 | `within_subject`: the effect must not be constant within every subject. Its variables (split on `:` / `*`; `group_B` → `group`) are checked with the within-subject share (a text or categorical column through one indicator per level, largest share); an effect with POWER, or with any variable that varies within subject (`group:time`), runs | `core_snpm_lmm:effectConstantWithinSubject` |
@@ -465,6 +467,39 @@ maps, or re-run with `'absolute'`/`'logscale'` for a meaningful whole-head numbe
   every channel is excluded the run stops with `snpm:noEvaluableChannels`. Why the rule is exact
   and why perfect separation is left untested:
   [Channels with no variation](../explanation/missing-data-and-excluded-channels.md#channels-with-no-variation).
+- **GLM effect aliased with the nuisance is refused** (since 26 October 2026). Every design the
+  GLM tier tests (the main design, the three `mixed2way` effects and their group design, each
+  `mixed2way` simple effect, and every cell of the faceted spectral report `export_glm_report` /
+  `scripts/run_glm_report.m`) is checked once before any statistic (`dependencies/snpm_glm_estimability.m`;
+  the design is fixed across Freedman–Lane permutations, so the check is exact). With `Z` the
+  nuisance columns, `Xe` the effect columns and `tol = max(size(X)) · 2.220446049250313e-16 · s_max(X)`,
+  the effect is estimable when `rank([Z Xe], tol) = rank(Z, tol) + cols(Xe)`. When it is not (the
+  predictor also listed as a covariate, a covariate that is a linear function of the predictor, a
+  categorical covariate that codes the same split as the group, an `rmanova` condition seen only
+  in subjects with a single row) the run errors with `core_snpm_glm:effectAliased`, naming each
+  aliased effect column and the columns it is a combination of, e.g. `The effect tested (slope of
+  logAHI) cannot be separated from the nuisance columns of the design: predictor logAHI is a linear
+  combination of covariate logAHI. …`. Before, the pseudo-inverse returned a finite but arbitrary
+  statistic. When only the nuisance columns are dependent (`{age, age_months}`), the effect is
+  still estimable and the run goes on with the warning `snpm:glmNuisanceRankDeficient`; the map
+  equals the run without the redundant covariate. Column names in the messages: `(Intercept)`,
+  `predictor <col>`, `covariate <col>` or `covariate <col>_<level>`, `<group>_<level>`,
+  `<condition>_<level>`, `<subject>_<level>`, `<group>_<l>:<condition>_<l>`.
+- **`regression` needs a numeric predictor.** A `predictor_col` that is not numeric is refused: text,
+  string, categorical and logical (TRUE/FALSE, as `readtable` reads Excel booleans) columns, and
+  text whose values read as numbers, since `readtable` already parses numeric columns. The quoted
+  value is the column's first non-missing, non-empty value, a logical one in lowercase
+  (`true`/`false`). It is refused before the design is built, in `core_snpm_glm` and
+  `export_glm_report`: `core_snpm_glm:predictorNotNumeric`, `The predictor column '<col>' is not
+  numeric (it holds text such as '<first value>'); regression needs a numeric predictor. To compare
+  groups, use anova1 or ancova.` It used to fail with an unrelated MATLAB error.
+- **`ancova` needs a covariate.** Blank or whitespace-only names in `covariate_cols` are dropped
+  for every GLM preset (`{'age',''}` runs with `age` as the only covariate). `ancova` with no
+  covariate name left (absent, `{}`, `''`, `""`, `{''}`, `{' '}`) is refused before the file is read, and so is an `ancova` whose listed covariates are all
+  constant on the analysed rows (a constant numeric column or a one-level category, which the
+  design drops), after the file is read. Both use `core_snpm_glm:ancovaNoCovariate`, `ANCOVA needs
+  at least one covariate; with none, use anova1.`, in `core_snpm_glm` and in `export_glm_report`.
+  It used to run a one-way ANOVA labelled "covariate-adjusted".
 - **Saturated GLM designs are refused.** When rows − rank(design matrix) < 1 the run errors
   before any statistic with `core_snpm_glm:noErrorDF`, message `no error degrees of freedom left
   after fitting the design` (for example `anova1` with one subject per group, or an `rmanova`

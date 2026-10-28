@@ -28,7 +28,7 @@ function w = snpm_lmm_effect_within_share(meta, effect, subj_col)
         if ismember(t{1}, vn)
             cols{end+1} = t{1}; %#ok<AGROW>
         else
-            c = vn(startsWith(t{1}, strcat(vn, '_')));
+            c = vn(cellfun(@(v) startsWith(t{1}, [v '_']), vn));
             if ~isempty(c)
                 [~, i] = max(cellfun(@numel, c));
                 cols{end+1} = c{i}; %#ok<AGROW>

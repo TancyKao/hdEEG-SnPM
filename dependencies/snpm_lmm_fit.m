@@ -25,7 +25,8 @@ function [stat, wald, p_model, degenerate] = snpm_lmm_fit(power, meta, spec, eva
 %                    'POWER' and any meta columns, e.g. 'POWER + group'
 %       .random      (char) random-effects part, e.g. '(1|Subject) + (1|time)'
 %       .effect      (char) the term whose effect is mapped, e.g. 'POWER'
-%                    or 'group'
+%                    or 'group'; matched EXACTLY (coefficient name, or
+%                    anova term), as resolved by snpm_lmm_check_effect
 %       .effect_type (char) 'continuous' -> signed t statistic (1 df)
 %                           'factor'     -> F statistic from anova (k-1 df)
 %       .categorical (cellstr, optional) meta columns to force categorical.
@@ -114,13 +115,11 @@ function [stat, wald, p_model, degenerate] = snpm_lmm_fit(power, meta, spec, eva
 
         switch effect_type
             case 'continuous'
-                % single-coefficient (1 df) signed t statistic
+                % single-coefficient (1 df) signed t statistic. The effect is
+                % the coefficient name resolved by snpm_lmm_check_effect, so
+                % the match is exact; there is no substring fallback.
                 names = lme.Coefficients.Name;
                 row = find(strcmp(names, effect), 1);
-                if isempty(row)
-                    % fall back to first coefficient that contains the name
-                    row = find(contains(names, effect), 1);
-                end
                 % A non-finite t means the coefficient is not estimable on the
                 % rows supplied; leave the channel at stat=NaN / wald=0 rather
                 % than propagating NaN into the cluster mass or the max null.

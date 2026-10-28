@@ -132,6 +132,82 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
   `scripts/lmm_boundary_stall_rate.m` prints the same table. The refit is still kept only on a
   log-likelihood gain above 1e-6 (absolute, deliberately: a log-likelihood difference does not
   depend on units).
+- **Mixed model: a fixed part that the metadata cannot estimate is refused** (`mixedmodel`;
+  `dependencies/snpm_lmm_check_effect.m`). When the fixed design is singular from the metadata
+  alone (two columns coding the same split, a covariate that is a linear function of another, an
+  interaction cell with no trials), `fitlme` refuses every channel's fit and the map came back
+  all NaN without a reason. It is now refused before any fit with
+  `core_snpm_lmm:fixedRankDeficient`, naming each redundant coefficient, e.g. "The fixed part
+  'POWER + cov1 + cov2' cannot be estimated from these trials: cov2 is a linear combination of
+  (Intercept), cov1. fitlme refuses a rank-deficient design, so every channel would be NaN.
+  Remove or recode the redundant column, or drop the term." The rank is taken on the fixed design
+  with an explicit tolerance (`max(size(X)) · eps · largest singular value`), POWER at a fixed
+  generic placeholder, so only a deficiency that holds at every channel is refused; a single
+  channel that happens to equal a covariate still fits as NaN on its own. Full-rank designs are
+  unchanged.
+- **Mixed model: a continuous effect maps exactly one coefficient, never a substring match**
+  (`mixedmodel`; `dependencies/snpm_lmm_check_effect.m`, `dependencies/snpm_lmm_fit.m`). An
+  `lmm_effect` that was not a coefficient name fell back to the first coefficient *containing*
+  it, which silently mapped a different hypothesis: `group` with three levels became `group_B`
+  (B against A only, labelled "group"), `POWER` in `group + group:POWER` became the slope
+  difference `group_B:POWER`, and `time` became `sleeptime`. The effect now resolves by the first
+  rule that applies: the exact coefficient name; the same `:`-parts in another order
+  (`POWER:group_B` → `group_B:POWER`); or a term with exactly one coefficient (`group` →
+  `group_B` for a two-level group, `POWER:group` → `group_B:POWER`). A term with several
+  coefficients is refused with the new `core_snpm_lmm:ambiguousEffect`, e.g. "Effect 'group'
+  names the term 'group' of the fixed part 'POWER + group', which has 2 coefficients (group_B,
+  group_C); a continuous effect maps one coefficient. Name one of them, or set lmm_effect_type =
+  'factor' for the omnibus F."; anything else is `core_snpm_lmm:unknownEffect` as before. The
+  per-channel fit matches the resolved name exactly. **Output file names change** for the
+  two-level shorthand: `lmm_effect = 'group'` now writes `<data>_LMM_group_B_on_<DV>_…`
+  instead of `<data>_LMM_group_on_<DV>_…` (the statistic is the same). **Who is affected:**
+  anyone whose continuous `lmm_effect` was not an exact coefficient name; re-run if it named a
+  term with more than one coefficient or a substring of another name.
+- **Mixed model: a coefficient name in a `within_subject` effect was mapped to the wrong
+  column** (`dependencies/snpm_lmm_effect_within_share.m`). The prefix lookup that maps a
+  coefficient part to its column (`cond_post` → `cond`) matched the first column of the table
+  whenever any column was a prefix, so `cond_post` was checked as `Subject` and a valid
+  within-subject effect was refused with `core_snpm_lmm:effectConstantWithinSubject`. It now
+  maps each part to the longest column it starts with, as documented. The descriptive plot's
+  grouping in the mixed-model report uses the same lookup, so a resolved `group_B` effect is
+  grouped by `group` again.
+- **GLM presets: an effect that the nuisance columns repeat is refused**
+  (`anova1`/`ancova`/`regression`/`rmanova`/`mixed2way`; new
+  `dependencies/snpm_glm_estimability.m`, `core_snpm_glm.m`, `dependencies/snpm_glm_design.m`).
+  When an effect column lay in the span of the Freedman–Lane nuisance columns (the predictor also
+  listed as a covariate, a covariate equal to `2·predictor + 5`, an `ancova` site covariate that
+  codes the same split as the group, an `rmanova` condition seen only in single-row subjects), the
+  pseudo-inverse still returned a finite statistic and every p-value was arbitrary: on simulated
+  data a planted effect recovered at family-wise p 0.002 in the clean design came out at 0.56–0.74.
+  Such a design is now refused before any statistic with `core_snpm_glm:effectAliased`, naming the
+  aliased columns, e.g. "The effect tested (slope of logAHI) cannot be separated from the nuisance
+  columns of the design: predictor logAHI is a linear combination of covariate logAHI. Its contrast
+  is not estimable, so the statistic and every p-value would be arbitrary. Remove the covariate that
+  repeats the effect, or test a different effect." The check covers every design the tier tests
+  (main design, the three `mixed2way` effects and their group design, `mixed2way` simple effects,
+  and each cell of the faceted spectral report `export_glm_report.m` / `scripts/run_glm_report.m`).
+  Covariates that only repeat each other (`age` and `age_months`) leave the effect estimable: the
+  run goes on with the warning `snpm:glmNuisanceRankDeficient` and gives the same map as without
+  the redundant covariate. A post-hoc pair is now skipped only when its two-level effect is not
+  estimable (same reason text as before), so a pair whose only dependency is a redundant covariate
+  runs. `snpm_glm_design` returns `D.col_names`, one name per design column. Full-rank designs
+  are unchanged. **Who is affected:** GLM runs whose covariates repeated the predictor or the group;
+  their results were not interpretable and should be re-run without that covariate.
+- **`regression` with a text predictor is refused** (`core_snpm_glm:predictorNotNumeric`; new
+  `dependencies/snpm_glm_require_numeric_predictor.m`, used by `core_snpm_glm.m` and
+  `export_glm_report.m`). A predictor column that is not numeric (text, string,
+  categorical or logical, such as Excel TRUE/FALSE cells), for example a diagnosis column holding `OSA`, used to stop with an unrelated MATLAB error when the design
+  centred it. It is now refused before the design is built: "The predictor column 'dx' is not
+  numeric (it holds text such as 'OSA'); regression needs a numeric predictor. To compare groups,
+  use anova1 or ancova." Text whose values all read as numbers is refused too, because `readtable`
+  already parses numeric columns.
+- **`ancova` without a covariate is refused** (`core_snpm_glm:ancovaNoCovariate`, "ANCOVA needs at
+  least one covariate; with none, use anova1."; new `dependencies/snpm_glm_require_covariate.m`,
+  used by `core_snpm_glm.m` and `export_glm_report.m`). Blank or whitespace-only names in
+  `covariate_cols` are now dropped for every GLM preset (new `dependencies/snpm_glm_covariate_list.m`),
+  so `{'age',''}` runs with `age` as the only covariate instead of failing on an empty column name.
+  The refusal covers a `covariate_cols` with no name left (`{}`, `''`, `""`, `{''}`, `{' '}`) and a list whose covariates are all constant on the analysed rows, which
+  the design drops. It used to run a one-way ANOVA labelled "covariate-adjusted".
 - **Circular–linear exclusion reason named groups** (`circ_corrAngLinear`; `core_snpm_circ.m`).
   The analysis is paired by subject, but its excluded channels carried the group analyses' reason
   "not estimable: fewer than 8 subjects per group, incomplete column under a per-channel
@@ -479,6 +555,11 @@ All notable changes to **hdEEG-SnPM** are recorded here. The format follows
   global card is still shown with the reason, rather than a number that would read as "no
   evidence" for what is in fact a perfect fit. **Who is affected:** saturated or nearly
   saturated designs only.
+- **Report: post-hoc pairs show cluster correction.** Each post-hoc tab in the HTML report now
+  has the same Cluster | TFCE | Uncorrected switch as its effect, with the pair's cluster map and
+  cluster table; the tab count is the pair's cluster count. Before, a tab showed only the TFCE
+  result although the cluster test had been run and its map written. Report only; no statistic
+  changes.
 
 ### Changed
 
